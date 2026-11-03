@@ -2,7 +2,6 @@ import Foundation
 import LiveKit
 import PortholeCore
 
-/// The viewer's link to one host: gets a token over HTTP, joins the room, and routes messages.
 @MainActor
 final class Connection: NSObject, RoomDelegate {
     let hostAddress: String
@@ -11,7 +10,6 @@ final class Connection: NSObject, RoomDelegate {
     var onWindows: (([WindowInfo]) -> Void)?
     var onError: ((String) -> Void)?
     var onClosed: ((UInt32) -> Void)?
-    /// Waiting for a window's track: called once the host says it's open and the track is subscribed.
     private var pending: [UInt32: (VideoTrack, Message) -> Void] = [:]
     private var openedReplies: [UInt32: Message] = [:]
 
@@ -67,7 +65,6 @@ final class Connection: NSObject, RoomDelegate {
         }
     }
 
-    // MARK: Track plumbing
 
     private func subscribeIfPublished(_ id: UInt32) {
         guard let pub = hostParticipant?.trackPublications.values
@@ -83,7 +80,6 @@ final class Connection: NSObject, RoomDelegate {
         cb(track, reply)
     }
 
-    // MARK: RoomDelegate
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
                           forTopic topic: String, encryptionType: EncryptionType) {

@@ -1,15 +1,12 @@
 import Foundation
 
-/// The data-channel topic every Porthole control message travels on.
 public let portholeTopic = "porthole"
 
-/// A window the host can share.
 public struct WindowInfo: Codable, Equatable, Sendable {
     public var id: UInt32
     public var app: String
     public var title: String
     public var bundle: String?
-    /// Size in points.
     public var w: Double
     public var h: Double
 
@@ -18,10 +15,6 @@ public struct WindowInfo: Codable, Equatable, Sendable {
     }
 }
 
-/// One control message. A single flat shape keeps it easy to produce from JavaScript.
-///
-/// Viewer to host: list, open, close, key, text, mouse, scroll, resize.
-/// Host to viewer: windows, opened, closed, error.
 public struct Message: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case list, open, close, key, text, mouse, scroll, resize
@@ -34,22 +27,17 @@ public struct Message: Codable, Equatable, Sendable {
 
     public var t: Kind
     public var win: UInt32?
-    /// Track name the host publishes a window under (`opened`).
     public var track: String?
     public var list: [WindowInfo]?
-    // Keyboard: macOS virtual keycode, key down or up, modifier bits (see `Modifiers`).
     public var code: UInt16?
     public var down: Bool?
     public var mods: UInt32?
-    /// Text to type, for `text` and for the character a key produces.
     public var s: String?
-    // Pointer: normalized 0...1 inside the window, button 0 left / 1 right / 2 other.
     public var kind: MouseKind?
     public var btn: Int?
     public var clicks: Int?
     public var x: Double?
     public var y: Double?
-    // Scroll deltas in points; resize size in points.
     public var dx: Double?
     public var dy: Double?
     public var w: Double?
@@ -67,7 +55,6 @@ public struct Message: Codable, Equatable, Sendable {
     }
 }
 
-/// Modifier bits sent on key and pointer messages. Same layout from the Mac and the browser viewer.
 public struct Modifiers: OptionSet, Sendable {
     public let rawValue: UInt32
     public init(rawValue: UInt32) { self.rawValue = rawValue }

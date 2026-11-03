@@ -2,7 +2,6 @@ import AppKit
 import LiveKit
 import PortholeCore
 
-/// Porthole viewer: pick a window on the host and it opens here as a real window.
 @MainActor
 final class ViewerApp: NSObject, NSApplicationDelegate {
     var connection: Connection?
@@ -73,7 +72,6 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 try await c.connect()
                 UserDefaults.standard.set(host, forKey: "host")
                 UserDefaults.standard.set(password, forKey: "password")
-                // Give the host's participant a moment to appear.
                 for _ in 0..<50 where c.hostParticipant == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
                 c.requestList()
             } catch {

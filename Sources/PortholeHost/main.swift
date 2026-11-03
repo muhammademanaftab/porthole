@@ -2,7 +2,6 @@ import AppKit
 import CoreGraphics
 import PortholeCore
 
-/// Porthole host: a menu-bar app that shares this Mac's windows with your other machines.
 @MainActor
 final class HostApp: NSObject, NSApplicationDelegate {
     let config = HostConfig.loadOrCreate()

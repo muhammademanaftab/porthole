@@ -1,7 +1,6 @@
 import AppKit
 import PortholeCore
 
-/// Lists the host's windows; click one to open it here.
 @MainActor
 final class PickerWindow: NSWindow {
     private let stack = NSStackView()

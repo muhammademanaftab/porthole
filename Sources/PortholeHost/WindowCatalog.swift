@@ -2,7 +2,6 @@ import AppKit
 import PortholeCore
 import ScreenCaptureKit
 
-/// Lists the windows a viewer may open. Hidden, tiny and password-manager windows never appear.
 enum WindowCatalog {
     static let blockedBundles: Set<String> = [
         "com.apple.Passwords", "com.apple.keychainaccess", "com.1password.1password",
@@ -38,7 +37,6 @@ enum WindowCatalog {
     }
 }
 
-/// Live facts about a window from WindowServer: bounds in global points (top-left origin) and owner.
 struct LiveWindow {
     var bounds: CGRect
     var pid: pid_t
@@ -52,10 +50,8 @@ struct LiveWindow {
         return LiveWindow(bounds: rect, pid: pid)
     }
 
-    /// Backing scale of the display the window sits on (2 on Retina, 1 otherwise).
     var scale: CGFloat {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        // Convert top-left global to AppKit's bottom-left global to find the screen.
         let appKitRect = CGRect(x: bounds.minX, y: primaryHeight - bounds.maxY, width: bounds.width, height: bounds.height)
         let screen = NSScreen.screens.max { a, b in
             a.frame.intersection(appKitRect).area < b.frame.intersection(appKitRect).area

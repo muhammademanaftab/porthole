@@ -1,14 +1,11 @@
 import CoreGraphics
 
-/// Maps a normalized point inside a window (0...1, top-left origin) to a global
-/// screen point in CoreGraphics coordinates (top-left origin of the main display).
 public func globalPoint(nx: Double, ny: Double, windowBounds b: CGRect) -> CGPoint {
     let cx = min(max(nx, 0), 1)
     let cy = min(max(ny, 0), 1)
     return CGPoint(x: b.minX + cx * b.width, y: b.minY + cy * b.height)
 }
 
-/// The rect a video of `content` size occupies when fitted (letterboxed) into `bounds`.
 public func fittedRect(content: CGSize, in bounds: CGRect) -> CGRect {
     guard content.width > 0, content.height > 0, bounds.width > 0, bounds.height > 0 else { return bounds }
     let scale = min(bounds.width / content.width, bounds.height / content.height)
@@ -17,7 +14,6 @@ public func fittedRect(content: CGSize, in bounds: CGRect) -> CGRect {
                   width: size.width, height: size.height)
 }
 
-/// Normalizes a point inside `bounds` against the fitted video rect. Nil when outside the picture.
 public func normalized(_ p: CGPoint, content: CGSize, in bounds: CGRect) -> CGPoint? {
     let r = fittedRect(content: content, in: bounds)
     guard r.width > 0, r.height > 0 else { return nil }

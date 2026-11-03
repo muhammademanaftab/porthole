@@ -2,7 +2,6 @@ import AppKit
 import LiveKit
 import PortholeCore
 
-/// A remote window shown as a real window on this Mac. Local input is forwarded to the host.
 @MainActor
 final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     let windowID: UInt32
@@ -71,12 +70,10 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     override var canBecomeKey: Bool { true }
 }
 
-/// Transparent view over the video that turns AppKit events into Porthole messages.
 @MainActor
 final class InputCaptureView: NSView {
     let windowID: UInt32
     let connection: Connection
-    /// Size of the incoming video, for letterbox-aware pointer mapping.
     var contentPixels = CGSize.zero
     private var lastMove = Date.distantPast
 
@@ -115,7 +112,6 @@ final class InputCaptureView: NSView {
     private func sendMouse(_ e: NSEvent, kind: Message.MouseKind, button: Int) {
         guard let p = point(e) else { return }
         if kind == .move || kind == .drag {
-            // ~60 updates a second is plenty.
             guard Date().timeIntervalSince(lastMove) > 1.0 / 60 else { return }
             lastMove = Date()
         }
@@ -155,8 +151,6 @@ final class InputCaptureView: NSView {
     override func keyDown(with e: NSEvent) { sendKey(e, down: true) }
     override func keyUp(with e: NSEvent) { sendKey(e, down: false) }
 
-    /// ⌘ shortcuts go to the remote app too; AppKit never delivers their key-up, so send both now.
-    /// ⌘Q stays local so the viewer can still be quit.
     override func performKeyEquivalent(with e: NSEvent) -> Bool {
         guard window?.isKeyWindow == true, window?.firstResponder === self else { return false }
         if e.modifierFlags.contains(.command), e.charactersIgnoringModifiers == "q" { return false }

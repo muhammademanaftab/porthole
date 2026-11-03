@@ -2,12 +2,9 @@ import AppKit
 import ApplicationServices
 import PortholeCore
 
-/// Private but long-standing: maps an Accessibility window to its CGWindowID.
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
-/// Recreates a viewer's keyboard, pointer and resize input on this Mac.
-/// Events are posted system-wide at the window's position, after bringing that window to the front.
 @MainActor
 final class InputInjector {
     private let source = CGEventSource(stateID: .hidSystemState)
@@ -33,7 +30,6 @@ final class InputInjector {
         }
     }
 
-    // MARK: Focus
 
     private func axWindow(id: UInt32, pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
@@ -47,7 +43,6 @@ final class InputInjector {
         }
     }
 
-    /// Bring the window's app forward and raise the window, unless it already is in front.
     private func focus(id: UInt32, live: LiveWindow) {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         if front == live.pid && focusedWindow == id { return }
@@ -59,7 +54,6 @@ final class InputInjector {
         focusedWindow = id
     }
 
-    // MARK: Pointer
 
     private func mouse(_ m: Message, id: UInt32, live: LiveWindow) {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
@@ -87,7 +81,6 @@ final class InputInjector {
 
     private func scroll(_ m: Message, live: LiveWindow) {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
-        // Put the pointer over the window first so the scroll lands on the right view.
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
             .post(tap: .cghidEventTap)
         guard let e = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
@@ -96,7 +89,6 @@ final class InputInjector {
         e.post(tap: .cghidEventTap)
     }
 
-    // MARK: Keyboard
 
     private func flags(_ mods: UInt32?) -> CGEventFlags {
         let m = Modifiers(rawValue: mods ?? 0)
@@ -108,7 +100,6 @@ final class InputInjector {
         return f
     }
 
-    /// Modifier keys themselves: their state travels as flags on every other event instead.
     private static let modifierCodes: Set<UInt16> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
 
     private func key(_ m: Message, id: UInt32, live: LiveWindow) {
@@ -120,7 +111,6 @@ final class InputInjector {
         e.post(tap: .cghidEventTap)
     }
 
-    /// Committed text (paste-as-text, dictation, characters with no key): typed in small batches.
     private func text(_ m: Message, id: UInt32, live: LiveWindow) {
         guard let s = m.s, !s.isEmpty else { return }
         focus(id: id, live: live)
@@ -137,7 +127,6 @@ final class InputInjector {
         }
     }
 
-    // MARK: Resize
 
     private func resize(id: UInt32, live: LiveWindow, w: Double?, h: Double?) {
         guard let w, let h, w >= 100, h >= 80, let ax = axWindow(id: id, pid: live.pid) else { return }

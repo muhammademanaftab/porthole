@@ -2,7 +2,6 @@ import Foundation
 import Network
 import PortholeCore
 
-/// A tiny HTTP server: serves the browser viewer and hands out room tokens to viewers with the password.
 final class HTTPServer {
     private let listener: NWListener
     private let config: HostConfig
@@ -72,7 +71,6 @@ final class HTTPServer {
         }
     }
 
-    /// The host part of a Host header, IPv6 brackets kept.
     static func hostname(from header: String) -> String {
         if header.hasPrefix("["), let end = header.firstIndex(of: "]") { return String(header[...end]) }
         return header.split(separator: ":").first.map(String.init) ?? header

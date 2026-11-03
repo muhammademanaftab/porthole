@@ -2,8 +2,6 @@ import Foundation
 import LiveKit
 import PortholeCore
 
-/// The host's seat in the LiveKit room: answers viewers' control messages and
-/// publishes one video track per window that at least one viewer has open.
 @MainActor
 final class HostRoom: NSObject, RoomDelegate {
     let room = Room()
@@ -21,7 +19,6 @@ final class HostRoom: NSObject, RoomDelegate {
         try await room.connect(url: url, token: token, roomOptions: opts)
     }
 
-    // MARK: RoomDelegate
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
                           forTopic topic: String, encryptionType: EncryptionType) {
@@ -41,7 +38,6 @@ final class HostRoom: NSObject, RoomDelegate {
         NSLog("Porthole: host left the room: \(error?.localizedDescription ?? "no error")")
     }
 
-    // MARK: Messages
 
     private func handle(_ m: Message, from who: String) async {
         switch m.t {

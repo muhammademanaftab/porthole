@@ -1,7 +1,5 @@
 import Foundation
 
-/// Runs the open-source livekit-server as a child process, bound to this Mac only for signalling
-/// on all interfaces (LAN and Tailscale). It dies with the host.
 final class LiveKitServer {
     private var process: Process?
     let config: HostConfig
@@ -50,7 +48,6 @@ final class LiveKitServer {
         }
         try p.run()
         process = p
-        // Kill the child if we go away.
         atexit { LiveKitServer.shared?.process?.terminate() }
         LiveKitServer.shared = self
     }
@@ -59,7 +56,6 @@ final class LiveKitServer {
 
     nonisolated(unsafe) static var shared: LiveKitServer?
 
-    /// Wait until the signalling port answers.
     func waitUntilReady(timeout: TimeInterval = 10) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         let url = URL(string: "http://127.0.0.1:\(config.livekitPort)/")!

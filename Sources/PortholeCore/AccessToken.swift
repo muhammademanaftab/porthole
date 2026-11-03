@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Mints LiveKit access tokens (HS256 JWT) locally, so the host needs no cloud service.
 public struct AccessToken {
     public var apiKey: String
     public var apiSecret: String
@@ -44,7 +43,6 @@ public struct AccessToken {
     }
 }
 
-/// A random URL-safe secret.
 public func randomSecret(bytes: Int = 24) -> String {
     var d = Data(count: bytes)
     for i in 0..<bytes { d[i] = UInt8.random(in: 0...255) }

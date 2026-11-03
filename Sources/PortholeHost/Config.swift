@@ -1,9 +1,7 @@
 import Foundation
 import PortholeCore
 
-/// Host settings, created on first run in ~/Library/Application Support/Porthole/config.json.
 struct HostConfig: Codable {
-    /// What a viewer must present to get a room token.
     var password: String
     var apiKey: String
     var apiSecret: String
@@ -30,7 +28,6 @@ struct HostConfig: Codable {
     }
 }
 
-/// This Mac's Tailscale address (100.64.0.0/10), if it has one.
 func tailscaleAddress() -> String? {
     var addrs: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
@@ -42,7 +39,7 @@ func tailscaleAddress() -> String? {
         var sin = sockaddr_in()
         memcpy(&sin, sa, MemoryLayout<sockaddr_in>.size)
         let ip = UInt32(bigEndian: sin.sin_addr.s_addr)
-        if ip >> 22 == (100 << 2) | 1 { // 100.64.0.0/10
+        if ip >> 22 == (100 << 2) | 1 {
             return "\(ip >> 24).\((ip >> 16) & 255).\((ip >> 8) & 255).\(ip & 255)"
         }
     }

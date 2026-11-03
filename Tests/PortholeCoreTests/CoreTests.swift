@@ -37,7 +37,6 @@ final class GeometryTests: XCTestCase {
     }
 
     func testLetterboxedNormalization() {
-        // 16:9 video in a square view: bars top and bottom.
         let bounds = CGRect(x: 0, y: 0, width: 1600, height: 1600)
         let content = CGSize(width: 1600, height: 900)
         XCTAssertEqual(fittedRect(content: content, in: bounds), CGRect(x: 0, y: 350, width: 1600, height: 900))

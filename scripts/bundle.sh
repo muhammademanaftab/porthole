@@ -1,7 +1,4 @@
 #!/bin/bash
-# Builds Porthole Host.app and Porthole.app into dist/.
-# SIGN_ID: a code-signing identity (default: ad-hoc "-"). A stable identity keeps
-# macOS privacy permissions across rebuilds; ad-hoc signing asks again after each build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-release}
@@ -10,14 +7,12 @@ swift build -c "$CONFIG" --arch arm64
 BIN=.build/arm64-apple-macosx/$CONFIG
 rm -rf dist && mkdir -p dist
 
-make_app() { # name exe bundle-id ui-element
+make_app() {
   local app="dist/$1.app" exe=$2 id=$3 agent=$4
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
   cp "$BIN/$exe" "$app/Contents/MacOS/$exe"
-  # Dynamic frameworks SwiftPM placed next to the binary (LiveKit's WebRTC and FFI).
   for fw in "$BIN"/*.framework; do [ -e "$fw" ] && cp -R "$fw" "$app/Contents/Frameworks/"; done
   install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/$exe" 2>/dev/null || true
-  # SwiftPM resource bundles (LiveKit ships one).
   for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$app/Contents/Resources/"; done
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -4,9 +4,6 @@ import LiveKit
 import PortholeCore
 import ScreenCaptureKit
 
-/// One shared window: ScreenCaptureKit capture at the window's native pixel size, fed into a
-/// LiveKit buffer track. Keeps a still window alive with a periodic re-send of the last frame
-/// (LiveKit treats a silent publisher as gone) and follows the window's size.
 final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     let windowID: UInt32
     let track: LocalVideoTrack
@@ -19,7 +16,6 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pixelSize = CGSize.zero
     var onClosed: (() -> Void)?
 
-    /// Largest frame we hand the encoder; beyond this hardware H.264 struggles.
     static let maxPixels = CGSize(width: 3840, height: 2400)
 
     private var capturer: BufferCapturer { track.capturer as! BufferCapturer }
@@ -36,7 +32,6 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         var w = points.width * scale, h = points.height * scale
         let f = min(1, maxPixels.width / w, maxPixels.height / h)
         w = (w * f).rounded(.down); h = (h * f).rounded(.down)
-        // Encoders want even dimensions.
         return CGSize(width: max(2, Int(w) & ~1), height: max(2, Int(h) & ~1))
     }
 
@@ -77,7 +72,6 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         return c
     }
 
-    /// Re-check the window: follow size changes, keep a quiet stream alive, notice a closed window.
     private func startTimer() {
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + 0.5, repeating: 0.5)
@@ -98,7 +92,6 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
                 if let err { NSLog("Porthole: resize capture failed: \(err.localizedDescription)") }
             }
         }
-        // Keepalive: a still window produces no frames; re-send the last one every second.
         if Date().timeIntervalSince(lastFrameAt) > 1.0, let buf = lastBuffer {
             capturer.capture(buf)
             lastFrameAt = Date()
