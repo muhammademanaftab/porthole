@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Porthole</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1418; --panel:#182027; --ink:#e3e9ee; --muted:#8c9aa5; --accent:#5cc5cc; --line:#26323b; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  #picker { max-width:720px; margin:0 auto; padding:32px 16px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .muted { color:var(--muted); }
+  #list { margin-top:18px; display:grid; gap:6px; }
+  .row { display:flex; gap:12px; align-items:center; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; }
+  .row:hover, .row:focus-visible { border-color:var(--accent); outline:none; }
+  .row b { font-weight:600; } .row span { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row small { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  form { display:flex; gap:8px; margin-top:18px; }
+  input { flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+  button { padding:9px 14px; border-radius:8px; border:1px solid var(--accent); background:transparent; color:var(--accent); font:inherit; cursor:pointer; }
+  #stage { position:fixed; inset:0; background:#000; display:none; }
+  #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; }
+  #hud { position:fixed; left:50%; top:8px; transform:translateX(-50%); background:rgba(20,28,34,.85); color:var(--ink); padding:4px 12px; border-radius:999px; font-size:12px; pointer-events:none; transition:opacity .4s; }
+</style>
+</head>
+<body>
+<div id="picker">
+  <h1>Porthole</h1>
+  <div class="muted" id="status">Connecting…</div>
+  <form id="pwform" hidden><input id="pw" type="password" placeholder="Host password" autocomplete="current-password"><button>Connect</button></form>
+  <div id="list"></div>
+</div>
+<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+<script>
+const LK = window.LivekitClient;
+const params = new URLSearchParams(location.search);
+const winId = params.get('win') ? Number(params.get('win')) : null;
+const $ = (id) => document.getElementById(id);
+const isMac = /Mac/.test(navigator.platform);
+let room, hostP;
+
+// Browser KeyboardEvent.code -> macOS virtual keycode (ANSI layout).
+const KEYS = {KeyA:0,KeyS:1,KeyD:2,KeyF:3,KeyH:4,KeyG:5,KeyZ:6,KeyX:7,KeyC:8,KeyV:9,IntlBackslash:10,KeyB:11,KeyQ:12,KeyW:13,KeyE:14,KeyR:15,KeyY:16,KeyT:17,Digit1:18,Digit2:19,Digit3:20,Digit4:21,Digit6:22,Digit5:23,Equal:24,Digit9:25,Digit7:26,Minus:27,Digit8:28,Digit0:29,BracketRight:30,KeyO:31,KeyU:32,BracketLeft:33,KeyI:34,KeyP:35,Enter:36,KeyL:37,KeyJ:38,Quote:39,KeyK:40,Semicolon:41,Backslash:42,Comma:43,Slash:44,KeyN:45,KeyM:46,Period:47,Tab:48,Space:49,Backquote:50,Backspace:51,Escape:53,MetaRight:54,MetaLeft:55,ShiftLeft:56,CapsLock:57,AltLeft:58,ControlLeft:59,ShiftRight:60,AltRight:61,ControlRight:62,NumpadDecimal:65,NumpadMultiply:67,NumpadAdd:69,NumLock:71,NumpadDivide:75,NumpadEnter:76,NumpadSubtract:78,NumpadEqual:81,Numpad0:82,Numpad1:83,Numpad2:84,Numpad3:85,Numpad4:86,Numpad5:87,Numpad6:88,Numpad7:89,Numpad8:91,Numpad9:92,F5:96,F6:97,F7:98,F3:99,F8:100,F9:101,F11:103,F13:105,F14:107,F10:109,F12:111,F15:113,Help:114,Insert:114,Home:115,PageUp:116,Delete:117,F4:118,End:119,F2:120,PageDown:121,F1:122,ArrowLeft:123,ArrowRight:124,ArrowDown:125,ArrowUp:126};
+
+// Modifier bits shared with the host: shift 1, control 2, option 4, command 8.
+// On Windows the Ctrl key acts as Command (so Ctrl+C copies on the Mac) and the Windows key acts as Control.
+function mods(e) {
+  let m = 0;
+  if (e.shiftKey) m |= 1;
+  if (e.altKey) m |= 4;
+  if (isMac) { if (e.ctrlKey) m |= 2; if (e.metaKey) m |= 8; }
+  else { if (e.ctrlKey) m |= 8; if (e.metaKey) m |= 2; }
+  return m;
+}
+
+function send(msg, reliable = true) {
+  const data = new TextEncoder().encode(JSON.stringify(msg));
+  room.localParticipant.publishData(data, { reliable, topic: 'porthole', destinationIdentities: ['host'] });
+}
+
+async function connect(pw) {
+  const r = await fetch(`/token?pw=${encodeURIComponent(pw)}&name=browser`);
+  if (!r.ok) { showPassword('Wrong password.'); return; }
+  sessionStorage.setItem('pw', pw);
+  const { url, token } = await r.json();
+  room = new LK.Room({ adaptiveStream: false, dynacast: false });
+  room.on(LK.RoomEvent.DataReceived, onData);
+  room.on(LK.RoomEvent.Disconnected, () => hud('Disconnected from host', true));
+  await room.connect(url, token, { autoSubscribe: false });
+  for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
+  hostP = room.remoteParticipants.get('host');
+  if (!hostP) { $('status').textContent = 'Connected, but the host is not in the room. Is Porthole Host running?'; return; }
+  if (winId) openWindow(winId); else send({ t: 'list' });
+}
+
+function onData(payload, participant, kind, topic) {
+  if (topic !== 'porthole') return;
+  const m = JSON.parse(new TextDecoder().decode(payload));
+  if (m.t === 'windows') renderList(m.list || []);
+  else if (m.t === 'opened' && m.win === winId) subscribe(m.track);
+  else if (m.t === 'closed' && m.win === winId) hud('The window was closed on the host.', true);
+  else if (m.t === 'error') { $('status').textContent = m.msg; hud(m.msg, true); }
+}
+
+function renderList(list) {
+  $('status').textContent = list.length ? `${list.length} windows on the host. Each opens in its own tab.` : 'No windows to share on the host.';
+  const pw = sessionStorage.getItem('pw');
+  $('list').replaceChildren(...list.map(w => {
+    const a = document.createElement('a');
+    a.className = 'row'; a.target = '_blank';
+    a.href = `?pw=${encodeURIComponent(pw)}&win=${w.id}`;
+    a.innerHTML = `<b></b><span></span><small>${Math.round(w.w)}×${Math.round(w.h)}</small>`;
+    a.querySelector('b').textContent = w.app;
+    a.querySelector('span').textContent = w.title;
+    return a;
+  }));
+}
+
+function openWindow(id) {
+  $('picker').style.display = 'none';
+  $('stage').style.display = 'block';
+  hud('Opening window…');
+  send({ t: 'open', win: id });
+  setTimeout(() => sendResize(), 800);
+}
+
+function subscribe(trackName) {
+  const tryNow = () => {
+    const pub = [...hostP.trackPublications.values()].find(p => p.trackName === trackName);
+    if (!pub) return false;
+    pub.setSubscribed(true);
+    return true;
+  };
+  room.on(LK.RoomEvent.TrackSubscribed, (track, pub) => {
+    if (pub.trackName !== trackName) return;
+    track.attach($('video'));
+    document.title = `Porthole · window ${winId}`;
+    hud('Connected. Click to control.');
+    $('video').focus();
+  });
+  if (!tryNow()) room.on(LK.RoomEvent.TrackPublished, () => tryNow());
+}
+
+let hudTimer;
+function hud(text, sticky) {
+  const h = $('hud'); h.textContent = text; h.style.opacity = 1;
+  clearTimeout(hudTimer);
+  if (!sticky) hudTimer = setTimeout(() => h.style.opacity = 0, 2500);
+}
+
+// Pointer position normalized to the visible picture (object-fit: contain letterboxes it).
+function norm(e) {
+  const v = $('video'), r = v.getBoundingClientRect();
+  const vw = v.videoWidth || r.width, vh = v.videoHeight || r.height;
+  const s = Math.min(r.width / vw, r.height / vh);
+  const w = vw * s, h = vh * s, x0 = r.left + (r.width - w) / 2, y0 = r.top + (r.height - h) / 2;
+  const x = (e.clientX - x0) / w, y = (e.clientY - y0) / h;
+  return (x < 0 || y < 0 || x > 1 || y > 1) ? null : { x, y };
+}
+
+const video = $('video');
+let lastMove = 0, buttons = 0;
+video.addEventListener('contextmenu', e => e.preventDefault());
+video.addEventListener('pointerdown', e => {
+  const p = norm(e); if (!p) return;
+  video.focus(); video.setPointerCapture(e.pointerId); buttons |= 1 << e.button;
+  send({ t: 'mouse', win: winId, kind: 'down', btn: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, x: p.x, y: p.y, clicks: e.detail || 1, mods: mods(e) });
+  e.preventDefault();
+});
+video.addEventListener('pointerup', e => {
+  const p = norm(e) || { x: 0.5, y: 0.5 }; buttons &= ~(1 << e.button);
+  send({ t: 'mouse', win: winId, kind: 'up', btn: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, x: p.x, y: p.y, clicks: e.detail || 1, mods: mods(e) });
+});
+video.addEventListener('pointermove', e => {
+  const now = performance.now(); if (now - lastMove < 16) return; lastMove = now;
+  const p = norm(e); if (!p) return;
+  send({ t: 'mouse', win: winId, kind: buttons ? 'drag' : 'move', btn: (buttons & 4) ? 1 : 0, x: p.x, y: p.y, mods: mods(e) }, false);
+});
+video.addEventListener('wheel', e => {
+  const p = norm(e); if (!p) return;
+  const k = e.deltaMode === 1 ? 16 : 1;
+  send({ t: 'scroll', win: winId, x: p.x, y: p.y, dx: -e.deltaX * k, dy: -e.deltaY * k });
+  e.preventDefault();
+}, { passive: false });
+
+function onKey(e, down) {
+  if (!winId || !room) return;
+  const code = KEYS[e.code];
+  e.preventDefault();
+  if (code === undefined) {
+    // A character with no physical key on this layout: type it as text.
+    if (down && e.key.length === 1) send({ t: 'text', win: winId, s: e.key });
+    return;
+  }
+  send({ t: 'key', win: winId, code, down, mods: mods(e), s: e.key.length === 1 ? e.key : undefined });
+}
+window.addEventListener('keydown', e => onKey(e, true));
+window.addEventListener('keyup', e => onKey(e, false));
+window.addEventListener('paste', e => {
+  const s = e.clipboardData.getData('text'); if (s && winId) send({ t: 'text', win: winId, s });
+  e.preventDefault();
+});
+
+let resizeTimer;
+function sendResize() { if (winId && room) send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); }
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(sendResize, 300); });
+
+function showPassword(msg) {
+  $('status').textContent = msg || 'Enter the host password (from the Porthole menu-bar icon on the host).';
+  $('pwform').hidden = false;
+}
+$('pwform').addEventListener('submit', e => { e.preventDefault(); $('pwform').hidden = true; connect($('pw').value); });
+
+const pw = params.get('pw') || sessionStorage.getItem('pw');
+if (pw) connect(pw).catch(err => showPassword('Could not connect: ' + err.message)); else showPassword();
+</script>
+</body>
+</html>
