@@ -387,3 +387,9 @@ test('pasteKeys presses Command, taps V, then releases Command on the host', () 
     { t: 'key', win: 7, code: kVK.Command, down: false, mods: 0 },
   ]);
 });
+
+test('index.html declares an empty icon so the browser does not ask for /favicon.ico', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const head = html.slice(0, html.indexOf('</head>'));
+  assert.match(head, /<link rel="icon" href="data:,">/);
+});

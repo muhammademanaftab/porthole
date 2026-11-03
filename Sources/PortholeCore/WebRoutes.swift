@@ -33,13 +33,16 @@ public struct WebRoutes {
     public var tokens: AccessToken
     public var webRoot: URL?
     public var suffix: () -> String
+    public var pairing: PairingDesk?
+    public var hostName: String
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
 
     public init(password: String, livekitPort: Int, tokens: AccessToken, webRoot: URL?,
-                suffix: @escaping () -> String = { randomSecret(bytes: 3) }) {
+                suffix: @escaping () -> String = { randomSecret(bytes: 3) }, pairing: PairingDesk? = nil, hostName: String = "Mac") {
         self.password = password; self.livekitPort = livekitPort; self.tokens = tokens
         self.webRoot = webRoot; self.suffix = suffix
+        self.pairing = pairing; self.hostName = hostName
     }
 
     public func respond(to request: String) -> HTTPResponse {
@@ -54,6 +57,9 @@ public struct WebRoutes {
         guard Self.hasValidEscapes(target), let comps = URLComponents(string: target),
               hostLine != nil || parts.count < 3 || parts[2] != "HTTP/1.1" else {
             return HTTPResponse("400 Bad Request", "text/plain", "bad request")
+        }
+        if parts[0] == "HEAD" && comps.path == "/pair" {
+            return HTTPResponse("405 Method Not Allowed", "text/plain", "method not allowed", headers: [("Allow", "GET")])
         }
         var response = route(comps, hostHeader: hostLine.map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) } ?? "")
         if parts[0] == "HEAD" { response.sendsBody = false }
@@ -76,6 +82,12 @@ public struct WebRoutes {
             let token = tokens.make(identity: identity, room: "porthole", canPublish: false)
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
             return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
+        case "/hello":
+            return HTTPResponse("200 OK", "application/json", HostHello(name: hostName, version: portholeProtocolVersion).json)
+        case "/pair":
+            return pair(query["code"] ?? "")
+        case "/favicon.ico":
+            return HTTPResponse("204 No Content", "image/x-icon", Data())
         default:
             let name = String(comps.path.dropFirst())
             guard let root = webRoot, Self.isServable(name),
@@ -84,6 +96,17 @@ public struct WebRoutes {
             }
             return HTTPResponse("200 OK", Self.contentType(for: name), body)
         }
+    }
+
+    private func pair(_ code: String) -> HTTPResponse {
+        guard let pairing else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        let outcome = pairing.redeem(code)
+        if outcome == .accepted {
+            let body = (try? JSONSerialization.data(withJSONObject: ["password": password])) ?? Data()
+            return HTTPResponse("200 OK", "application/json", body)
+        }
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": pairMessage(outcome) ?? ""])) ?? Data()
+        return HTTPResponse("403 Forbidden", "application/json", body)
     }
 
     public static func isServable(_ name: String) -> Bool {

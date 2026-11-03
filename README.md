@@ -26,6 +26,6 @@ Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Acc
 
 1. On the host, open Porthole Host and grant Screen Recording and Accessibility.
 2. Copy the browser link or password from its menu-bar icon.
-3. On another Mac: `open dist/Porthole.app --args <host> <password>`, or open the link in a browser.
+3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). Pick one; the first time, choose Pair a New Viewer… on the host and type the 6-digit code (valid 2 minutes, single use, 5 tries). The password is then kept in the Keychain per host. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
 
 Ports: 7878 (web and tokens), 7880 to 7882 (LiveKit).

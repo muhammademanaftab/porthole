@@ -10,6 +10,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var titles: [UInt32: String] = [:]
     var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     var clipTimer: Timer?
+    var connectWindow: ConnectWindow?
+    let discovery = HostDiscovery()
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
@@ -17,13 +19,15 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.pollClipboard() }
         }
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
-        let defaults = UserDefaults.standard
-        let host = args.host ?? defaults.string(forKey: "host")
-        let pw = args.password ?? defaults.string(forKey: "password")
-        if let host, let pw {
+        if let host = args.host, let pw = args.password {
             connect(host: host, password: pw)
+            return
+        }
+        let host = args.host ?? UserDefaults.standard.string(forKey: "host")
+        if let host, let pw = PasswordStore.password(for: host) {
+            connect(host: host, password: pw, savedPassword: true)
         } else {
-            askForHost(host: host, password: pw)
+            showConnect(address: host, ask: args.host.map { askText(nil, $0) })
         }
     }
 
@@ -33,7 +37,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         main.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Change Host…", action: #selector(changeHost), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Porthole", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -41,33 +45,82 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func showPicker() { picker?.makeKeyAndOrderFront(nil); connection?.requestList() }
-    @objc func changeHost() { askForHost(host: UserDefaults.standard.string(forKey: "host"), password: nil) }
+    @objc func connectToHost() { showConnect(address: connection?.hostAddress) }
 
-    func askForHost(host: String?, password: String?) {
-        let alert = NSAlert()
-        alert.messageText = "Connect to a Porthole host"
-        alert.informativeText = "The host's Tailscale address (or name) and its password, from the host's menu-bar icon."
-        let stack = NSStackView(frame: CGRect(x: 0, y: 0, width: 280, height: 56))
-        stack.orientation = .vertical
-        let hostField = NSTextField(string: host ?? "leos-mac-mini")
-        hostField.placeholderString = "host or 100.x.y.z"
-        let pwField = NSSecureTextField(string: password ?? "")
-        pwField.placeholderString = "password"
-        stack.addArrangedSubview(hostField); stack.addArrangedSubview(pwField)
-        alert.accessoryView = stack
-        alert.addButton(withTitle: "Connect"); alert.addButton(withTitle: "Quit")
+    func showConnect(address: String?, ask: String? = nil) {
+        let w = connectWindow ?? makeConnectWindow()
+        w.cancelQuits = connection == nil
+        if let address { w.fill(address) }
+        if let ask { w.ask(ask) }
+        discovery.start()
+        w.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        guard alert.runModal() == .alertFirstButtonReturn else { NSApp.terminate(nil); return }
-        connect(host: hostField.stringValue, password: pwField.stringValue)
     }
 
-    func connect(host: String, password: String) {
+    func makeConnectWindow() -> ConnectWindow {
+        let w = ConnectWindow()
+        connectWindow = w
+        discovery.onChange = { [weak self, weak w] in
+            guard let self, let w else { return }
+            w.show(self.discovery.hosts, scanning: self.discovery.scanning, preferTailscale: self.discovery.tailscaleRunning)
+        }
+        w.onRefresh = { [weak self] in self?.discovery.refresh() }
+        w.onCancel = { [weak self, weak w] in
+            guard let self else { return }
+            if self.connection == nil { NSApp.terminate(nil) }
+            w?.close()
+            self.discovery.stop()
+        }
+        w.onSubmit = { [weak self] address, name, secret in self?.submit(address: address, name: name, secret: secret) }
+        return w
+    }
+
+    func askText(_ name: String?, _ address: String) -> String {
+        "Type the pairing code from \(name ?? address): on that Mac, click the Porthole Host menu-bar icon and choose Pair a New Viewer…. Its password works too."
+    }
+
+    func submit(address: String, name: String?, secret: String?) {
+        guard let w = connectWindow else { return }
+        guard splitHostAddress(address) != nil else {
+            w.showError("\"\(address)\" isn't a host address. Use a name or IP, optionally with :port.")
+            return
+        }
+        guard let secret, !secret.isEmpty else {
+            if let pw = PasswordStore.password(for: address) {
+                startConnection(address: address, name: name, password: pw, saved: true)
+            } else {
+                w.ask(askText(name, address))
+            }
+            return
+        }
+        guard looksLikePairingCode(secret) else {
+            startConnection(address: address, name: name, password: secret, saved: false)
+            return
+        }
+        w.setBusy(true)
+        Task {
+            let reply = await HostDiscovery.pair(address: address, code: secret)
+            w.setBusy(false)
+            switch reply {
+            case .password(let pw): startConnection(address: address, name: name, password: pw, saved: false)
+            case .refused(let why): w.showError(why)
+            }
+        }
+    }
+
+    func startConnection(address: String, name: String?, password: String, saved: Bool) {
+        connectWindow?.close()
+        discovery.stop()
+        connect(host: address, password: password, name: name, savedPassword: saved)
+    }
+
+    func connect(host: String, password: String, name: String? = nil, savedPassword: Bool = false) {
         for p in portals.values { p.close() }
         if let old = connection { Task { await old.disconnect() } }
         picker?.close()
         let c = Connection(hostAddress: host, password: password)
         connection = c
-        let picker = PickerWindow(hostName: host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
+        let picker = PickerWindow(hostName: name ?? host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
         self.picker = picker
         picker.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -79,11 +132,15 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             do {
                 try await c.connect()
                 UserDefaults.standard.set(host, forKey: "host")
-                UserDefaults.standard.set(password, forKey: "password")
+                if !PasswordStore.save(password, for: host) { UserDefaults.standard.set(password, forKey: "password") }
+                PasswordStore.knownHosts = rememberHost(PasswordStore.knownHosts, KnownHost(name: name ?? host, address: host))
                 for _ in 0..<50 where c.hostParticipant == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
                 c.requestList()
             } catch {
                 picker.showError(error.localizedDescription)
+                if savedPassword && (error as NSError).domain == "Porthole" && (error as NSError).code == 401 {
+                    showConnect(address: host, ask: "The saved password for \(name ?? host) was refused. " + askText(name, host))
+                }
             }
         }
     }
