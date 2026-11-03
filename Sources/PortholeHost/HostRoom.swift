@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import LiveKit
 import PortholeCore
 
@@ -13,6 +13,8 @@ final class HostRoom: NSObject, RoomDelegate {
     private var url = ""
     private var makeToken: (() -> String)?
     private var reconnecting = false
+    private var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
+    private var clipTimer: Timer?
     var onChange: (() -> Void)?
     private(set) var isConnected = false
 
@@ -22,7 +24,35 @@ final class HostRoom: NSObject, RoomDelegate {
         self.url = url
         self.makeToken = makeToken
         room.add(delegate: self)
+        try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
+            let text = try await reader.readAll()
+            await self?.clipboardReceived(text, from: identity.stringValue)
+        }
+        clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollClipboard() }
+        }
         try await join()
+    }
+
+    private func pollClipboard() {
+        let pb = NSPasteboard.general
+        guard let text = clip.outgoing(changeCount: pb.changeCount, text: { pb.string(forType: .string) }) else { return }
+        let to = registry.activeViewers
+        guard !to.isEmpty else { return }
+        Log.info("clipboard: sending \(text.utf8.count) bytes to \(to.count) viewer(s)")
+        let opts = StreamTextOptions(topic: clipboardTopic, destinationIdentities: to.map { Participant.Identity(from: $0) })
+        Task { do { _ = try await room.localParticipant.sendText(text, options: opts) } catch {
+            Log.info("clipboard send failed: \(error.localizedDescription)")
+        } }
+    }
+
+    private func clipboardReceived(_ text: String, from who: String) {
+        guard registry.activeViewers.contains(who), clip.incoming(text) else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        clip.applied(changeCount: pb.changeCount)
+        Log.info("clipboard: received \(text.utf8.count) bytes from \(who)")
     }
 
     private func join() async throws {

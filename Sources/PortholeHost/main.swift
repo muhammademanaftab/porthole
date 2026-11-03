@@ -16,6 +16,16 @@ final class HostApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        LoginAgent.installOnFirstRun()
+        if !LoginAgent.launchedByAgent && LoginAgent.isInstalled {
+            Log.info("handing over to the login agent")
+            LoginAgent.handOver()
+            exit(0)
+        }
+        if let exe = Bundle.main.executableURL?.path {
+            let others = Processes.running(executable: exe)
+            if !others.isEmpty { Log.info("stopping older host instance(s) \(others)"); Processes.stop(others) }
+        }
         setUpMenu()
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
@@ -70,6 +80,10 @@ final class HostApp: NSObject, NSApplicationDelegate {
                               action: #selector(openAXSettings), keyEquivalent: "")
         ax.target = self
         menu.addItem(.separator())
+        let login = menu.addItem(withTitle: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
+        login.target = self
+        login.state = LoginAgent.isInstalled ? .on : .off
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Porthole Host", action: #selector(quit), keyEquivalent: "q").target = self
         statusItem?.menu = menu
     }
@@ -81,6 +95,10 @@ final class HostApp: NSObject, NSApplicationDelegate {
     }
     @objc func openAXSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+    @objc func toggleLogin() {
+        if LoginAgent.isInstalled { LoginAgent.uninstall() } else { LoginAgent.install() }
+        refresh()
     }
     @objc func quit() { host.stage.unparkAll(); server.stop(); NSApp.terminate(nil) }
 

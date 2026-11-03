@@ -110,6 +110,23 @@
 
   const sizeLabel = (w, h) => `${Math.round(w)}\u00d7${Math.round(h)}`;
 
-  return { KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  const CLIP_TOPIC = 'porthole-clip';
+  const CLIP_MAX_BYTES = 1000000;
+  const COMMAND = 8;
+
+  function clipFits(text) {
+    return typeof text === 'string' && text.length > 0 && new TextEncoder().encode(text).length <= CLIP_MAX_BYTES;
+  }
+
+  function pasteKeys(winId) {
+    return [
+      { t: 'key', win: winId, code: KEYS.MetaLeft, down: true, mods: COMMAND },
+      { t: 'key', win: winId, code: KEYS.KeyV, down: true, mods: COMMAND },
+      { t: 'key', win: winId, code: KEYS.KeyV, down: false, mods: COMMAND },
+      { t: 'key', win: winId, code: KEYS.MetaLeft, down: false, mods: 0 },
+    ];
+  }
+
+  return { CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel };
 });

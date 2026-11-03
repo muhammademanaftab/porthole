@@ -9,6 +9,10 @@ public struct SessionRegistry: Sendable {
 
     public var openCount: Int { live.count }
 
+    public var activeViewers: Set<String> {
+        live.reduce(into: Set<String>()) { $0.formUnion(viewers[$1] ?? []) }
+    }
+
     public mutating func beginOpen(_ id: UInt32, by who: String) -> OpenStep {
         viewers[id, default: []].insert(who)
         if live.contains(id) { return .alreadyLive }

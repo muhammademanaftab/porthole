@@ -23,6 +23,7 @@
   #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; touch-action:none; }
   #fit { position:fixed; right:10px; bottom:10px; opacity:.35; background:rgba(20,28,34,.85); font-size:12px; padding:5px 10px; }
   #fit:hover, #fit:focus-visible { opacity:1; }
+  #clip { position:fixed; right:10px; top:10px; display:none; background:rgba(20,28,34,.92); font-size:12px; padding:5px 10px; }
   #hud { position:fixed; left:50%; top:8px; transform:translateX(-50%); background:rgba(20,28,34,.85); color:var(--ink); padding:4px 12px; border-radius:999px; font-size:12px; pointer-events:none; transition:opacity .4s; }
 </style>
 </head>
@@ -33,7 +34,7 @@
   <form id="pwform" hidden><input id="pw" type="password" placeholder="Host password" autocomplete="current-password"><button>Connect</button></form>
   <div id="list"></div>
 </div>
-<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button></div>
+<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button><button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button></div>
 <script src="livekit-client.umd.min.js"></script>
 <script src="porthole-core.js"></script>
 <script>
@@ -59,6 +60,10 @@ async function connect(pw) {
   const { url, token } = await r.json();
   room = new LK.Room({ adaptiveStream: false, dynacast: false });
   room.on(LK.RoomEvent.DataReceived, onData);
+  room.registerTextStreamHandler(PC.CLIP_TOPIC, async (reader, info) => {
+    if (info.identity !== 'host') return;
+    clipFromHost(await reader.readAll());
+  });
   room.on(LK.RoomEvent.Disconnected, () => hud('Disconnected from host', true));
   await room.connect(url, token, { autoSubscribe: false });
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
@@ -161,9 +166,35 @@ function onKey(e, down) {
 }
 window.addEventListener('keydown', e => onKey(e, true));
 window.addEventListener('keyup', e => onKey(e, false));
-window.addEventListener('paste', e => {
-  const s = e.clipboardData.getData('text'); if (s && winId) send({ t: 'text', win: winId, s });
+let hostClip = null;
+async function clipFromHost(text) {
+  if (!PC.clipFits(text)) return;
+  hostClip = text;
+  try { await navigator.clipboard.writeText(text); hud('Copied from the Mac.'); return; } catch (_) {}
+  $('clip').style.display = 'block';
+  hud('The Mac copied something. Click "Copy here" to get it on this computer.');
+}
+$('clip').addEventListener('click', e => {
+  e.stopPropagation();
+  const ta = document.createElement('textarea');
+  ta.value = hostClip || ''; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  $('clip').style.display = 'none';
+  hud(ok ? 'Copied to this computer.' : 'Copy failed.');
+  video.focus();
+});
+window.addEventListener('paste', async e => {
   e.preventDefault();
+  const s = e.clipboardData.getData('text');
+  if (!winId || !room || !PC.clipFits(s)) return;
+  if (s !== hostClip) {
+    await room.localParticipant.sendText(s, { topic: PC.CLIP_TOPIC, destinationIdentities: ['host'] });
+    hostClip = s;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  for (const m of PC.pasteKeys(winId)) send(m);
 });
 
 function fitToTab() { if (winId && room) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); hud('Resized the window to fit this tab.'); } }

@@ -8,9 +8,14 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var picker: PickerWindow?
     var portals: [UInt32: PortalWindow] = [:]
     var titles: [UInt32: String] = [:]
+    var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
+    var clipTimer: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
+        clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollClipboard() }
+        }
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         let defaults = UserDefaults.standard
         let host = args.host ?? defaults.string(forKey: "host")
@@ -69,6 +74,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.onWindows = { [weak picker] list in picker?.show(list) }
         c.onError = { [weak picker] msg in picker?.showError(msg) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
+        c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
         Task {
             do {
                 try await c.connect()
@@ -98,6 +104,21 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             portal.makeKeyAndOrderFront(nil)
             NSApp.activate()
         }
+    }
+
+    func pollClipboard() {
+        guard !portals.isEmpty, let c = connection else { return }
+        let pb = NSPasteboard.general
+        guard let text = clip.outgoing(changeCount: pb.changeCount, text: { pb.string(forType: .string) }) else { return }
+        c.sendClipboard(text)
+    }
+
+    func clipboardFromHost(_ text: String) {
+        guard clip.incoming(text) else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        clip.applied(changeCount: pb.changeCount)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

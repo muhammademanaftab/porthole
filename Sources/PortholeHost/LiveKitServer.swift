@@ -49,23 +49,10 @@ final class LiveKitServer {
     }
 
     static func stopLeftovers(of bin: String) {
-        let target = URL(fileURLWithPath: bin).resolvingSymlinksInPath().path
-        let own = ProcessInfo.processInfo.processIdentifier
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return }
-        var pids = [pid_t](repeating: 0, count: Int(count) + 32)
-        let n = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        var buf = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
-        let stale = pids.prefix(Int(max(n, 0))).filter { pid in
-            guard pid > 0, pid != own, proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return false }
-            return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path == target
-        }
+        let stale = Processes.running(executable: bin)
         guard !stale.isEmpty else { return }
-        for pid in stale { Log.info("stopping leftover livekit-server \(pid)"); kill(pid, SIGTERM) }
-        let deadline = Date().addingTimeInterval(3)
-        while Date() < deadline, stale.contains(where: { kill($0, 0) == 0 }) { usleep(100_000) }
-        for pid in stale where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-        usleep(200_000)
+        for pid in stale { Log.info("stopping leftover livekit-server \(pid)") }
+        Processes.stop(stale)
     }
 
     private var stopping = false

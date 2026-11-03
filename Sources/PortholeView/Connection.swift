@@ -10,6 +10,7 @@ final class Connection: NSObject, RoomDelegate {
     var onWindows: (([WindowInfo]) -> Void)?
     var onError: ((String) -> Void)?
     var onClosed: ((UInt32) -> Void)?
+    var onClipboard: ((String) -> Void)?
     private var pending: [UInt32: (VideoTrack, Message) -> Void] = [:]
     private var openedReplies: [UInt32: Message] = [:]
 
@@ -35,6 +36,11 @@ final class Connection: NSObject, RoomDelegate {
             throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: "The host refused the password, or isn't running."])
         }
         room.add(delegate: self)
+        try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
+            guard identity.stringValue == "host" else { return }
+            let text = try await reader.readAll()
+            Task { @MainActor [weak self] in self?.onClipboard?(text) }
+        }
         try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
                                roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
     }
@@ -54,6 +60,11 @@ final class Connection: NSObject, RoomDelegate {
 
     func send(_ m: Message, reliable: Bool = true) {
         outbox.yield((m.encoded(), reliable))
+    }
+
+    func sendClipboard(_ text: String) {
+        let opts = StreamTextOptions(topic: clipboardTopic, destinationIdentities: [Participant.Identity(from: "host")])
+        Task { _ = try? await room.localParticipant.sendText(text, options: opts) }
     }
 
     func disconnect() async {

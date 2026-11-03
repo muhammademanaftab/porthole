@@ -59,6 +59,11 @@ print("PASS  token issued (\(url))")
 
 let probe = Probe()
 probe.room.add(delegate: probe)
+final class ClipBox: @unchecked Sendable { let lock = NSLock(); var text: String?
+    func set(_ t: String) { lock.lock(); text = t; lock.unlock() }
+    func get() -> String? { lock.lock(); defer { lock.unlock() }; return text } }
+let fromHost = ClipBox()
+try await probe.room.registerTextStreamHandler(for: clipboardTopic) { reader, _ in fromHost.set(try await reader.readAll()) }
 try await probe.room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false))
 print("PASS  joined LiveKit room")
 var hostP: RemoteParticipant?
@@ -133,6 +138,16 @@ try await probe.send(resize)
 try await Task.sleep(nanoseconds: 2_000_000_000)
 let (_, size2) = counter.snapshot()
 print(size2.width > size.width ? "PASS  resize followed: \(Int(size2.width))×\(Int(size2.height)) px" : "FAIL  resize: still \(Int(size2.width))×\(Int(size2.height)) px")
+
+if let marker = env["PORTHOLE_CLIP_SEND"] {
+    _ = try await probe.room.localParticipant.sendText(marker, options: StreamTextOptions(topic: clipboardTopic, destinationIdentities: [Participant.Identity(from: "host")]))
+    print("SENT  clipboard text to host: \(marker)")
+    try await Task.sleep(nanoseconds: 2_000_000_000)
+}
+if let expected = env["PORTHOLE_CLIP_EXPECT"] {
+    for _ in 0..<100 where fromHost.get() != expected { try await Task.sleep(nanoseconds: 100_000_000) }
+    print(fromHost.get() == expected ? "PASS  clipboard from host arrived: \(expected)" : "FAIL  clipboard from host: got \(fromHost.get() ?? "nothing")")
+}
 
 var close = Message(.close); close.win = target.id
 try await probe.send(close)

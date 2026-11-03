@@ -357,9 +357,33 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['RETRY', 'createPointer', 'keyMessages', 'mods', 'norm', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
     assert.equal(html.includes(copy), false, copy);
   }
+});
+
+test('clipboard topic matches the Swift side', () => {
+  const swift = fs.readFileSync(path.join(__dirname, '../../Sources/PortholeCore/Clipboard.swift'), 'utf8');
+  assert.match(swift, new RegExp(`clipboardTopic = "${core.CLIP_TOPIC}"`));
+  assert.match(swift, new RegExp(`maxBytes = ${core.CLIP_MAX_BYTES.toLocaleString('en-US').replace(/,/g, '_')}`));
+});
+
+test('clipFits accepts normal text and rejects empty, non-strings and oversize', () => {
+  assert.equal(core.clipFits('hello'), true);
+  assert.equal(core.clipFits(''), false);
+  assert.equal(core.clipFits(undefined), false);
+  assert.equal(core.clipFits('a'.repeat(core.CLIP_MAX_BYTES)), true);
+  assert.equal(core.clipFits('a'.repeat(core.CLIP_MAX_BYTES + 1)), false);
+  assert.equal(core.clipFits('é'.repeat(core.CLIP_MAX_BYTES / 2 + 1)), false);
+});
+
+test('pasteKeys presses Command, taps V, then releases Command on the host', () => {
+  assert.deepEqual(core.pasteKeys(7), [
+    { t: 'key', win: 7, code: kVK.Command, down: true, mods: 8 },
+    { t: 'key', win: 7, code: kVK.ANSI_V, down: true, mods: 8 },
+    { t: 'key', win: 7, code: kVK.ANSI_V, down: false, mods: 8 },
+    { t: 'key', win: 7, code: kVK.Command, down: false, mods: 0 },
+  ]);
 });
