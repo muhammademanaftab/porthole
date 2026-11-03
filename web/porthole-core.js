@@ -127,6 +127,12 @@
     ];
   }
 
-  return { CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  const AUDIO_TRACK = 'aud-mix';
+
+  const isAudioTrack = (name) => name === AUDIO_TRACK;
+
+  const soundLabel = (canPlay, muted) => !canPlay ? 'Click for sound' : muted ? 'Sound off' : 'Sound on';
+
+  return { AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel };
 });

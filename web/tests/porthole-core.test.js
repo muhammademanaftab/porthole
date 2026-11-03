@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'isAudioTrack', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
     assert.equal(html.includes(copy), false, copy);
@@ -386,4 +386,21 @@ test('pasteKeys presses Command, taps V, then releases Command on the host', () 
     { t: 'key', win: 7, code: kVK.ANSI_V, down: false, mods: 8 },
     { t: 'key', win: 7, code: kVK.Command, down: false, mods: 0 },
   ]);
+});
+
+test('audio track name matches the Swift side', () => {
+  const swift = fs.readFileSync(path.join(__dirname, '../../Sources/PortholeCore/Message.swift'), 'utf8');
+  assert.match(swift, new RegExp(`audioTrackName = "${core.AUDIO_TRACK}"`));
+});
+
+test('isAudioTrack accepts only the host audio mix', () => {
+  assert.equal(core.isAudioTrack('aud-mix'), true);
+  for (const name of ['win-7', 'aud-', 'Aud-mix', 'aud-mix ', '', undefined, null]) assert.equal(core.isAudioTrack(name), false, String(name));
+});
+
+test('soundLabel asks for a click until the browser allows playback, then shows the mute state', () => {
+  assert.equal(core.soundLabel(false, false), 'Click for sound');
+  assert.equal(core.soundLabel(false, true), 'Click for sound');
+  assert.equal(core.soundLabel(true, false), 'Sound on');
+  assert.equal(core.soundLabel(true, true), 'Sound off');
 });

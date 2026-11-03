@@ -29,6 +29,7 @@ public struct Message: Codable, Equatable, Sendable {
     public var t: Kind
     public var win: UInt32?
     public var track: String?
+    public var audio: String?
     public var list: [WindowInfo]?
     public var code: UInt16?
     public var down: Bool?
@@ -72,4 +73,8 @@ public extension Message {
         guard name.hasPrefix("win-"), let id = UInt32(name.dropFirst(4)), trackName(for: id) == name else { return nil }
         return id
     }
+
+    static let audioTrackName = "aud-mix"
+
+    static func isAudioTrackName(_ name: String) -> Bool { name == audioTrackName }
 }

@@ -14,6 +14,8 @@ final class Connection: NSObject, RoomDelegate {
     var onIcon: ((UInt32, Data) -> Void)?
     private var pending: [UInt32: (VideoTrack, Message) -> Void] = [:]
     private var openedReplies: [UInt32: Message] = [:]
+    private var listening = SharedUse<String, UInt32>()
+    var muted = false { didSet { applyVolume() } }
 
     init(hostAddress: String, password: String) {
         self.hostAddress = hostAddress
@@ -110,8 +112,31 @@ final class Connection: NSObject, RoomDelegate {
     func close(_ id: UInt32) {
         var m = Message(.close); m.win = id
         send(m)
-        if let pub = hostParticipant?.trackPublications.values.first(where: { $0.name == Message.trackName(for: id) }) as? RemoteTrackPublication {
+        if let pub = publication(named: Message.trackName(for: id)) {
             Task { try? await pub.set(subscribed: false) }
+        }
+        if let audio = listening.owners[id], listening.remove(id), let pub = publication(named: audio) {
+            Task { try? await pub.set(subscribed: false) }
+        }
+    }
+
+    private func publication(named name: String) -> RemoteTrackPublication? {
+        hostParticipant?.trackPublications.values.first(where: { $0.name == name }) as? RemoteTrackPublication
+    }
+
+    private func listen(_ id: UInt32, to audio: String) {
+        guard listening.add(id, to: audio) else { return }
+        subscribeAudioIfPublished(audio)
+    }
+
+    private func subscribeAudioIfPublished(_ name: String) {
+        guard listening.keys.contains(name), let pub = publication(named: name) else { return }
+        if pub.track is RemoteAudioTrack { applyVolume() } else { Task { try? await pub.set(subscribed: true) } }
+    }
+
+    private func applyVolume() {
+        for name in listening.keys {
+            (publication(named: name)?.track as? RemoteAudioTrack)?.volume = muted ? 0 : 1
         }
     }
 
@@ -127,6 +152,7 @@ final class Connection: NSObject, RoomDelegate {
     private func deliver(_ id: UInt32, _ track: VideoTrack) {
         guard let reply = openedReplies[id], let cb = pending.removeValue(forKey: id) else { return }
         openedReplies[id] = nil
+        if let audio = reply.audio { listen(id, to: audio) }
         cb(track, reply)
     }
 
@@ -153,11 +179,20 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
+        if Message.isAudioTrackName(publication.name) {
+            let name = publication.name
+            Task { @MainActor in self.subscribeAudioIfPublished(name) }
+            return
+        }
         guard let id = Message.windowID(fromTrackName: publication.name) else { return }
         Task { @MainActor in if self.pending[id] != nil { self.subscribeIfPublished(id) } }
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        if Message.isAudioTrackName(publication.name) {
+            Task { @MainActor in self.applyVolume() }
+            return
+        }
         guard let id = Message.windowID(fromTrackName: publication.name), let track = publication.track as? VideoTrack else { return }
         Task { @MainActor in self.deliver(id, track) }
     }

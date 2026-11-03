@@ -12,6 +12,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var clipTimer: Timer?
     let tiles = TileManager()
     var icons: [UInt32: Data] = [:]
+    var muted = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
@@ -38,6 +39,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "")
         appMenu.addItem(withTitle: "Change Host…", action: #selector(changeHost), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Porthole", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -45,6 +47,12 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func showPicker() { picker?.makeKeyAndOrderFront(nil); connection?.requestList() }
+    @objc func toggleMute(_ item: NSMenuItem) {
+        muted.toggle()
+        item.state = muted ? .on : .off
+        connection?.muted = muted
+    }
+
     @objc func changeHost() { askForHost(host: UserDefaults.standard.string(forKey: "host"), password: nil) }
 
     func askForHost(host: String?, password: String?) {
@@ -71,6 +79,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         picker?.close()
         let c = Connection(hostAddress: host, password: password)
         connection = c
+        c.muted = muted
         let picker = PickerWindow(hostName: host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
         self.picker = picker
         picker.makeKeyAndOrderFront(nil)

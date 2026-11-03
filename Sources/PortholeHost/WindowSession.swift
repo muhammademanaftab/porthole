@@ -14,6 +14,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastFrameAt = Date.distantPast
     private var timer: DispatchSourceTimer?
     private var pixelSize = CGSize.zero
+    private(set) var pid: Int32?
     var onClosed: (() -> Void)?
 
     private var capturer: BufferCapturer { track.capturer as! BufferCapturer }
@@ -31,6 +32,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let window = try await WindowCatalog.window(id: windowID) else {
             throw NSError(domain: "Porthole", code: 2, userInfo: [NSLocalizedDescriptionKey: "Window \(windowID) is gone"])
         }
+        pid = window.owningApplication?.processID
         let scale = LiveWindow.lookup(windowID)?.scale ?? 2
         pixelSize = Self.pixelSize(points: window.frame.size, scale: scale)
         track = await LocalVideoTrack.createBufferTrack(
