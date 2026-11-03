@@ -29,6 +29,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
             if !others.isEmpty { Log.info("stopping older host instance(s) \(others)"); Processes.stop(others) }
         }
         setUpMenu()
+        Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), launched by agent \(LoginAgent.launchedByAgent)")
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
         Task { await start() }
@@ -45,7 +46,9 @@ final class HostApp: NSObject, NSApplicationDelegate {
             self.http = http
             let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh() }
-            await host.stage.start()
+            Power.keepAwake()
+            Power.wakeDisplay()
+            Task { await host.stage.start() }
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
@@ -71,6 +74,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let n = host.openWindowCount
         menu.addItem(withTitle: hostMenuTitle(state: state, openWindows: n), action: nil, keyEquivalent: "")
+        if Session.isScreenLocked { menu.addItem(withTitle: "Screen is locked: viewers can watch but not type", action: nil, keyEquivalent: "") }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Browser Link", action: #selector(copyLink), keyEquivalent: "c").target = self
         menu.addItem(withTitle: "Copy Password", action: #selector(copyPassword), keyEquivalent: "").target = self

@@ -13,6 +13,16 @@ final class Stage {
     var isReady: Bool { displayID != nil }
 
     func start() async {
+        for attempt in 1... {
+            await createOnce()
+            if isReady { return }
+            Power.wakeDisplay()
+            Log.info("stage: attempt \(attempt) failed, retrying in 5 s")
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+    }
+
+    private func createOnce() async {
         let others = onlineDisplays().map { CGDisplayBounds($0) }
         let d = CGVirtualDisplayDescriptor()
         d.queue = .main

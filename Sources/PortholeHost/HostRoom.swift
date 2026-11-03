@@ -16,6 +16,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private var reconnecting = false
     private var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     private var clipTimer: Timer?
+    private var lockWarnedAt: [String: Date] = [:]
     var onChange: (() -> Void)?
     private(set) var isConnected = false
 
@@ -138,6 +139,7 @@ final class HostRoom: NSObject, RoomDelegate {
             await sendIcon(id, to: who)
         case .key, .text, .mouse, .scroll, .resize:
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
+            await warnIfLocked(who)
             input.handle(m)
             if m.t == .resize { sessions[id]?.followSizeSoon() }
         default:
@@ -188,6 +190,7 @@ final class HostRoom: NSObject, RoomDelegate {
             if audio.isLive { reply.audio = Message.audioTrackName }
             if let live = LiveWindow.lookup(id) { reply.w = live.bounds.width; reply.h = live.bounds.height }
             await send(reply, to: who)
+            await warnIfLocked(who)
         } catch {
             registry.openFailed(id, by: who)
             var reply = Message(.error); reply.win = id; reply.msg = error.localizedDescription
@@ -226,6 +229,15 @@ final class HostRoom: NSObject, RoomDelegate {
         do { _ = try await room.localParticipant.sendBytes(png, options: opts) } catch {
             Log.info("icon send to \(who) failed: \(error.localizedDescription)")
         }
+    }
+
+    private func warnIfLocked(_ who: String) async {
+        guard Session.isScreenLocked else { return }
+        if let last = lockWarnedAt[who], Date().timeIntervalSince(last) < 15 { return }
+        lockWarnedAt[who] = Date()
+        Log.info("screen is locked; warning \(who)")
+        var m = Message(.error); m.msg = Session.lockedMessage
+        await send(m, to: who)
     }
 
     private func send(_ m: Message, to who: String) async {

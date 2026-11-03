@@ -110,6 +110,19 @@
 
   const sizeLabel = (w, h) => `${Math.round(w)}\u00d7${Math.round(h)}`;
 
+  function randomUUID(cryptoObj) {
+    const b = cryptoObj.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+
+  function ensureRandomUUID(cryptoObj) {
+    if (cryptoObj && typeof cryptoObj.randomUUID !== 'function') cryptoObj.randomUUID = () => randomUUID(cryptoObj);
+    return cryptoObj;
+  }
+
   const CLIP_TOPIC = 'porthole-clip';
   const CLIP_MAX_BYTES = 1000000;
   const COMMAND = 8;
@@ -133,6 +146,6 @@
 
   const soundLabel = (canPlay, muted) => !canPlay ? 'Click for sound' : muted ? 'Sound off' : 'Sound on';
 
-  return { AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  return { randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel };
 });

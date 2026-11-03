@@ -41,6 +41,7 @@ final class HTTPServer {
 
     func start() {
         listener.stateUpdateHandler = { [weak self] state in
+            Log.info("web server state: \(state)")
             if case .failed(let err) = state {
                 Log.info("web server failed: \(err)")
                 DispatchQueue.main.async { self?.onFailure?("Port \(self?.config.httpPort ?? 0) is busy or blocked") }

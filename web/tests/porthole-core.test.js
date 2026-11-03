@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'isAudioTrack', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'ensureRandomUUID', 'isAudioTrack', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
     assert.equal(html.includes(copy), false, copy);
@@ -409,4 +409,26 @@ test('index.html declares an empty icon so the browser does not ask for /favicon
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const head = html.slice(0, html.indexOf('</head>'));
   assert.match(head, /<link rel="icon" href="data:,">/);
+});
+
+test('randomUUID makes RFC 4122 version 4 ids from getRandomValues', () => {
+  const fake = { getRandomValues: (a) => { a.fill(0xff); return a; } };
+  assert.equal(core.randomUUID(fake), 'ffffffff-ffff-4fff-bfff-ffffffffffff');
+  const zero = { getRandomValues: (a) => a };
+  assert.equal(core.randomUUID(zero), '00000000-0000-4000-8000-000000000000');
+  const ids = new Set(Array.from({ length: 200 }, () => core.randomUUID(require('node:crypto').webcrypto)));
+  assert.equal(ids.size, 200);
+  for (const id of ids) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+test('ensureRandomUUID fills in randomUUID only where the browser lacks it (plain http pages)', () => {
+  const insecure = { getRandomValues: (a) => a };
+  core.ensureRandomUUID(insecure);
+  assert.equal(typeof insecure.randomUUID, 'function');
+  assert.match(insecure.randomUUID(), /^00000000-0000-4000-8000-000000000000$/);
+  const native = () => 'native';
+  const secure = { getRandomValues: (a) => a, randomUUID: native };
+  core.ensureRandomUUID(secure);
+  assert.equal(secure.randomUUID, native);
+  assert.equal(core.ensureRandomUUID(undefined), undefined);
 });

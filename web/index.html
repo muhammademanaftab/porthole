@@ -49,6 +49,7 @@ const isMac = /Mac/.test(navigator.platform);
 let room, hostP, listed = false, opened = false;
 
 const PC = window.PortholeCore;
+PC.ensureRandomUUID(window.crypto);
 const mods = (e) => PC.mods(e, isMac);
 
 function send(msg, reliable = true) {

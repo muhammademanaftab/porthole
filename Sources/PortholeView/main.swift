@@ -137,8 +137,11 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         self.picker = picker
         picker.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        c.onWindows = { [weak picker] list in picker?.show(list) }
-        c.onError = { [weak picker] msg in picker?.showError(msg) }
+        c.onWindows = { [weak self, weak picker] list in
+            picker?.show(list)
+            self?.autoOpen(list)
+        }
+        c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
         c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
         c.onIcon = { [weak self] id, png in self?.icons[id] = png }
@@ -157,6 +160,15 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    var autoOpenMatch = ProcessInfo.processInfo.environment["PORTHOLE_OPEN"]
+
+    func autoOpen(_ list: [WindowInfo]) {
+        guard let match = autoOpenMatch?.lowercased(), !match.isEmpty,
+              let info = list.first(where: { "\($0.app) \($0.title)".lowercased().contains(match) }) else { return }
+        autoOpenMatch = nil
+        open(info)
     }
 
     func open(_ info: WindowInfo) {
