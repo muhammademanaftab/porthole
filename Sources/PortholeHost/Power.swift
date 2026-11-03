@@ -17,6 +17,12 @@ enum Power {
         Log.info("power: keeping display and system awake (\(assertions.count) assertions)")
     }
 
+    static func allowSleep() {
+        for id in assertions { IOPMAssertionRelease(id) }
+        if !assertions.isEmpty { Log.info("power: display and system may sleep again") }
+        assertions.removeAll()
+    }
+
     static func wakeDisplay() {
         var id: IOPMAssertionID = 0
         IOPMAssertionDeclareUserActivity("Porthole Host waking the display" as CFString, kIOPMUserActiveLocal, &id)
@@ -28,6 +34,8 @@ enum Session {
         guard let d = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return (d["CGSSessionScreenIsLocked"] as? Bool) ?? ((d["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false)
     }
+
+    static let lockedListMessage = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it (for example with Screen Sharing), then refresh."
 
     static let lockedMessage = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it (for example with Screen Sharing) to control windows."
 }

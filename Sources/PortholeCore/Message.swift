@@ -45,6 +45,9 @@ public struct Message: Codable, Equatable, Sendable {
     public var w: Double?
     public var h: Double?
     public var msg: String?
+    public var sw: Double?
+    public var sh: Double?
+    public var ss: Double?
 
     public init(_ t: Kind) { self.t = t }
 

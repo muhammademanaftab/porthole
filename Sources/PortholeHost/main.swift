@@ -46,9 +46,6 @@ final class HostApp: NSObject, NSApplicationDelegate {
             self.http = http
             let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh() }
-            Power.keepAwake()
-            Power.wakeDisplay()
-            Task { await host.stage.start() }
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
@@ -112,9 +109,9 @@ final class HostApp: NSObject, NSApplicationDelegate {
         if LoginAgent.isInstalled { LoginAgent.uninstall() } else { LoginAgent.install() }
         refresh()
     }
-    @objc func quit() { host.stage.unparkAll(); server.stop(); NSApp.terminate(nil) }
+    @objc func quit() { host.stage.release(); server.stop(); NSApp.terminate(nil) }
 
-    func applicationWillTerminate(_ note: Notification) { host.stage.unparkAll() }
+    func applicationWillTerminate(_ note: Notification) { host.stage.release() }
 }
 
 signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }

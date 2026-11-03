@@ -7,7 +7,24 @@ public enum StageLayout {
     public static let topMargin: CGFloat = 64
     public static let cascadeStep: CGFloat = 48
     public static let cascadeSlots = 8
-    public static let headlessPoints = CGSize(width: 1920, height: 1080)
+    public static let idleSeconds: Double = 600
+    public static let minPixels = CGSize(width: 1024, height: 768)
+
+    public static func viewerMode(screenPoints: CGSize?) -> (pixels: CGSize, points: CGSize) {
+        guard let p = screenPoints, p.width >= 1, p.height >= 1 else { return (pixels, points) }
+        var w = p.width * 2, h = p.height * 2
+        let shrink = min(1, pixels.width / w, pixels.height / h)
+        w *= shrink; h *= shrink
+        let grow = max(1, minPixels.width / w, minPixels.height / h)
+        w = min(w * grow, pixels.width); h = min(h * grow, pixels.height)
+        let ew = CGFloat(Int(w / 4) * 4), eh = CGFloat(Int(h / 4) * 4)
+        return (CGSize(width: ew, height: eh), CGSize(width: ew / 2, height: eh / 2))
+    }
+
+    public static func shouldRelease(emptySince: Double?, now: Double, idle: Double = idleSeconds) -> Bool {
+        guard let since = emptySince else { return false }
+        return now - since >= idle
+    }
 
     public static var sizeInMillimeters: CGSize {
         CGSize(width: (pixels.width / pixelsPerInch * 25.4).rounded(), height: (pixels.height / pixelsPerInch * 25.4).rounded())
@@ -28,13 +45,6 @@ public enum StageLayout {
 
     public static func isHiDPIStageMode(width: Int, height: Int, pixelWidth: Int, pixelHeight: Int) -> Bool {
         width > 0 && height > 0 && pixelWidth == width * 2 && pixelHeight == height * 2
-    }
-
-    public static func headlessMode(_ modes: [(width: Int, height: Int, pixelWidth: Int, pixelHeight: Int)]) -> Int? {
-        modes.indices.first {
-            modes[$0].width == Int(headlessPoints.width) && modes[$0].height == Int(headlessPoints.height)
-                && isHiDPIStageMode(width: modes[$0].width, height: modes[$0].height, pixelWidth: modes[$0].pixelWidth, pixelHeight: modes[$0].pixelHeight)
-        } ?? bestMode(modes)
     }
 
     public static func bestMode(_ modes: [(width: Int, height: Int, pixelWidth: Int, pixelHeight: Int)]) -> Int? {

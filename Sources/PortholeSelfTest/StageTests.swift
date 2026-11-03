@@ -31,9 +31,20 @@ func stageTests() {
            StageLayout.bestMode([(8192, 4608, 8192, 4608), (2048, 1152, 4096, 2304), (4096, 2304, 8192, 4608), (1920, 1080, 1920, 1080)]), 2)
     expect("no HiDPI mode gives nil", StageLayout.bestMode([(1920, 1080, 1920, 1080)]), nil)
 
-    let listed = [(1920, 1080, 1920, 1080), (4096, 2304, 8192, 4608), (1920, 1080, 3840, 2160), (2048, 1152, 4096, 2304)]
-    expect("headless stage picks 1920x1080 at 2x so Screen Sharing looks normal", StageLayout.headlessMode(listed), 2)
-    expect("headless stage never picks the 1x 1920x1080 mode", StageLayout.headlessMode([(1920, 1080, 1920, 1080), (2048, 1152, 4096, 2304)]), 1)
-    expect("headless stage falls back to the largest 2x mode", StageLayout.headlessMode([(4096, 2304, 8192, 4608), (2048, 1152, 4096, 2304)]), 0)
-    expect("headless stage with no 2x mode gives nil", StageLayout.headlessMode([(1920, 1080, 1920, 1080)]), nil)
+    let mbp = StageLayout.viewerMode(screenPoints: CGSize(width: 1470, height: 956))
+    expect("stage follows a MacBook Air screen at 2x", mbp.points, CGSize(width: 1470, height: 956))
+    expect("stage pixels are twice its points", mbp.pixels, CGSize(width: 2940, height: 1912))
+    expect("a 1920x1080 viewer gives a 3840x2160 stage", StageLayout.viewerMode(screenPoints: CGSize(width: 1920, height: 1080)).pixels, CGSize(width: 3840, height: 2160))
+    expect("no viewer size keeps the 4096x2304 canvas", StageLayout.viewerMode(screenPoints: nil).points, CGSize(width: 4096, height: 2304))
+    expect("a zero viewer size keeps the default canvas", StageLayout.viewerMode(screenPoints: .zero).pixels, StageLayout.pixels)
+    let huge = StageLayout.viewerMode(screenPoints: CGSize(width: 6016, height: 3384))
+    check("a huge viewer is capped at 8192x4608 pixels", huge.pixels.width <= 8192 && huge.pixels.height <= 4608)
+    check("capping keeps the aspect ratio", abs(huge.pixels.width / huge.pixels.height - 6016.0 / 3384.0) < 0.01)
+    let tiny = StageLayout.viewerMode(screenPoints: CGSize(width: 320, height: 240))
+    check("a tiny viewer is raised to at least 1024x768 pixels", tiny.pixels.width >= 1024 && tiny.pixels.height >= 768)
+    check("pixel sizes are multiples of 4 so points stay even", Int(mbp.pixels.width) % 4 == 0 && Int(mbp.pixels.height) % 4 == 0)
+
+    check("a stage in use is never released", !StageLayout.shouldRelease(emptySince: nil, now: 10_000))
+    check("an empty stage stays for 10 minutes", !StageLayout.shouldRelease(emptySince: 1000, now: 1599))
+    check("an empty stage is released after 10 minutes", StageLayout.shouldRelease(emptySince: 1000, now: 1600))
 }

@@ -5,22 +5,55 @@ import VirtualDisplayBridge
 @MainActor
 final class Stage {
     private var display: CGVirtualDisplay?
-    private var desktop: CGVirtualDisplay?
     private(set) var displayID: CGDirectDisplayID?
     private var parked: [UInt32: (pid: pid_t, home: CGPoint)] = [:]
     private var nextSlot = 0
+    private var emptySince: Date?
+    private var idleTimer: Timer?
+    private let idleSeconds = ProcessInfo.processInfo.environment["PORTHOLE_STAGE_IDLE_SECS"].flatMap(Double.init).map { max($0, 5) } ?? StageLayout.idleSeconds
 
     var bounds: CGRect? { displayID.map { CGDisplayBounds($0) } }
     var isReady: Bool { displayID != nil }
 
-    func start() async {
-        for attempt in 1... {
-            await createOnce()
-            if isReady { return }
+    func ensure(screenPoints: CGSize?) async {
+        emptySince = nil
+        guard display == nil else { return }
+        Power.keepAwake()
+        for attempt in 1...3 {
+            await createOnce(screenPoints: screenPoints)
+            if isReady { startIdleTimer(); return }
             Power.wakeDisplay()
-            Log.info("stage: attempt \(attempt) failed, retrying in 5 s")
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            Log.info("stage: attempt \(attempt) failed")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
+        Log.info("stage: unavailable, sharing windows where they are")
+    }
+
+    func becameEmpty() {
+        guard display != nil, emptySince == nil else { return }
+        emptySince = Date()
+        Log.info("stage: empty, released after \(Int(idleSeconds)) s unless a window is shared again")
+    }
+
+    private func startIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if StageLayout.shouldRelease(emptySince: self.emptySince?.timeIntervalSince1970, now: Date().timeIntervalSince1970, idle: self.idleSeconds) { self.release() }
+            }
+        }
+    }
+
+    func release() {
+        guard display != nil else { return }
+        unparkAll()
+        idleTimer?.invalidate(); idleTimer = nil
+        display = nil
+        displayID = nil
+        emptySince = nil
+        Power.allowSleep()
+        Log.info("stage: released")
     }
 
     private func makeDisplay(name: String, serial: UInt32, pixels: CGSize, modes: [CGSize]) async -> (CGVirtualDisplay, CGDirectDisplayID)? {
@@ -46,35 +79,16 @@ final class Stage {
         return (v, id)
     }
 
-    private func createOnce() async {
+    private func createOnce(screenPoints: CGSize?) async {
         let others = onlineDisplays().map { CGDisplayBounds($0) }
-        guard let (v, id) = await makeDisplay(name: "Porthole Stage", serial: 1, pixels: StageLayout.pixels,
-                                              modes: [StageLayout.pixels, StageLayout.points]) else { return }
+        let mode = StageLayout.viewerMode(screenPoints: screenPoints)
+        guard let (v, id) = await makeDisplay(name: "Porthole Stage", serial: 1, pixels: mode.pixels,
+                                              modes: [mode.pixels, mode.points]) else { return }
         display = v
         displayID = id
         configure(id, besides: others)
-        if CGDisplayIsMain(id) != 0 { await addDesktop(beside: id) }
         for _ in 0..<20 where !isHiDPI(id) { try? await Task.sleep(nanoseconds: 100_000_000) }
-        Log.info("stage ready: display \(id) at \(CGDisplayBounds(id)), \(CGDisplayPixelsWide(id))x\(CGDisplayPixelsHigh(id)) px, scale \(scale(of: id))")
-    }
-
-    private func addDesktop(beside stage: CGDirectDisplayID) async {
-        let pts = StageLayout.headlessPoints
-        let px = CGSize(width: pts.width * 2, height: pts.height * 2)
-        guard let (v, id) = await makeDisplay(name: "Porthole Desktop", serial: 2, pixels: px, modes: [px, pts]) else { return }
-        desktop = v
-        let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
-        let modes = (CGDisplayCopyAllDisplayModes(id, opts) as? [CGDisplayMode]) ?? []
-        let mode = StageLayout.headlessMode(modes.map { ($0.width, $0.height, $0.pixelWidth, $0.pixelHeight) }).map { modes[$0] }
-        var cfg: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&cfg) == .success else { return }
-        if let mode { CGConfigureDisplayWithDisplayMode(cfg, id, mode, nil) }
-        CGConfigureDisplayOrigin(cfg, id, 0, 0)
-        let origin = StageLayout.origin(besides: [CGRect(origin: .zero, size: pts)])
-        CGConfigureDisplayOrigin(cfg, stage, Int32(origin.x), Int32(origin.y))
-        CGConfigureDisplayMirrorOfDisplay(cfg, id, kCGNullDirectDisplay)
-        let ok = CGCompleteDisplayConfiguration(cfg, .forSession) == .success
-        Log.info("no monitor attached: added a \(Int(pts.width))x\(Int(pts.height)) Retina desktop as the main screen (\(ok ? "ok" : "failed")); desktop main \(CGDisplayIsMain(id) != 0), stage at \(CGDisplayBounds(stage))")
+        Log.info("stage ready for a \(Int(mode.points.width))x\(Int(mode.points.height)) viewer: display \(id) at \(CGDisplayBounds(id)), scale \(scale(of: id)), main \(CGDisplayIsMain(id) != 0)")
     }
 
     private func onlineDisplays() -> [CGDirectDisplayID] {

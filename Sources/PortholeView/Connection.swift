@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LiveKit
 import PortholeCore
@@ -96,6 +97,7 @@ final class Connection: NSObject, RoomDelegate {
     func open(_ id: UInt32, then: @escaping (VideoTrack, Message) -> Void) {
         pending[id] = then
         var m = Message(.open); m.win = id
+        if let screen = NSScreen.main?.frame.size { m.sw = screen.width; m.sh = screen.height; m.ss = NSScreen.main.map { Double($0.backingScaleFactor) } }
         Task {
             for _ in 0..<RetryPolicy.open.times where pending[id] != nil && openedReplies[id] == nil {
                 send(m)

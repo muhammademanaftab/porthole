@@ -74,6 +74,7 @@ final class HostRoom: NSObject, RoomDelegate {
             if let session = sessions.removeValue(forKey: id) { await session.stop(in: room) }
         }
         stage.unparkAll()
+        stage.becameEmpty()
         input.releaseAllButtons()
         var delay: UInt64 = 1
         while true {
@@ -123,14 +124,23 @@ final class HostRoom: NSObject, RoomDelegate {
         switch m.t {
         case .list:
             var reply = Message(.windows)
-            do { reply.list = try await WindowCatalog.list() } catch {
+            Power.wakeDisplay()
+            do {
+                reply.list = try await WindowCatalog.list()
+                if reply.list?.isEmpty == true, Session.isScreenLocked {
+                    Log.info("screen is locked; no windows to list")
+                    var warn = Message(.error); warn.msg = Session.lockedListMessage
+                    await send(warn, to: who)
+                }
+            } catch {
                 Log.info("listing windows failed: \(error.localizedDescription)")
                 reply = Message(.error); reply.msg = "Can't list windows: \(error.localizedDescription). Check Screen Recording permission."
             }
             await send(reply, to: who)
         case .open:
             guard let id = m.win else { return }
-            await open(id, by: who)
+            let screen = (m.sw ?? 0) >= 1 && (m.sh ?? 0) >= 1 ? CGSize(width: m.sw!, height: m.sh!) : nil
+            await open(id, by: who, screen: screen)
         case .close:
             guard let id = m.win else { return }
             await release(id, by: who)
@@ -147,7 +157,7 @@ final class HostRoom: NSObject, RoomDelegate {
         }
     }
 
-    private func open(_ id: UInt32, by who: String) async {
+    private func open(_ id: UInt32, by who: String, screen: CGSize?) async {
         let allowed = (try? await WindowCatalog.shareable(onScreenOnly: false).contains { $0.windowID == id }) ?? false
         guard allowed else {
             var reply = Message(.error); reply.win = id; reply.msg = "That window can't be shared."
@@ -161,6 +171,7 @@ final class HostRoom: NSObject, RoomDelegate {
             case .waitForStart:
                 try await starting[id]?.value
             case .start:
+                await stage.ensure(screenPoints: screen)
                 await stage.park(id)
                 let session = WindowSession(windowID: id)
                 let task = Task { try await session.start(in: room) }
@@ -175,6 +186,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 guard registry.startSucceeded(id) else {
                     await session.stop(in: room)
                     stage.unpark(id)
+                    if sessions.isEmpty { stage.becameEmpty() }
                     return
                 }
                 session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
@@ -208,6 +220,7 @@ final class HostRoom: NSObject, RoomDelegate {
         await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
+        if sessions.isEmpty { stage.becameEmpty() }
         onChange?()
     }
 
@@ -216,6 +229,7 @@ final class HostRoom: NSObject, RoomDelegate {
         await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
+        if sessions.isEmpty { stage.becameEmpty() }
         var m = Message(.closed); m.win = id
         for v in who { await send(m, to: v) }
         onChange?()

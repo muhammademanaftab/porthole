@@ -105,7 +105,7 @@ function openWindow(id) {
   $('picker').style.display = 'none';
   $('stage').style.display = 'block';
   hud('Opening window…');
-  PC.retry(() => send({ t: 'open', win: id }), () => opened, PC.RETRY.open.every, PC.RETRY.open.times);
+  PC.retry(() => send({ t: 'open', win: id, sw: screen.width, sh: screen.height, ss: devicePixelRatio }), () => opened, PC.RETRY.open.every, PC.RETRY.open.times);
 }
 
 function subscribe(trackName) {
