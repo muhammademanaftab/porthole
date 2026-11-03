@@ -23,6 +23,8 @@
   #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; touch-action:none; }
   #fit { position:fixed; right:10px; bottom:10px; opacity:.35; background:rgba(20,28,34,.85); font-size:12px; padding:5px 10px; }
   #fit:hover, #fit:focus-visible { opacity:1; }
+  #snd { position:fixed; right:96px; bottom:10px; display:none; opacity:.35; background:rgba(20,28,34,.85); font-size:12px; padding:5px 10px; }
+  #snd:hover, #snd:focus-visible, #snd.ask { opacity:1; }
   #clip { position:fixed; right:10px; top:10px; display:none; background:rgba(20,28,34,.92); font-size:12px; padding:5px 10px; }
   #hud { position:fixed; left:50%; top:8px; transform:translateX(-50%); background:rgba(20,28,34,.85); color:var(--ink); padding:4px 12px; border-radius:999px; font-size:12px; pointer-events:none; transition:opacity .4s; }
 </style>
@@ -34,7 +36,7 @@
   <form id="pwform" hidden><input id="pw" type="password" placeholder="Host password" autocomplete="current-password"><button>Connect</button></form>
   <div id="list"></div>
 </div>
-<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button><button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button></div>
+<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button><button id="snd" title="Turn the app's sound on or off in this tab">Sound on</button><button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button></div>
 <script src="livekit-client.umd.min.js"></script>
 <script src="porthole-core.js"></script>
 <script>
@@ -64,6 +66,7 @@ async function connect(pw) {
     if (info.identity !== 'host') return;
     clipFromHost(await reader.readAll());
   });
+  room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSound);
   room.on(LK.RoomEvent.Disconnected, () => hud('Disconnected from host', true));
   await room.connect(url, token, { autoSubscribe: false });
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
@@ -76,7 +79,7 @@ function onData(payload, participant, kind, topic) {
   if (topic !== 'porthole') return;
   const m = JSON.parse(new TextDecoder().decode(payload));
   if (m.t === 'windows') { listed = true; renderList(m.list || []); }
-  else if (m.t === 'opened' && m.win === winId && !opened) { opened = true; subscribe(m.track); }
+  else if (m.t === 'opened' && m.win === winId && !opened) { opened = true; subscribe(m.track); if (PC.isAudioTrack(m.audio)) listen(m.audio); }
   else if (m.t === 'closed' && m.win === winId) hud('The window was closed on the host.', true);
   else if (m.t === 'error') { $('status').textContent = m.msg; hud(m.msg, true); }
 }
@@ -120,6 +123,43 @@ function subscribe(trackName) {
   if (!tryNow()) room.on(LK.RoomEvent.TrackPublished, () => tryNow());
 }
 
+let soundMuted = false;
+const audioEls = new Set();
+function listen(trackName) {
+  const tryNow = (pub) => { if (pub && pub.trackName === trackName) pub.setSubscribed(true); };
+  room.on(LK.RoomEvent.TrackPublished, tryNow);
+  room.on(LK.RoomEvent.TrackSubscribed, (track, pub) => {
+    if (pub.trackName !== trackName) return;
+    const el = track.attach();
+    el.muted = soundMuted;
+    audioEls.add(el);
+    document.body.appendChild(el);
+    showSound();
+  });
+  room.on(LK.RoomEvent.TrackUnsubscribed, (track, pub) => {
+    if (pub.trackName !== trackName) return;
+    for (const el of track.detach()) { audioEls.delete(el); el.remove(); }
+    showSound();
+  });
+  for (const pub of hostP.trackPublications.values()) tryNow(pub);
+}
+function showSound() {
+  const b = $('snd');
+  b.style.display = audioEls.size ? 'block' : 'none';
+  b.textContent = PC.soundLabel(room.canPlaybackAudio, soundMuted);
+  b.classList.toggle('ask', !room.canPlaybackAudio);
+}
+function unlockSound() {
+  if (room && audioEls.size && !room.canPlaybackAudio) room.startAudio().then(showSound, () => {});
+}
+$('snd').addEventListener('click', e => {
+  e.stopPropagation();
+  if (room.canPlaybackAudio) { soundMuted = !soundMuted; for (const el of audioEls) el.muted = soundMuted; }
+  unlockSound();
+  showSound();
+  video.focus();
+});
+
 let hudTimer;
 function hud(text, sticky) {
   const h = $('hud'); h.textContent = text; h.style.opacity = 1;
@@ -137,6 +177,7 @@ const video = $('video');
 const pointer = PC.createPointer(winId, isMac);
 video.addEventListener('contextmenu', e => e.preventDefault());
 video.addEventListener('pointerdown', e => {
+  unlockSound();
   const out = pointer.down(e, geom(), performance.now()); if (!out) return;
   video.focus(); video.setPointerCapture(e.pointerId);
   send(out.msg, out.reliable);
@@ -160,6 +201,7 @@ video.addEventListener('wheel', e => {
 const swallowedUp = new Set();
 function onKey(e, down) {
   if (!winId || !room) return;
+  if (down) unlockSound();
   const r = PC.keyMessages(e, down, isMac, winId, swallowedUp);
   if (r.prevent) e.preventDefault();
   for (const m of r.send) send(m);

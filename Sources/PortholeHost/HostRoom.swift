@@ -7,6 +7,7 @@ final class HostRoom: NSObject, RoomDelegate {
     let room = Room()
     let input = InputInjector()
     let stage = Stage()
+    let audio = AppAudio()
     private var sessions: [UInt32: WindowSession] = [:]
     private var starting: [UInt32: Task<Void, Error>] = [:]
     private var registry = SessionRegistry()
@@ -24,6 +25,7 @@ final class HostRoom: NSObject, RoomDelegate {
         self.url = url
         self.makeToken = makeToken
         room.add(delegate: self)
+        AppAudio.prepare()
         try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
             let text = try await reader.readAll()
             await self?.clipboardReceived(text, from: identity.stringValue)
@@ -66,6 +68,7 @@ final class HostRoom: NSObject, RoomDelegate {
         guard !reconnecting else { return }
         reconnecting = true
         defer { reconnecting = false }
+        await audio.removeAll(in: room)
         for id in registry.reset() {
             if let session = sessions.removeValue(forKey: id) { await session.stop(in: room) }
         }
@@ -172,11 +175,14 @@ final class HostRoom: NSObject, RoomDelegate {
                 session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
                 sessions[id] = session
                 onChange?()
+                if let pid = session.pid { await audio.add(window: id, pid: pid, in: room) }
             }
             guard registry.shouldReply(id, to: who) else { return }
             var reply = Message(.opened)
             reply.win = id
             reply.track = Message.trackName(for: id)
+            await audio.settled()
+            if audio.isLive { reply.audio = Message.audioTrackName }
             if let live = LiveWindow.lookup(id) { reply.w = live.bounds.width; reply.h = live.bounds.height }
             await send(reply, to: who)
         } catch {
@@ -193,6 +199,7 @@ final class HostRoom: NSObject, RoomDelegate {
 
     private func stopSession(_ id: UInt32) async {
         guard let session = sessions.removeValue(forKey: id) else { return }
+        await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
         onChange?()
@@ -200,6 +207,7 @@ final class HostRoom: NSObject, RoomDelegate {
 
     private func windowClosed(_ id: UInt32) async {
         guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
+        await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
         var m = Message(.closed); m.win = id
