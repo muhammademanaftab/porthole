@@ -22,3 +22,9 @@ public func normalized(_ p: CGPoint, content: CGSize, in bounds: CGRect) -> CGPo
     guard (0...1).contains(nx), (0...1).contains(ny) else { return nil }
     return CGPoint(x: nx, y: ny)
 }
+
+public func clampedNormalized(_ p: CGPoint, content: CGSize, in bounds: CGRect) -> CGPoint {
+    let r = fittedRect(content: content, in: bounds)
+    guard r.width > 0, r.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
+    return CGPoint(x: min(max((p.x - r.minX) / r.width, 0), 1), y: min(max((p.y - r.minY) / r.height, 0), 1))
+}

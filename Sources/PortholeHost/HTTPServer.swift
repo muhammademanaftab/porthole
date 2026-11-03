@@ -24,7 +24,15 @@ final class HTTPServer {
         return candidates.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) }
     }
 
+    var onFailure: ((String) -> Void)?
+
     func start() {
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .failed(let err) = state {
+                Log.info("web server failed: \(err)")
+                DispatchQueue.main.async { self?.onFailure?("Port \(self?.config.httpPort ?? 0) is busy or blocked") }
+            }
+        }
         listener.newConnectionHandler = { [weak self] conn in self?.serve(conn) }
         listener.start(queue: queue)
     }
@@ -67,7 +75,13 @@ final class HTTPServer {
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(config.livekitPort)", "token": token]
             return ("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         default:
-            return ("404 Not Found", "text/plain", Data("not found".utf8))
+            let name = String(comps.path.dropFirst())
+            guard let root = webRoot, !name.isEmpty, !name.contains(".."), !name.contains("/"),
+                  let body = try? Data(contentsOf: root.appendingPathComponent(name)) else {
+                return ("404 Not Found", "text/plain", Data("not found".utf8))
+            }
+            let type = name.hasSuffix(".js") ? "text/javascript" : name.hasSuffix(".css") ? "text/css" : name.hasSuffix(".png") ? "image/png" : "application/octet-stream"
+            return ("200 OK", type, body)
         }
     }
 

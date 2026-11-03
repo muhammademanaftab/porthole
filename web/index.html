@@ -20,7 +20,9 @@
   input { flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
   button { padding:9px 14px; border-radius:8px; border:1px solid var(--accent); background:transparent; color:var(--accent); font:inherit; cursor:pointer; }
   #stage { position:fixed; inset:0; background:#000; display:none; }
-  #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; }
+  #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; touch-action:none; }
+  #fit { position:fixed; right:10px; bottom:10px; opacity:.35; background:rgba(20,28,34,.85); font-size:12px; padding:5px 10px; }
+  #fit:hover, #fit:focus-visible { opacity:1; }
   #hud { position:fixed; left:50%; top:8px; transform:translateX(-50%); background:rgba(20,28,34,.85); color:var(--ink); padding:4px 12px; border-radius:999px; font-size:12px; pointer-events:none; transition:opacity .4s; }
 </style>
 </head>
@@ -31,8 +33,8 @@
   <form id="pwform" hidden><input id="pw" type="password" placeholder="Host password" autocomplete="current-password"><button>Connect</button></form>
   <div id="list"></div>
 </div>
-<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div></div>
-<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button></div>
+<script src="livekit-client.umd.min.js"></script>
 <script>
 const LK = window.LivekitClient;
 const params = new URLSearchParams(location.search);
@@ -104,7 +106,6 @@ function openWindow(id) {
   $('stage').style.display = 'block';
   hud('Opening window…');
   retry(() => send({ t: 'open', win: id }), () => opened, 2000, 5);
-  setTimeout(() => sendResize(), 800);
 }
 
 function subscribe(trackName) {
@@ -131,32 +132,42 @@ function hud(text, sticky) {
   if (!sticky) hudTimer = setTimeout(() => h.style.opacity = 0, 2500);
 }
 
-function norm(e) {
+function norm(e, clamp) {
   const v = $('video'), r = v.getBoundingClientRect();
   const vw = v.videoWidth || r.width, vh = v.videoHeight || r.height;
   const s = Math.min(r.width / vw, r.height / vh);
   const w = vw * s, h = vh * s, x0 = r.left + (r.width - w) / 2, y0 = r.top + (r.height - h) / 2;
-  const x = (e.clientX - x0) / w, y = (e.clientY - y0) / h;
+  let x = (e.clientX - x0) / w, y = (e.clientY - y0) / h;
+  if (clamp) return { x: Math.min(Math.max(x, 0), 1), y: Math.min(Math.max(y, 0), 1) };
   return (x < 0 || y < 0 || x > 1 || y > 1) ? null : { x, y };
 }
 
 const video = $('video');
-let lastMove = 0, buttons = 0;
+let lastMove = 0, buttons = 0, clickCount = 0, lastDown = { t: 0, x: 0, y: 0 };
+const btnOf = (e) => e.button === 2 ? 1 : e.button === 1 ? 2 : 0;
 video.addEventListener('contextmenu', e => e.preventDefault());
 video.addEventListener('pointerdown', e => {
   const p = norm(e); if (!p) return;
   video.focus(); video.setPointerCapture(e.pointerId); buttons |= 1 << e.button;
-  send({ t: 'mouse', win: winId, kind: 'down', btn: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, x: p.x, y: p.y, clicks: e.detail || 1, mods: mods(e) });
+  const now = performance.now();
+  const near = Math.abs(e.clientX - lastDown.x) < 5 && Math.abs(e.clientY - lastDown.y) < 5;
+  clickCount = (now - lastDown.t < 450 && near) ? clickCount + 1 : 1;
+  lastDown = { t: now, x: e.clientX, y: e.clientY };
+  send({ t: 'mouse', win: winId, kind: 'down', btn: btnOf(e), x: p.x, y: p.y, clicks: clickCount, mods: mods(e) });
   e.preventDefault();
 });
-video.addEventListener('pointerup', e => {
-  const p = norm(e) || { x: 0.5, y: 0.5 }; buttons &= ~(1 << e.button);
-  send({ t: 'mouse', win: winId, kind: 'up', btn: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, x: p.x, y: p.y, clicks: e.detail || 1, mods: mods(e) });
-});
+function pointerUp(e) {
+  if (!(buttons & (1 << e.button))) return;
+  const p = norm(e, true); buttons &= ~(1 << e.button);
+  send({ t: 'mouse', win: winId, kind: 'up', btn: btnOf(e), x: p.x, y: p.y, clicks: clickCount, mods: mods(e) });
+}
+video.addEventListener('pointerup', pointerUp);
+video.addEventListener('pointercancel', pointerUp);
 video.addEventListener('pointermove', e => {
   const now = performance.now(); if (now - lastMove < 16) return; lastMove = now;
-  const p = norm(e); if (!p) return;
-  send({ t: 'mouse', win: winId, kind: buttons ? 'drag' : 'move', btn: (buttons & 4) ? 1 : 0, x: p.x, y: p.y, mods: mods(e) }, false);
+  const p = norm(e, !!buttons); if (!p) return;
+  if (buttons) send({ t: 'mouse', win: winId, kind: 'drag', btn: (buttons & 4) ? 1 : (buttons & 2) ? 2 : 0, x: p.x, y: p.y, mods: mods(e) });
+  else send({ t: 'mouse', win: winId, kind: 'move', btn: 0, x: p.x, y: p.y, mods: mods(e) }, false);
 });
 video.addEventListener('wheel', e => {
   const p = norm(e); if (!p) return;
@@ -165,15 +176,24 @@ video.addEventListener('wheel', e => {
   e.preventDefault();
 }, { passive: false });
 
+const swallowedUp = new Set();
 function onKey(e, down) {
   if (!winId || !room) return;
+  const shortcut = isMac ? e.metaKey : e.ctrlKey;
+  if (shortcut && e.code === 'KeyV') return;
   const code = KEYS[e.code];
   e.preventDefault();
   if (code === undefined) {
     if (down && e.key.length === 1) send({ t: 'text', win: winId, s: e.key });
     return;
   }
-  send({ t: 'key', win: winId, code, down, mods: mods(e), s: e.key.length === 1 ? e.key : undefined });
+  if (!down && swallowedUp.delete(e.code)) return;
+  const msg = { t: 'key', win: winId, code, down, mods: mods(e), s: e.key.length === 1 ? e.key : undefined };
+  send(msg);
+  if (down && isMac && e.metaKey && !e.code.startsWith('Meta')) {
+    send({ ...msg, down: false });
+    swallowedUp.add(e.code);
+  }
 }
 window.addEventListener('keydown', e => onKey(e, true));
 window.addEventListener('keyup', e => onKey(e, false));
@@ -182,9 +202,8 @@ window.addEventListener('paste', e => {
   e.preventDefault();
 });
 
-let resizeTimer;
-function sendResize() { if (winId && room) send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); }
-window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(sendResize, 300); });
+function fitToTab() { if (winId && room) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); hud('Resized the window to fit this tab.'); } }
+$('fit').addEventListener('click', e => { e.stopPropagation(); fitToTab(); video.focus(); });
 
 function showPassword(msg) {
   $('status').textContent = msg || 'Enter the host password (from the Porthole menu-bar icon on the host).';

@@ -39,7 +39,11 @@ PLIST
 make_app "Porthole Host" porthole-host io.github.muhammademanaftab.porthole true
 cp -R web "dist/Porthole Host.app/Contents/Resources/web"
 LK=$(command -v livekit-server || true)
-if [ -n "$LK" ]; then cat "$(realpath "$LK")" > "dist/Porthole Host.app/Contents/Resources/livekit-server"; chmod 755 "dist/Porthole Host.app/Contents/Resources/livekit-server"; fi
+if [ -z "$LK" ]; then echo "livekit-server not found: brew install livekit" >&2; exit 1; fi
+LKDST="dist/Porthole Host.app/Contents/MacOS/livekit-server"
+cat "$(realpath "$LK")" > "$LKDST"
+chmod 755 "$LKDST"
+codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$LKDST"
 make_app "Porthole" porthole-view io.github.muhammademanaftab.porthole.view false
 
 for app in "dist/Porthole Host.app" "dist/Porthole.app"; do

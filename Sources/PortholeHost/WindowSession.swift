@@ -80,18 +80,28 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         timer = t
     }
 
+    func followSizeSoon() {
+        for delay in [0.15, 0.4, 0.8] {
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.followSize() }
+        }
+    }
+
+    private func followSize() {
+        guard let live = LiveWindow.lookup(windowID) else { return }
+        let want = Self.pixelSize(points: live.bounds.size, scale: live.scale)
+        guard want != pixelSize else { return }
+        pixelSize = want
+        stream?.updateConfiguration(makeConfig()) { err in
+            if let err { Log.info("resize capture failed: \(err.localizedDescription)") }
+        }
+    }
+
     private func tick() {
-        guard let live = LiveWindow.lookup(windowID) else {
+        guard LiveWindow.lookup(windowID) != nil else {
             DispatchQueue.main.async { self.onClosed?() }
             return
         }
-        let want = Self.pixelSize(points: live.bounds.size, scale: live.scale)
-        if want != pixelSize {
-            pixelSize = want
-            stream?.updateConfiguration(makeConfig()) { err in
-                if let err { Log.info("resize capture failed: \(err.localizedDescription)") }
-            }
-        }
+        followSize()
         if Date().timeIntervalSince(lastFrameAt) > 1.0, let buf = lastBuffer {
             capturer.capture(buf)
             lastFrameAt = Date()

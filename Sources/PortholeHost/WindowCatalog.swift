@@ -9,8 +9,8 @@ enum WindowCatalog {
         "com.dashlane.dashlanephonefinal",
     ]
 
-    static func shareable() async throws -> [SCWindow] {
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+    static func shareable(onScreenOnly: Bool = true) async throws -> [SCWindow] {
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: onScreenOnly)
         let me = Bundle.main.bundleIdentifier
         let myPID = ProcessInfo.processInfo.processIdentifier
         return content.windows.filter { w in
@@ -51,6 +51,7 @@ struct LiveWindow {
     }
 
     var scale: CGFloat {
+        if !Thread.isMainThread { return DispatchQueue.main.sync { scale } }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let appKitRect = CGRect(x: bounds.minX, y: primaryHeight - bounds.maxY, width: bounds.width, height: bounds.height)
         let screen = NSScreen.screens.max { a, b in

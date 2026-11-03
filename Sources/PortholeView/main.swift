@@ -58,6 +58,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func connect(host: String, password: String) {
         for p in portals.values { p.close() }
+        if let old = connection { Task { await old.disconnect() } }
+        picker?.close()
         let c = Connection(hostAddress: host, password: password)
         connection = c
         let picker = PickerWindow(hostName: host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }

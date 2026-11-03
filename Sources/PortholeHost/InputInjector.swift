@@ -43,15 +43,40 @@ final class InputInjector {
         }
     }
 
+    private func focusedWindowID(pid: pid_t) -> UInt32? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let v = value, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        var wid: CGWindowID = 0
+        return _AXUIElementGetWindow(v as! AXUIElement, &wid) == .success ? wid : nil
+    }
+
     private func focus(id: UInt32, live: LiveWindow) {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        if front == live.pid && focusedWindow == id { return }
+        if front == live.pid && focusedWindowID(pid: live.pid) == id { return }
+        let app = AXUIElementCreateApplication(live.pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         NSRunningApplication(processIdentifier: live.pid)?.activate()
         if let w = axWindow(id: id, pid: live.pid) {
             AXUIElementSetAttributeValue(w, kAXMainAttribute as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(w, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             AXUIElementPerformAction(w, kAXRaiseAction as CFString)
         }
         focusedWindow = id
+    }
+
+    func releaseAllButtons() {
+        guard !buttonsDown.isEmpty else { return }
+        let p = CGEvent(source: nil)?.location ?? .zero
+        for btn in buttonsDown {
+            let type: CGEventType = btn == 1 ? .rightMouseUp : (btn == 2 ? .otherMouseUp : .leftMouseUp)
+            let button: CGMouseButton = btn == 1 ? .right : (btn == 2 ? .center : .left)
+            CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button)?.post(tap: .cghidEventTap)
+        }
+        buttonsDown.removeAll()
     }
 
 
@@ -103,8 +128,15 @@ final class InputInjector {
     private static let modifierCodes: Set<UInt16> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
 
     private func key(_ m: Message, id: UInt32, live: LiveWindow) {
-        guard let code = m.code, !Self.modifierCodes.contains(code) else { return }
+        guard let code = m.code else { return }
         let down = m.down ?? true
+        if Self.modifierCodes.contains(code) {
+            guard let e = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { return }
+            e.type = .flagsChanged
+            e.flags = flags(m.mods)
+            e.post(tap: .cghidEventTap)
+            return
+        }
         if down { focus(id: id, live: live) }
         guard let e = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { return }
         e.flags = flags(m.mods)

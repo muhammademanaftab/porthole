@@ -28,12 +28,14 @@ final class HostApp: NSObject, NSApplicationDelegate {
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
             let http = try HTTPServer(config: config)
+            http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
-            let token = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
-                .make(identity: "host", room: "porthole", canPublish: true)
+            let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh() }
-            try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)", token: token)
+            try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
+                keys.make(identity: "host", room: "porthole", canPublish: true)
+            }
             state = "Sharing"
             Log.info("host ready"); print("Porthole host ready.\n  Browser: \(browserLink)\n  Mac viewer: porthole-view \(tailscaleAddress() ?? "<this-mac>") \(config.password)")
             fflush(stdout)

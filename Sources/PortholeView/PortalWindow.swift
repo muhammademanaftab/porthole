@@ -103,14 +103,14 @@ final class InputCaptureView: NSView {
         return m.rawValue
     }
 
-    private func point(_ e: NSEvent) -> CGPoint? {
+    private func point(_ e: NSEvent, clamp: Bool = false) -> CGPoint? {
         let p = convert(e.locationInWindow, from: nil)
         let content = contentPixels == .zero ? bounds.size : contentPixels
-        return normalized(p, content: content, in: bounds)
+        return clamp ? clampedNormalized(p, content: content, in: bounds) : normalized(p, content: content, in: bounds)
     }
 
     private func sendMouse(_ e: NSEvent, kind: Message.MouseKind, button: Int) {
-        guard let p = point(e) else { return }
+        guard let p = point(e, clamp: kind == .up || kind == .drag) else { return }
         if kind == .move || kind == .drag {
             guard Date().timeIntervalSince(lastMove) > 1.0 / 60 else { return }
             lastMove = Date()
@@ -119,7 +119,7 @@ final class InputCaptureView: NSView {
         m.win = windowID; m.kind = kind; m.btn = button; m.x = p.x; m.y = p.y
         m.mods = Self.mods(e.modifierFlags)
         if kind == .down || kind == .up { m.clicks = e.clickCount }
-        connection.send(m, reliable: kind == .down || kind == .up)
+        connection.send(m, reliable: kind != .move)
     }
 
     override func mouseDown(with e: NSEvent) { window?.makeFirstResponder(self); sendMouse(e, kind: .down, button: 0) }
@@ -145,6 +145,20 @@ final class InputCaptureView: NSView {
         var m = Message(.key)
         m.win = windowID; m.code = e.keyCode; m.down = down; m.mods = Self.mods(e.modifierFlags)
         m.s = e.characters
+        connection.send(m)
+    }
+
+    override func flagsChanged(with e: NSEvent) {
+        let down: Bool
+        switch e.keyCode {
+        case 56, 60: down = e.modifierFlags.contains(.shift)
+        case 59, 62: down = e.modifierFlags.contains(.control)
+        case 58, 61: down = e.modifierFlags.contains(.option)
+        case 55, 54: down = e.modifierFlags.contains(.command)
+        default: return
+        }
+        var m = Message(.key)
+        m.win = windowID; m.code = e.keyCode; m.down = down; m.mods = Self.mods(e.modifierFlags)
         connection.send(m)
     }
 

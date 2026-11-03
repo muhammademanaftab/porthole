@@ -9,6 +9,7 @@ final class LiveKitServer {
     static func locateBinary() -> String? {
         var candidates: [String] = []
         if let env = ProcessInfo.processInfo.environment["PORTHOLE_LIVEKIT_SERVER"] { candidates.append(env) }
+        if let exe = Bundle.main.executableURL { candidates.append(exe.deletingLastPathComponent().appendingPathComponent("livekit-server").path) }
         if let res = Bundle.main.resourceURL { candidates.append(res.appendingPathComponent("livekit-server").path) }
         candidates += ["/opt/homebrew/bin/livekit-server", "/usr/local/bin/livekit-server"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -43,8 +44,10 @@ final class LiveKitServer {
         let logURL = HostConfig.directory.appendingPathComponent("livekit.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         if let fh = try? FileHandle(forWritingTo: logURL) { p.standardOutput = fh; p.standardError = fh }
-        p.terminationHandler = { proc in
+        p.terminationHandler = { [weak self] proc in
             Log.info("livekit-server exited with status \(proc.terminationStatus)")
+            guard let self, !self.stopping else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { try? self.start() }
         }
         try p.run()
         process = p
@@ -52,7 +55,9 @@ final class LiveKitServer {
         LiveKitServer.shared = self
     }
 
-    func stop() { process?.terminate() }
+    private var stopping = false
+
+    func stop() { stopping = true; process?.terminate() }
 
     nonisolated(unsafe) static var shared: LiveKitServer?
 

@@ -30,7 +30,7 @@ final class Connection: NSObject, RoomDelegate {
         comps.port = parts.count > 1 ? Int(parts[1]) : 7878
         comps.path = "/token"
         comps.queryItems = [URLQueryItem(name: "pw", value: password),
-                            URLQueryItem(name: "name", value: Host.current().localizedName ?? "mac")]
+                            URLQueryItem(name: "name", value: ProcessInfo.processInfo.hostName.components(separatedBy: ".").first ?? "mac")]
         let (data, resp) = try await URLSession.shared.data(from: comps.url!)
         guard (resp as? HTTPURLResponse)?.statusCode == 200,
               let obj = try JSONSerialization.jsonObject(with: data) as? [String: String],
@@ -42,11 +42,26 @@ final class Connection: NSObject, RoomDelegate {
                                roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
     }
 
+    private lazy var outbox: AsyncStream<(Data, Bool)>.Continuation = {
+        let (stream, cont) = AsyncStream<(Data, Bool)>.makeStream(bufferingPolicy: .bufferingNewest(256))
+        let room = self.room
+        Task {
+            for await (data, reliable) in stream {
+                let opts = DataPublishOptions(destinationIdentities: [Participant.Identity(from: "host")],
+                                              topic: portholeTopic, reliable: reliable)
+                try? await room.localParticipant.publish(data: data, options: opts)
+            }
+        }
+        return cont
+    }()
+
     func send(_ m: Message, reliable: Bool = true) {
-        let opts = DataPublishOptions(destinationIdentities: [Participant.Identity(from: "host")],
-                                      topic: portholeTopic, reliable: reliable)
-        let data = m.encoded()
-        Task { try? await room.localParticipant.publish(data: data, options: opts) }
+        outbox.yield((m.encoded(), reliable))
+    }
+
+    func disconnect() async {
+        outbox.finish()
+        await room.disconnect()
     }
 
     private var listAnswered = false
