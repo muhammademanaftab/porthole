@@ -31,6 +31,7 @@ make_app() {
   <key>NSHighResolutionCapable</key><true/>
   <key>NSScreenCaptureUsageDescription</key><string>Porthole shares this Mac's windows with your other machines.</string>
   <key>NSLocalNetworkUsageDescription</key><string>Porthole connects your Macs on this network.</string>
+  <key>NSBonjourServices</key><array><string>_porthole._tcp</string></array>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
 PLIST

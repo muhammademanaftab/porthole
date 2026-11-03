@@ -21,6 +21,9 @@ expect "host is a menu-bar agent (LSUIElement true)" "$(plist "$HOST" LSUIElemen
 expect "viewer is a regular app (LSUIElement false)" "$(plist "$VIEW" LSUIElement)" "false"
 expect "host executable" "$(plist "$HOST" CFBundleExecutable)" "porthole-host"
 expect "viewer executable" "$(plist "$VIEW" CFBundleExecutable)" "porthole-view"
+for app in "$HOST" "$VIEW"; do
+  expect "$(basename "$app") declares the _porthole._tcp Bonjour service" "$(plist "$app" NSBonjourServices.0)" "_porthole._tcp"
+done
 
 for f in index.html porthole-core.js livekit-client.umd.min.js; do
   if [ -f "$WEB/$f" ]; then pass "web/$f is bundled"; else fail "web/$f is bundled"; fi

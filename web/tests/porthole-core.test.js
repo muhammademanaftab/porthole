@@ -404,3 +404,9 @@ test('soundLabel asks for a click until the browser allows playback, then shows 
   assert.equal(core.soundLabel(true, false), 'Sound on');
   assert.equal(core.soundLabel(true, true), 'Sound off');
 });
+
+test('index.html declares an empty icon so the browser does not ask for /favicon.ico', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const head = html.slice(0, html.indexOf('</head>'));
+  assert.match(head, /<link rel="icon" href="data:,">/);
+});

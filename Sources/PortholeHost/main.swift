@@ -8,6 +8,8 @@ final class HostApp: NSObject, NSApplicationDelegate {
     lazy var server = LiveKitServer(config: config)
     let host = HostRoom()
     var http: HTTPServer?
+    let pairing = PairingDesk()
+    var pairingWindow: PairingWindow?
     var statusItem: NSStatusItem?
     var state = "Starting…"
 
@@ -37,7 +39,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
             try server.start()
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
-            let http = try HTTPServer(config: config)
+            let http = try HTTPServer(config: config, pairing: pairing)
             http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
@@ -72,6 +74,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Browser Link", action: #selector(copyLink), keyEquivalent: "c").target = self
         menu.addItem(withTitle: "Copy Password", action: #selector(copyPassword), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Pair a New Viewer…", action: #selector(pairViewer), keyEquivalent: "p").target = self
         menu.addItem(.separator())
         let perms = menu.addItem(withTitle: "Screen Recording: \(CGPreflightScreenCaptureAccess() ? "on" : "OFF, click to fix")",
                                  action: #selector(openScreenSettings), keyEquivalent: "")
@@ -90,6 +93,11 @@ final class HostApp: NSObject, NSApplicationDelegate {
 
     @objc func copyLink() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(browserLink, forType: .string) }
     @objc func copyPassword() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(config.password, forType: .string) }
+    @objc func pairViewer() {
+        let w = pairingWindow ?? PairingWindow(desk: pairing)
+        pairingWindow = w
+        w.present()
+    }
     @objc func openScreenSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
