@@ -18,6 +18,7 @@ scripts/bundle.sh          # dist/Porthole Host.app, dist/Porthole.app
 ```
 
 `scripts/test.sh` runs the Swift self-test (`swift run PortholeSelfTest`) and the browser tests (`node --test web/`).
+After bundling, `scripts/check-bundle.sh` verifies bundle ids, bundled web files and code signatures in `dist/`.
 
 Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Accessibility permissions across rebuilds.
 

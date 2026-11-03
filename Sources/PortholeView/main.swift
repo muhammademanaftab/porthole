@@ -11,10 +11,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
-        let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
+        let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         let defaults = UserDefaults.standard
-        let host = args.first ?? defaults.string(forKey: "host")
-        let pw = args.dropFirst().first ?? defaults.string(forKey: "password")
+        let host = args.host ?? defaults.string(forKey: "host")
+        let pw = args.password ?? defaults.string(forKey: "password")
         if let host, let pw {
             connect(host: host, password: pw)
         } else {

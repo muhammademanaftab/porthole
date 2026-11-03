@@ -1,5 +1,32 @@
 import Foundation
 
+public struct HTTPResponse {
+    public var status: String
+    public var contentType: String
+    public var body: Data
+    public var headers: [(String, String)]
+    public var sendsBody: Bool
+
+    public init(_ status: String, _ contentType: String, _ body: Data, headers: [(String, String)] = [], sendsBody: Bool = true) {
+        self.status = status; self.contentType = contentType; self.body = body
+        self.headers = headers; self.sendsBody = sendsBody
+    }
+
+    public init(_ status: String, _ contentType: String, _ text: String, headers: [(String, String)] = []) {
+        self.init(status, contentType, Data(text.utf8), headers: headers)
+    }
+
+    public var head: String {
+        var h = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n"
+        for (name, value) in headers { h += "\(name): \(value)\r\n" }
+        return h + "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+    }
+
+    public var serialized: Data {
+        Data(head.utf8) + (sendsBody ? body : Data())
+    }
+}
+
 public struct WebRoutes {
     public var password: String
     public var livekitPort: Int
@@ -7,58 +34,98 @@ public struct WebRoutes {
     public var webRoot: URL?
     public var suffix: () -> String
 
+    public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
+
     public init(password: String, livekitPort: Int, tokens: AccessToken, webRoot: URL?,
                 suffix: @escaping () -> String = { randomSecret(bytes: 3) }) {
         self.password = password; self.livekitPort = livekitPort; self.tokens = tokens
         self.webRoot = webRoot; self.suffix = suffix
     }
 
-    public func respond(to request: String) -> (String, String, Data) {
+    public func respond(to request: String) -> HTTPResponse {
         let lines = request.components(separatedBy: "\r\n")
         let parts = lines.first?.split(separator: " ") ?? []
-        guard parts.count >= 2, parts[0] == "GET", let comps = URLComponents(string: String(parts[1])) else {
-            return ("400 Bad Request", "text/plain", Data("bad request".utf8))
+        guard parts.count >= 2 else { return HTTPResponse("400 Bad Request", "text/plain", "bad request") }
+        guard parts[0] == "GET" || parts[0] == "HEAD" else {
+            return HTTPResponse("405 Method Not Allowed", "text/plain", "method not allowed", headers: [("Allow", "GET, HEAD")])
         }
-        let query = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        let hostHeader = lines.first { $0.lowercased().hasPrefix("host:") }
-            .map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) } ?? "127.0.0.1"
+        let target = String(parts[1])
+        let hostLine = lines.dropFirst().first { $0.lowercased().hasPrefix("host:") }
+        guard Self.hasValidEscapes(target), let comps = URLComponents(string: target),
+              hostLine != nil || parts.count < 3 || parts[2] != "HTTP/1.1" else {
+            return HTTPResponse("400 Bad Request", "text/plain", "bad request")
+        }
+        var response = route(comps, hostHeader: hostLine.map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) } ?? "")
+        if parts[0] == "HEAD" { response.sendsBody = false }
+        return response
+    }
 
+    private func route(_ comps: URLComponents, hostHeader: String) -> HTTPResponse {
+        let query = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         switch comps.path {
         case "/", "/index.html":
             guard let root = webRoot, let html = try? Data(contentsOf: root.appendingPathComponent("index.html")) else {
-                return ("500 Internal Server Error", "text/plain", Data("web viewer missing".utf8))
+                return HTTPResponse("500 Internal Server Error", "text/plain", "web viewer missing")
             }
-            return ("200 OK", "text/html; charset=utf-8", html)
+            return HTTPResponse("200 OK", "text/html; charset=utf-8", html)
         case "/token":
             guard query["pw"] == password else {
-                return ("401 Unauthorized", "application/json", Data(#"{"error":"wrong password"}"#.utf8))
+                return HTTPResponse("403 Forbidden", "application/json", #"{"error":"wrong password"}"#)
             }
             let identity = Self.viewerIdentity(name: query["name"], suffix: suffix())
             let token = tokens.make(identity: identity, room: "porthole", canPublish: false)
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
-            return ("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
+            return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         default:
             let name = String(comps.path.dropFirst())
-            guard let root = webRoot, !name.isEmpty, !name.contains(".."), !name.contains("/"),
+            guard let root = webRoot, Self.isServable(name),
                   let body = try? Data(contentsOf: root.appendingPathComponent(name)) else {
-                return ("404 Not Found", "text/plain", Data("not found".utf8))
+                return HTTPResponse("404 Not Found", "text/plain", "not found")
             }
-            return ("200 OK", Self.contentType(for: name), body)
+            return HTTPResponse("200 OK", Self.contentType(for: name), body)
         }
     }
 
+    public static func isServable(_ name: String) -> Bool {
+        !name.isEmpty && !name.hasPrefix(".") && !name.contains("..") && !name.contains("/") && !name.contains("\\")
+            && servedExtensions.contains { name.hasSuffix($0) && name.count > $0.count }
+    }
+
+    public static func hasValidEscapes(_ s: String) -> Bool {
+        let u = Array(s.utf8)
+        var i = 0
+        while i < u.count {
+            if u[i] == UInt8(ascii: "%") {
+                guard i + 2 < u.count, isHex(u[i + 1]), isHex(u[i + 2]) else { return false }
+                i += 3
+            } else { i += 1 }
+        }
+        return true
+    }
+
+    private static func isHex(_ c: UInt8) -> Bool {
+        (48...57).contains(c) || (65...70).contains(c) || (97...102).contains(c)
+    }
+
     public static func viewerIdentity(name: String?, suffix: String) -> String {
-        let clean = (name.flatMap { $0.isEmpty ? nil : $0 } ?? "viewer")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        return "view-\(clean.prefix(24))-\(suffix)"
+        let clean = (name ?? "").filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        return "view-\(clean.isEmpty ? "viewer" : String(clean.prefix(24)))-\(suffix)"
     }
 
     public static func contentType(for name: String) -> String {
-        name.hasSuffix(".js") ? "text/javascript" : name.hasSuffix(".css") ? "text/css" : name.hasSuffix(".png") ? "image/png" : "application/octet-stream"
+        if name.hasSuffix(".js") { return "text/javascript" }
+        if name.hasSuffix(".css") { return "text/css" }
+        if name.hasSuffix(".png") { return "image/png" }
+        if name.hasSuffix(".webmanifest") { return "application/manifest+json" }
+        return "application/octet-stream"
     }
 
     public static func hostname(from header: String) -> String {
-        if header.hasPrefix("["), let end = header.firstIndex(of: "]") { return String(header[...end]) }
-        return header.split(separator: ":").first.map(String.init) ?? header
+        if header.hasPrefix("[") {
+            guard let end = header.firstIndex(of: "]"), header.distance(from: header.startIndex, to: end) > 1 else { return "127.0.0.1" }
+            return String(header[...end])
+        }
+        let name = header.split(separator: ":", omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        return name.isEmpty ? "127.0.0.1" : name
     }
 }

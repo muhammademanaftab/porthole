@@ -44,10 +44,6 @@ const $ = (id) => document.getElementById(id);
 const isMac = /Mac/.test(navigator.platform);
 let room, hostP, listed = false, opened = false;
 
-async function retry(fn, done, every = 1000, times = 10) {
-  for (let i = 0; i < times && !done(); i++) { fn(); await new Promise(r => setTimeout(r, every)); }
-}
-
 const PC = window.PortholeCore;
 const mods = (e) => PC.mods(e, isMac);
 
@@ -68,7 +64,7 @@ async function connect(pw) {
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
   hostP = room.remoteParticipants.get('host');
   if (!hostP) { $('status').textContent = 'Connected, but the host is not in the room. Is Porthole Host running?'; return; }
-  if (winId) openWindow(winId); else retry(() => send({ t: 'list' }), () => listed);
+  if (winId) openWindow(winId); else PC.retry(() => send({ t: 'list' }), () => listed, PC.RETRY.list.every, PC.RETRY.list.times);
 }
 
 function onData(payload, participant, kind, topic) {
@@ -81,13 +77,14 @@ function onData(payload, participant, kind, topic) {
 }
 
 function renderList(list) {
-  $('status').textContent = list.length ? `${list.length} windows on the host. Each opens in its own tab.` : 'No windows to share on the host.';
+  $('status').textContent = PC.pickerStatus(list.length);
   const pw = sessionStorage.getItem('pw');
   $('list').replaceChildren(...list.map(w => {
     const a = document.createElement('a');
     a.className = 'row'; a.target = '_blank';
-    a.href = `?pw=${encodeURIComponent(pw)}&win=${w.id}`;
-    a.innerHTML = `<b></b><span></span><small>${Math.round(w.w)}×${Math.round(w.h)}</small>`;
+    a.href = PC.windowLink(pw, w.id);
+    a.innerHTML = '<b></b><span></span><small></small>';
+    a.querySelector('small').textContent = PC.sizeLabel(w.w, w.h);
     a.querySelector('b').textContent = w.app;
     a.querySelector('span').textContent = w.title;
     return a;
@@ -98,7 +95,7 @@ function openWindow(id) {
   $('picker').style.display = 'none';
   $('stage').style.display = 'block';
   hud('Opening window…');
-  retry(() => send({ t: 'open', win: id }), () => opened, 2000, 5);
+  PC.retry(() => send({ t: 'open', win: id }), () => opened, PC.RETRY.open.every, PC.RETRY.open.times);
 }
 
 function subscribe(trackName) {
@@ -125,34 +122,28 @@ function hud(text, sticky) {
   if (!sticky) hudTimer = setTimeout(() => h.style.opacity = 0, 2500);
 }
 
+const geom = () => { const v = $('video'); return { rect: v.getBoundingClientRect(), vw: v.videoWidth, vh: v.videoHeight }; };
 function norm(e, clamp) {
-  const v = $('video');
-  return PC.norm(e.clientX, e.clientY, v.getBoundingClientRect(), v.videoWidth, v.videoHeight, clamp);
+  const g = geom();
+  return PC.norm(e.clientX, e.clientY, g.rect, g.vw, g.vh, clamp);
 }
 
 const video = $('video');
-let lastMove = 0, buttons = 0, click = { t: 0, x: 0, y: 0, count: 0 };
-const btnOf = PC.btnOf;
+const pointer = PC.createPointer(winId, isMac);
 video.addEventListener('contextmenu', e => e.preventDefault());
 video.addEventListener('pointerdown', e => {
-  const p = norm(e); if (!p) return;
-  video.focus(); video.setPointerCapture(e.pointerId); buttons |= 1 << e.button;
-  click = PC.countClick(click, performance.now(), e.clientX, e.clientY);
-  send({ t: 'mouse', win: winId, kind: 'down', btn: btnOf(e), x: p.x, y: p.y, clicks: click.count, mods: mods(e) });
+  const out = pointer.down(e, geom(), performance.now()); if (!out) return;
+  video.focus(); video.setPointerCapture(e.pointerId);
+  send(out.msg, out.reliable);
   e.preventDefault();
 });
 function pointerUp(e) {
-  if (!(buttons & (1 << e.button))) return;
-  const p = norm(e, true); buttons &= ~(1 << e.button);
-  send({ t: 'mouse', win: winId, kind: 'up', btn: btnOf(e), x: p.x, y: p.y, clicks: click.count, mods: mods(e) });
+  const out = pointer.up(e, geom()); if (out) send(out.msg, out.reliable);
 }
 video.addEventListener('pointerup', pointerUp);
 video.addEventListener('pointercancel', pointerUp);
 video.addEventListener('pointermove', e => {
-  const now = performance.now(); if (now - lastMove < 16) return; lastMove = now;
-  const p = norm(e, !!buttons); if (!p) return;
-  if (buttons) send({ t: 'mouse', win: winId, kind: 'drag', btn: PC.dragButton(buttons), x: p.x, y: p.y, mods: mods(e) });
-  else send({ t: 'mouse', win: winId, kind: 'move', btn: 0, x: p.x, y: p.y, mods: mods(e) }, false);
+  const out = pointer.move(e, geom(), performance.now()); if (out) send(out.msg, out.reliable);
 });
 video.addEventListener('wheel', e => {
   const p = norm(e); if (!p) return;

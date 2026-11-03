@@ -37,7 +37,10 @@ PLIST
 }
 
 make_app "Porthole Host" porthole-host io.github.muhammademanaftab.porthole true
-cp -R web "dist/Porthole Host.app/Contents/Resources/web"
+WEBDST="dist/Porthole Host.app/Contents/Resources/web"
+mkdir -p "$WEBDST"
+find web -maxdepth 1 -type f ! -name '.*' \( -name index.html -o -name '*.js' -o -name '*.css' -o -name '*.png' -o -name '*.webmanifest' \) \
+  -exec cp {} "$WEBDST/" \;
 LK=$(command -v livekit-server || true)
 if [ -z "$LK" ]; then echo "livekit-server not found: brew install livekit" >&2; exit 1; fi
 LKDST="dist/Porthole Host.app/Contents/MacOS/livekit-server"

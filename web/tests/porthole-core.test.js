@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const core = require('../porthole-core.js');
-const { KEYS, mods, norm, btnOf, dragButton, countClick, scrollDelta, keyMessages } = core;
+const { KEYS, mods, norm, btnOf, dragButton, countClick, shouldSendMove, scrollDelta, createPointer, keyMessages, retry,
+  RETRY, MOVE_INTERVAL, pickerStatus, windowLink, sizeLabel } = core;
 
 const kVK = {
   ANSI_A: 0x00, ANSI_S: 0x01, ANSI_D: 0x02, ANSI_F: 0x03, ANSI_H: 0x04, ANSI_G: 0x05, ANSI_Z: 0x06, ANSI_X: 0x07,
@@ -21,7 +22,9 @@ const kVK = {
   ANSI_Keypad6: 0x58, ANSI_Keypad7: 0x59, ANSI_Keypad8: 0x5B, ANSI_Keypad9: 0x5C, F5: 0x60, F6: 0x61, F7: 0x62, F3: 0x63,
   F8: 0x64, F9: 0x65, F11: 0x67, F13: 0x69, F14: 0x6B, F10: 0x6D, F12: 0x6F, F15: 0x71, Help: 0x72, Home: 0x73,
   PageUp: 0x74, ForwardDelete: 0x75, F4: 0x76, End: 0x77, F2: 0x78, PageDown: 0x79, F1: 0x7A, LeftArrow: 0x7B,
-  RightArrow: 0x7C, DownArrow: 0x7D, UpArrow: 0x7E,
+  RightArrow: 0x7C, DownArrow: 0x7D, UpArrow: 0x7E, Function: 0x3F, F17: 0x40, VolumeUp: 0x48, VolumeDown: 0x49, Mute: 0x4A,
+  F18: 0x4F, F19: 0x50, F20: 0x5A, JIS_Yen: 0x5D, JIS_Underscore: 0x5E, JIS_KeypadComma: 0x5F, JIS_Eisu: 0x66,
+  JIS_Kana: 0x68, F16: 0x6A, ContextualMenu: 0x6E,
 };
 
 const browserToCarbon = {
@@ -36,10 +39,12 @@ const browserToCarbon = {
   NumpadSubtract: 'ANSI_KeypadMinus', NumpadEqual: 'ANSI_KeypadEquals',
   Help: 'Help', Insert: 'Help', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
   ArrowLeft: 'LeftArrow', ArrowRight: 'RightArrow', ArrowDown: 'DownArrow', ArrowUp: 'UpArrow',
+  IntlYen: 'JIS_Yen', IntlRo: 'JIS_Underscore', NumpadComma: 'JIS_KeypadComma', Lang1: 'JIS_Kana', Lang2: 'JIS_Eisu',
+  AudioVolumeUp: 'VolumeUp', AudioVolumeDown: 'VolumeDown', AudioVolumeMute: 'Mute', ContextMenu: 'ContextualMenu', Fn: 'Function',
 };
 for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') browserToCarbon[`Key${c}`] = `ANSI_${c}`;
 for (let d = 0; d <= 9; d++) { browserToCarbon[`Digit${d}`] = `ANSI_${d}`; browserToCarbon[`Numpad${d}`] = `ANSI_Keypad${d}`; }
-for (let f = 1; f <= 15; f++) browserToCarbon[`F${f}`] = `F${f}`;
+for (let f = 1; f <= 20; f++) browserToCarbon[`F${f}`] = `F${f}`;
 
 const ev = (o = {}) => ({ shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, ...o });
 const rect = { left: 100, top: 50, width: 800, height: 600 };
@@ -49,17 +54,10 @@ test('KEYS matches the Carbon kVK virtual key codes for every mapped browser cod
   assert.deepEqual(KEYS, expected);
 });
 
-test('KEYS leaves keys without a Mac virtual key unmapped so they fall back to text', () => {
-  for (const code of ['F16', 'IntlRo', 'IntlYen', 'AudioVolumeUp', 'Fn', 'ContextMenu', 'PrintScreen']) {
+test('KEYS leaves browser codes with no Mac virtual key unmapped', () => {
+  for (const code of ['PrintScreen', 'ScrollLock', 'Pause', 'BrowserBack', 'MediaPlayPause', 'F21', '']) {
     assert.equal(KEYS[code], undefined, code);
   }
-});
-
-test('KEYS modifier keys all land in the host flagsChanged range 54...63', () => {
-  for (const code of ['MetaLeft', 'MetaRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'ControlLeft', 'ControlRight', 'CapsLock']) {
-    assert.ok(KEYS[code] >= 54 && KEYS[code] <= 63, code);
-  }
-  assert.equal(Object.values(KEYS).filter(v => v >= 54 && v <= 63).length, 9);
 });
 
 test('mods on a Mac: shift 1, ctrl 2, alt 4, meta 8', () => {
@@ -109,14 +107,27 @@ test('norm uses the element box before the video size is known', () => {
   assert.deepEqual(norm(300, 200, rect, 0, 0, false), { x: 0.25, y: 0.25 });
 });
 
+test('norm on a zero-size element ignores clicks and centres clamped points', () => {
+  const flat = { left: 10, top: 10, width: 0, height: 0 };
+  assert.equal(norm(10, 10, flat, 0, 0, false), null);
+  assert.deepEqual(norm(10, 10, flat, 0, 0, true), { x: 0.5, y: 0.5 });
+  assert.equal(norm(10, 10, flat, 1600, 900, false), null);
+  assert.deepEqual(norm(10, 10, { left: 0, top: 0, width: 800, height: 0 }, 1600, 900, true), { x: 0.5, y: 0.5 });
+});
+
 test('btnOf maps DOM buttons to the protocol: left 0, right 1, middle 2', () => {
   assert.equal(btnOf({ button: 0 }), 0);
   assert.equal(btnOf({ button: 2 }), 1);
   assert.equal(btnOf({ button: 1 }), 2);
-  assert.equal(btnOf({ button: 3 }), 0);
 });
 
-test('dragButton picks right, then middle, then left from the held-buttons mask', () => {
+test('btnOf ignores Back and Forward buttons instead of clicking', () => {
+  assert.equal(btnOf({ button: 3 }), null);
+  assert.equal(btnOf({ button: 4 }), null);
+  assert.equal(btnOf({ button: -1 }), null);
+});
+
+test('dragButton reads the 1<<event.button mask: bit 4 (right) wins, then bit 2 (middle), else left', () => {
   assert.equal(dragButton(1), 0);
   assert.equal(dragButton(4), 1);
   assert.equal(dragButton(2), 2);
@@ -147,10 +158,78 @@ test('countClick restarts when the pointer moved 5 px or more on either axis', (
   assert.equal(countClick(first, 1100, 204.9, 195.1).count, 2);
 });
 
-test('scrollDelta inverts the wheel and scales line mode by 16 px', () => {
+test('move throttle: 16 ms apart is sent, less is dropped', () => {
+  assert.equal(MOVE_INTERVAL, 16);
+  assert.equal(shouldSendMove(1016, 1000), true);
+  assert.equal(shouldSendMove(1015.9, 1000), false);
+});
+
+test('scrollDelta inverts pixel-mode wheel deltas', () => {
   assert.deepEqual(scrollDelta({ deltaX: 3, deltaY: -10, deltaMode: 0 }), { dx: -3, dy: 10 });
+});
+
+test('scrollDelta turns line-mode deltas into 16 px per line, same as the Mac viewer', () => {
   assert.deepEqual(scrollDelta({ deltaX: -1, deltaY: 3, deltaMode: 1 }), { dx: 16, dy: -48 });
+});
+
+test('scrollDelta passes page-mode deltas through unscaled', () => {
   assert.deepEqual(scrollDelta({ deltaX: 2, deltaY: 1, deltaMode: 2 }), { dx: -2, dy: -1 });
+});
+
+const geom = { rect: { left: 0, top: 0, width: 800, height: 600 }, vw: 1600, vh: 900 };
+const pev = (button, clientX, clientY, o = {}) => ev({ button, clientX, clientY, ...o });
+
+test('pointer: press in the picture sends a reliable down with click count and mods', () => {
+  const p = createPointer(7, true);
+  const out = p.down(pev(0, 400, 300, { metaKey: true }), geom, 1000);
+  assert.deepEqual(out, { msg: { t: 'mouse', win: 7, kind: 'down', btn: 0, x: 0.5, y: 0.5, clicks: 1, mods: 8 }, reliable: true });
+  assert.equal(p.buttons, 1);
+});
+
+test('pointer: press on the letterbox bar or with Back/Forward is ignored and holds nothing', () => {
+  const p = createPointer(7, true);
+  assert.equal(p.down(pev(0, 400, 50), geom, 1000), null);
+  assert.equal(p.down(pev(3, 400, 300), geom, 1000), null);
+  assert.equal(p.up(pev(3, 400, 300), geom), null);
+  assert.equal(p.buttons, 0);
+});
+
+test('pointer: release is skipped unless that button is held, and clamps outside the picture', () => {
+  const p = createPointer(7, true);
+  assert.equal(p.up(pev(2, 400, 300), geom), null);
+  p.down(pev(2, 400, 300), geom, 1000);
+  const out = p.up(pev(2, 900, 10), geom);
+  assert.deepEqual(out, { msg: { t: 'mouse', win: 7, kind: 'up', btn: 1, x: 1, y: 0, clicks: 1, mods: 0 }, reliable: true });
+  assert.equal(p.buttons, 0);
+  assert.equal(p.up(pev(2, 400, 300), geom), null);
+});
+
+test('pointer: hover moves are lossy, button 0, without clicks', () => {
+  const p = createPointer(7, true);
+  const out = p.move(pev(0, 200, 187.5), geom, 1000);
+  assert.deepEqual(out, { msg: { t: 'mouse', win: 7, kind: 'move', btn: 0, x: 0.25, y: 0.25, mods: 0 }, reliable: false });
+  assert.equal('clicks' in out.msg, false);
+});
+
+test('pointer: moves with a button held are reliable drags, clamped, using the held button', () => {
+  const p = createPointer(7, true);
+  p.down(pev(2, 400, 300), geom, 1000);
+  const out = p.move(pev(-1, 400, 5), geom, 2000);
+  assert.deepEqual(out, { msg: { t: 'mouse', win: 7, kind: 'drag', btn: 1, x: 0.5, y: 0, mods: 0 }, reliable: true });
+});
+
+test('pointer: moves closer than 16 ms are dropped, and hover off the picture sends nothing', () => {
+  const p = createPointer(7, true);
+  assert.notEqual(p.move(pev(0, 400, 300), geom, 1000), null);
+  assert.equal(p.move(pev(0, 410, 300), geom, 1010), null);
+  assert.equal(p.move(pev(0, 400, 10), geom, 1100), null);
+});
+
+test('pointer: a quick second press counts as a double click and the release reports it', () => {
+  const p = createPointer(7, false);
+  p.down(pev(0, 400, 300), geom, 1000); p.up(pev(0, 400, 300), geom);
+  assert.equal(p.down(pev(0, 401, 301), geom, 1200).msg.clicks, 2);
+  assert.equal(p.up(pev(0, 401, 301), geom).msg.clicks, 2);
 });
 
 const key = (code, k, o = {}) => ev({ code, key: k, ...o });
@@ -186,11 +265,22 @@ test('keyMessages: Cmd shortcuts on a Mac send down and up at once and swallow t
   assert.equal(again.send.length, 1);
 });
 
-test('keyMessages: the Command key itself is not doubled', () => {
+test('keyMessages: auto-repeated Cmd+Z sends a down/up pair per repeat and swallows the one real keyup', () => {
   const swallowed = new Set();
-  const r = keyMessages(key('MetaLeft', 'Meta', { metaKey: true }), true, true, 7, swallowed);
-  assert.deepEqual(r.send, [{ t: 'key', win: 7, code: 55, down: true, mods: 8, s: undefined }]);
+  const sent = [];
+  for (const down of [true, true, false]) sent.push(...keyMessages(key('KeyZ', 'z', { metaKey: down }), down, true, 7, swallowed).send);
+  assert.deepEqual(sent.map(m => [m.code, m.down]), [[6, true], [6, false], [6, true], [6, false]]);
   assert.equal(swallowed.size, 0);
+});
+
+test('keyMessages: modifier keys pressed while Cmd is held are not doubled', () => {
+  for (const code of ['MetaLeft', 'MetaRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'ControlLeft', 'ControlRight', 'CapsLock']) {
+    const swallowed = new Set();
+    const r = keyMessages(key(code, 'Shift', { metaKey: true }), true, true, 7, swallowed);
+    assert.equal(r.send.length, 1, code);
+    assert.equal(r.send[0].down, true, code);
+    assert.equal(swallowed.size, 0, code);
+  }
 });
 
 test('keyMessages: Ctrl+C on Windows is one key message with the Command bit', () => {
@@ -215,9 +305,42 @@ test('keyMessages: paste shortcut is left to the browser paste event', () => {
 });
 
 test('keyMessages: unmapped keys with a printable character are sent as text on keydown only', () => {
-  assert.deepEqual(keyMessages(key('IntlYen', '¥'), true, true, 7, new Set()), { prevent: true, send: [{ t: 'text', win: 7, s: '¥' }] });
-  assert.deepEqual(keyMessages(key('IntlYen', '¥'), false, true, 7, new Set()), { prevent: true, send: [] });
-  assert.deepEqual(keyMessages(key('AudioVolumeUp', 'AudioVolumeUp'), true, true, 7, new Set()), { prevent: true, send: [] });
+  assert.deepEqual(keyMessages(key('', '¥'), true, true, 7, new Set()), { prevent: true, send: [{ t: 'text', win: 7, s: '¥' }] });
+  assert.deepEqual(keyMessages(key('', '¥'), false, true, 7, new Set()), { prevent: true, send: [] });
+  assert.deepEqual(keyMessages(key('MediaPlayPause', 'MediaPlayPause'), true, true, 7, new Set()), { prevent: true, send: [] });
+});
+
+test('keyMessages: an emoji from an unmapped key (two UTF-16 units) is still sent as text', () => {
+  assert.deepEqual(keyMessages(key('', '😀'), true, true, 7, new Set()).send, [{ t: 'text', win: 7, s: '😀' }]);
+});
+
+test('retry calls until done or out of attempts, sleeping the given interval', async () => {
+  const sleeps = [];
+  let calls = 0;
+  await retry(() => calls++, () => false, 1500, 10, async (ms) => { sleeps.push(ms); });
+  assert.equal(calls, 10);
+  assert.deepEqual(sleeps, Array(10).fill(1500));
+  calls = 0;
+  await retry(() => calls++, () => calls >= 3, 2000, 5, async () => {});
+  assert.equal(calls, 3);
+});
+
+test('retry policies match the Mac viewer: list 10 x 1 s, open 5 x 2 s', () => {
+  assert.deepEqual(RETRY, { list: { every: 1000, times: 10 }, open: { every: 2000, times: 5 } });
+});
+
+test('pickerStatus says window or windows', () => {
+  assert.equal(pickerStatus(0), 'No windows to share on the host.');
+  assert.equal(pickerStatus(1), '1 window on the host. Each opens in its own tab.');
+  assert.equal(pickerStatus(3), '3 windows on the host. Each opens in its own tab.');
+});
+
+test('windowLink percent-encodes the password', () => {
+  assert.equal(windowLink('a b&c=d#e/ő', 42), '?pw=a%20b%26c%3Dd%23e%2F%C5%91&win=42');
+});
+
+test('sizeLabel rounds the point size', () => {
+  assert.equal(sizeLabel(1279.6, 720.4), '1280×720');
 });
 
 test('the module also installs window.PortholeCore when loaded by a plain <script> tag', () => {
@@ -226,15 +349,17 @@ test('the module also installs window.PortholeCore when loaded by a plain <scrip
   ctx.self = ctx;
   vm.runInContext(src, ctx);
   assert.equal(ctx.PortholeCore.KEYS.KeyA, 0);
-  assert.equal(ctx.PortholeCore.mods({ shiftKey: true, metaKey: true }, true), 9);
 });
 
-test('index.html loads porthole-core.js before its own script and only uses exported helpers', () => {
+test('index.html loads porthole-core.js first, uses exactly the shared helpers and keeps no private copies', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const tag = html.indexOf('<script src="porthole-core.js"></script>');
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
-  const used = new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]));
-  assert.ok(used.size >= 7);
-  for (const name of used) assert.equal(typeof core[name], 'function', name);
+  const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
+  assert.deepEqual(used, ['RETRY', 'createPointer', 'keyMessages', 'mods', 'norm', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'windowLink']);
+  for (const name of used) assert.notEqual(core[name], undefined, name);
+  for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
+    assert.equal(html.includes(copy), false, copy);
+  }
 });

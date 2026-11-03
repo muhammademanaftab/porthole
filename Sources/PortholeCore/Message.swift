@@ -68,7 +68,7 @@ public extension Message {
     static func trackName(for window: UInt32) -> String { "win-\(window)" }
 
     static func windowID(fromTrackName name: String) -> UInt32? {
-        guard name.hasPrefix("win-") else { return nil }
-        return UInt32(name.dropFirst(4))
+        guard name.hasPrefix("win-"), let id = UInt32(name.dropFirst(4)), trackName(for: id) == name else { return nil }
+        return id
     }
 }

@@ -41,14 +41,11 @@ final class HTTPServer {
         conn.start(queue: queue)
         conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
             guard let self, let data, let req = String(data: data, encoding: .utf8) else { conn.cancel(); return }
-            let (status, type, body) = self.respond(to: req)
-            var head = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
-            head += "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
-            conn.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in conn.cancel() })
+            conn.send(content: self.respond(to: req).serialized, completion: .contentProcessed { _ in conn.cancel() })
         }
     }
 
-    func respond(to request: String) -> (String, String, Data) {
+    func respond(to request: String) -> HTTPResponse {
         routes.respond(to: request)
     }
 }

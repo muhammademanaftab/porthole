@@ -30,6 +30,7 @@ func geometryTests() {
            fittedRect(content: CGSize(width: 3840, height: 2400), in: CGRect(x: 0, y: 0, width: 1440, height: 900)),
            CGRect(x: 0, y: 0, width: 1440, height: 900))
     expect("fit: zero content returns the bounds", fittedRect(content: .zero, in: b), b)
+    expect("fit: zero-height content returns the bounds", fittedRect(content: CGSize(width: 100, height: 0), in: b), b)
     expect("fit: negative content returns the bounds", fittedRect(content: CGSize(width: -10, height: 10), in: b), b)
     let flat = CGRect(x: 5, y: 5, width: 0, height: 100)
     expect("fit: zero-width bounds returned unchanged", fittedRect(content: wide, in: flat), flat)
@@ -50,7 +51,10 @@ func geometryTests() {
     check("clamped: far outside clamps to (1, 1)", near(clampedNormalized(CGPoint(x: 5000, y: 5000), content: wide, in: square), 1, 1))
     check("clamped: far outside the other way clamps to (0, 0)",
           near(clampedNormalized(CGPoint(x: -5, y: -5), content: wide, in: square), 0, 0))
-    check("clamped: inside matches normalized", near(clampedNormalized(CGPoint(x: 1200, y: 575), content: wide, in: square), 0.75, 0.25))
+    let inside = CGPoint(x: 1200, y: 575)
+    check("clamped: inside the picture equals normalized (0.75, 0.25)",
+          normalized(inside, content: wide, in: square) == clampedNormalized(inside, content: wide, in: square)
+          && near(clampedNormalized(inside, content: wide, in: square), 0.75, 0.25))
     expect("clamped: zero-size view falls back to the centre", clampedNormalized(CGPoint(x: 9, y: 9), content: wide, in: .zero),
            CGPoint(x: 0.5, y: 0.5))
 }

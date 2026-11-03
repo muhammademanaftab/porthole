@@ -15,3 +15,7 @@ public func hostMenuTitle(state: String, openWindows n: Int) -> String {
 public func portalContentSize(remote size: CGSize, screen: CGSize) -> CGSize {
     CGSize(width: min(max(size.width, 320), screen.width), height: min(max(size.height, 200), screen.height))
 }
+
+public func pickerStatus(_ n: Int) -> String {
+    n == 0 ? "No windows to share on the host." : "\(n) window\(n == 1 ? "" : "s"). Click one to open it."
+}

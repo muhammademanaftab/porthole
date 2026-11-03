@@ -8,7 +8,7 @@ final class HostRoom: NSObject, RoomDelegate {
     let input = InputInjector()
     private var sessions: [UInt32: WindowSession] = [:]
     private var starting: [UInt32: Task<Void, Error>] = [:]
-    private var viewers: [UInt32: Set<String>] = [:]
+    private var registry = SessionRegistry()
     private var url = ""
     private var makeToken: (() -> String)?
     private var reconnecting = false
@@ -35,11 +35,9 @@ final class HostRoom: NSObject, RoomDelegate {
         guard !reconnecting else { return }
         reconnecting = true
         defer { reconnecting = false }
-        for (id, session) in sessions {
-            await session.stop(in: room)
-            sessions[id] = nil
+        for id in registry.reset() {
+            if let session = sessions.removeValue(forKey: id) { await session.stop(in: room) }
         }
-        viewers.removeAll()
         input.releaseAllButtons()
         var delay: UInt64 = 1
         while true {
@@ -50,7 +48,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 return
             } catch {
                 Log.info("rejoin failed: \(error.localizedDescription)")
-                delay = min(delay * 2, 30)
+                delay = nextBackoff(delay)
             }
         }
     }
@@ -71,7 +69,7 @@ final class HostRoom: NSObject, RoomDelegate {
         Task { @MainActor in
             Log.info("viewer left: \(who)")
             self.input.releaseAllButtons()
-            for id in self.viewers.keys { await self.release(id, by: who) }
+            for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
         }
     }
 
@@ -101,7 +99,7 @@ final class HostRoom: NSObject, RoomDelegate {
             guard let id = m.win else { return }
             await release(id, by: who)
         case .key, .text, .mouse, .scroll, .resize:
-            guard let id = m.win, sessions[id] != nil, viewers[id]?.contains(who) == true else { return }
+            guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
             input.handle(m)
             if m.t == .resize { sessions[id]?.followSizeSoon() }
         default:
@@ -116,51 +114,56 @@ final class HostRoom: NSObject, RoomDelegate {
             await send(reply, to: who)
             return
         }
-        viewers[id, default: []].insert(who)
         do {
-            if sessions[id] == nil {
-                if let pending = starting[id] {
-                    try await pending.value
-                } else {
-                    let session = WindowSession(windowID: id)
-                    let task = Task { try await session.start(in: room) }
-                    starting[id] = task
-                    defer { starting[id] = nil }
-                    try await task.value
-                    session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
-                    sessions[id] = session
-                    if viewers[id]?.isEmpty ?? true {
-                        sessions[id] = nil
-                        await session.stop(in: room)
-                        return
-                    }
-                    onChange?()
+            switch registry.beginOpen(id, by: who) {
+            case .alreadyLive:
+                break
+            case .waitForStart:
+                try await starting[id]?.value
+            case .start:
+                let session = WindowSession(windowID: id)
+                let task = Task { try await session.start(in: room) }
+                starting[id] = task
+                do { try await task.value } catch {
+                    starting[id] = nil
+                    registry.startFailed(id)
+                    throw error
                 }
+                starting[id] = nil
+                guard registry.startSucceeded(id) else {
+                    await session.stop(in: room)
+                    return
+                }
+                session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
+                sessions[id] = session
+                onChange?()
             }
-            guard viewers[id]?.contains(who) == true else { return }
+            guard registry.shouldReply(id, to: who) else { return }
             var reply = Message(.opened)
             reply.win = id
             reply.track = Message.trackName(for: id)
             if let live = LiveWindow.lookup(id) { reply.w = live.bounds.width; reply.h = live.bounds.height }
             await send(reply, to: who)
         } catch {
-            viewers[id]?.remove(who)
+            registry.openFailed(id, by: who)
             var reply = Message(.error); reply.win = id; reply.msg = error.localizedDescription
             await send(reply, to: who)
         }
     }
 
     private func release(_ id: UInt32, by who: String) async {
-        viewers[id]?.remove(who)
-        guard viewers[id]?.isEmpty ?? true, let session = sessions.removeValue(forKey: id) else { return }
-        viewers[id] = nil
+        guard registry.release(id, by: who) else { return }
+        await stopSession(id)
+    }
+
+    private func stopSession(_ id: UInt32) async {
+        guard let session = sessions.removeValue(forKey: id) else { return }
         await session.stop(in: room)
         onChange?()
     }
 
     private func windowClosed(_ id: UInt32) async {
-        guard let session = sessions.removeValue(forKey: id) else { return }
-        let who = viewers.removeValue(forKey: id) ?? []
+        guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
         await session.stop(in: room)
         var m = Message(.closed); m.win = id
         for v in who { await send(m, to: v) }

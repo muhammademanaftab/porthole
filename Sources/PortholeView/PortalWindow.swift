@@ -98,23 +98,19 @@ final class InputCaptureView: NSView {
         Modifiers(f).rawValue
     }
 
-    private func point(_ e: NSEvent, clamp: Bool = false) -> CGPoint? {
-        let p = convert(e.locationInWindow, from: nil)
-        let content = contentPixels == .zero ? bounds.size : contentPixels
-        return clamp ? clampedNormalized(p, content: content, in: bounds) : normalized(p, content: content, in: bounds)
+    private func point(_ e: NSEvent, kind: Message.MouseKind? = nil) -> CGPoint? {
+        ViewerInput.point(convert(e.locationInWindow, from: nil), kind: kind, contentPixels: contentPixels, bounds: bounds)
     }
 
     private func sendMouse(_ e: NSEvent, kind: Message.MouseKind, button: Int) {
-        guard let p = point(e, clamp: kind == .up || kind == .drag) else { return }
+        guard let p = point(e, kind: kind) else { return }
         if kind == .move || kind == .drag {
-            guard Date().timeIntervalSince(lastMove) > 1.0 / 60 else { return }
+            guard ViewerInput.shouldSendMove(now: Date(), last: lastMove) else { return }
             lastMove = Date()
         }
-        var m = Message(.mouse)
-        m.win = windowID; m.kind = kind; m.btn = button; m.x = p.x; m.y = p.y
-        m.mods = Self.mods(e.modifierFlags)
-        if kind == .down || kind == .up { m.clicks = e.clickCount }
-        connection.send(m, reliable: kind != .move)
+        let out = ViewerInput.mouseMessage(win: windowID, kind: kind, button: button, at: p,
+                                           mods: Self.mods(e.modifierFlags), clickCount: e.clickCount)
+        connection.send(out.message, reliable: out.reliable)
     }
 
     override func mouseDown(with e: NSEvent) { window?.makeFirstResponder(self); sendMouse(e, kind: .down, button: 0) }
@@ -129,10 +125,10 @@ final class InputCaptureView: NSView {
 
     override func scrollWheel(with e: NSEvent) {
         guard let p = point(e) else { return }
-        let k: CGFloat = e.hasPreciseScrollingDeltas ? 1 : 10
+        let d = ViewerInput.scrollPixels(dx: e.scrollingDeltaX, dy: e.scrollingDeltaY, precise: e.hasPreciseScrollingDeltas)
         var m = Message(.scroll)
         m.win = windowID; m.x = p.x; m.y = p.y
-        m.dx = e.scrollingDeltaX * k; m.dy = e.scrollingDeltaY * k
+        m.dx = d.dx; m.dy = d.dy
         connection.send(m)
     }
 
@@ -144,8 +140,7 @@ final class InputCaptureView: NSView {
     }
 
     override func flagsChanged(with e: NSEvent) {
-        guard let which = Modifiers.forKeyCode(e.keyCode) else { return }
-        let down = Modifiers(e.modifierFlags).contains(which)
+        guard let down = ViewerInput.modifierIsDown(code: e.keyCode, flags: e.modifierFlags) else { return }
         var m = Message(.key)
         m.win = windowID; m.code = e.keyCode; m.down = down; m.mods = Self.mods(e.modifierFlags)
         connection.send(m)
@@ -156,7 +151,7 @@ final class InputCaptureView: NSView {
 
     override func performKeyEquivalent(with e: NSEvent) -> Bool {
         guard window?.isKeyWindow == true, window?.firstResponder === self else { return false }
-        if e.modifierFlags.contains(.command), e.charactersIgnoringModifiers == "q" { return false }
+        if ViewerInput.keyEquivalentStaysLocal(e.modifierFlags, characters: e.charactersIgnoringModifiers) { return false }
         sendKey(e, down: true)
         sendKey(e, down: false)
         return true

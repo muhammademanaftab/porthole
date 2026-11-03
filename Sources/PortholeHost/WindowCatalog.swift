@@ -43,15 +43,7 @@ struct LiveWindow {
 
     var scale: CGFloat {
         if !Thread.isMainThread { return DispatchQueue.main.sync { scale } }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let appKitRect = CGRect(x: bounds.minX, y: primaryHeight - bounds.maxY, width: bounds.width, height: bounds.height)
-        let screen = NSScreen.screens.max { a, b in
-            a.frame.intersection(appKitRect).area < b.frame.intersection(appKitRect).area
-        }
-        return screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let screens = NSScreen.screens.map { ScreenInfo(frame: $0.frame, scale: $0.backingScaleFactor) }
+        return backingScale(forCGBounds: bounds, screens: screens) ?? NSScreen.main?.backingScaleFactor ?? 2
     }
-}
-
-extension CGRect {
-    var area: CGFloat { isNull ? 0 : width * height }
 }

@@ -32,10 +32,13 @@ final class LiveKitServer {
         let logURL = HostConfig.directory.appendingPathComponent("livekit.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         if let fh = try? FileHandle(forWritingTo: logURL) { p.standardOutput = fh; p.standardError = fh }
+        let startedAt = Date()
         p.terminationHandler = { [weak self] proc in
             Log.info("livekit-server exited with status \(proc.terminationStatus)")
             guard let self, !self.stopping else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { try? self.start() }
+            let delay = restartDelay(after: self.lastRestartDelay, uptime: Date().timeIntervalSince(startedAt))
+            self.lastRestartDelay = delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Int(delay))) { try? self.start() }
         }
         try p.run()
         process = p
@@ -44,6 +47,7 @@ final class LiveKitServer {
     }
 
     private var stopping = false
+    private var lastRestartDelay: UInt64?
 
     func stop() { stopping = true; process?.terminate() }
 

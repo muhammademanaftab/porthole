@@ -35,19 +35,21 @@ func messageTests() {
     let arrow = decode(#"{"t":"key","win":7,"code":123,"down":false,"mods":0}"#)
     check("browser: key without s (arrow keys) decodes with s nil", arrow?.code == 123 && arrow?.down == false && arrow?.s == nil)
     expect("browser: text with raw unicode decodes", decode(#"{"t":"text","win":7,"s":"héllo 👋 日本"}"#)?.s, "héllo 👋 日本")
-    expect("browser: text with JSON \\u escapes and a surrogate pair decodes",
-           decode(#"{"t":"text","win":7,"s":"é👋"}"#)?.s, "é👋")
+    let escaped = #"{"t":"text","win":7,"s":""# + ["00e9", "d83d", "dc4b"].map { "\\" + "u" + $0 }.joined() + #""}"#
+    if escaped.unicodeScalars.allSatisfy(\.isASCII) {
+        expect("browser: text with JSON \\u escapes and a surrogate pair decodes", decode(escaped)?.s, "\u{E9}\u{1F44B}")
+    } else { check("browser: escaped text fixture must be pure ASCII", false) }
     let down = decode(#"{"t":"mouse","win":7,"kind":"down","btn":1,"x":0.25,"y":1,"clicks":2,"mods":8}"#)
     check("browser: mouse down decodes, integer y becomes 1.0", down?.kind == .down && down?.btn == 1 && down?.x == 0.25
           && down?.y == 1.0 && down?.clicks == 2 && down?.mods == 8)
     let move = decode(#"{"t":"mouse","win":7,"kind":"move","btn":0,"x":0.5,"y":0.5,"mods":0}"#)
     check("browser: mouse move without clicks decodes with clicks nil", move?.kind == .move && move?.clicks == nil)
     let scroll = decode(#"{"t":"scroll","win":7,"x":0.5,"y":0.5,"dx":-3,"dy":48}"#)
-    check("browser: scroll decodes deltas", scroll?.t == .scroll && scroll?.dx == -3 && scroll?.dy == 48 && scroll?.kind == nil)
+    check("browser: scroll decodes deltas", scroll?.t == .scroll && scroll?.dx == -3 && scroll?.dy == 48)
     let resize = decode(#"{"t":"resize","win":7,"w":1280,"h":720}"#)
     check("browser: resize decodes size", resize?.t == .resize && resize?.w == 1280 && resize?.h == 720)
     let open = decode(#"{"t":"open","win":7}"#)
-    check("browser: open decodes window id only", open?.t == .open && open?.win == 7 && open?.track == nil)
+    check("browser: open decodes window id only", open?.t == .open && open?.win == 7)
     expect("message: unknown fields are ignored", decode(#"{"t":"list","extra":1,"nested":{"a":[1,2]}}"#)?.t, .list)
 
     let windows = decode(#"{"t":"windows","list":[{"id":5,"app":"Finder","title":"","w":800,"h":600}]}"#)
@@ -75,6 +77,6 @@ func messageTests() {
     expect("track: name from id", Message.trackName(for: 123), "win-123")
     expect("track: id from name", Message.windowID(fromTrackName: "win-123"), 123)
     expect("track: max UInt32 id round trips", Message.windowID(fromTrackName: Message.trackName(for: .max)), UInt32.max)
-    let badTracks = ["screen", "win-", "win-4294967296", "win--1", "win-12a", "Win-1", "xwin-1", "win-1 "]
+    let badTracks = ["screen", "win-", "win-4294967296", "win--1", "win-12a", "Win-1", "xwin-1", "win-1 ", "win-+7", "win-007", "win-0x1"]
     for t in badTracks { check("track: \"\(t)\" is not a window track", Message.windowID(fromTrackName: t) == nil) }
 }

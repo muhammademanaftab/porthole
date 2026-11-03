@@ -23,9 +23,12 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func connect() async throws {
-        let url = tokenURL(hostAddress: hostAddress, password: password,
-                           name: ProcessInfo.processInfo.hostName.components(separatedBy: ".").first ?? "mac")
-        let (data, resp) = try await URLSession.shared.data(from: url!)
+        guard let url = tokenURL(hostAddress: hostAddress, password: password,
+                                 name: shortHostName(ProcessInfo.processInfo.hostName)) else {
+            throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
+                "\"\(hostAddress)\" isn't a host address. Use a name or IP, optionally with :port."])
+        }
+        let (data, resp) = try await URLSession.shared.data(from: url)
         guard (resp as? HTTPURLResponse)?.statusCode == 200,
               let obj = try JSONSerialization.jsonObject(with: data) as? [String: String],
               let url = obj["url"], let token = obj["token"] else {
@@ -63,9 +66,9 @@ final class Connection: NSObject, RoomDelegate {
     func requestList() {
         listAnswered = false
         Task {
-            for _ in 0..<10 where !listAnswered {
+            for _ in 0..<RetryPolicy.list.times where !listAnswered {
                 send(Message(.list))
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(RetryPolicy.list.every * 1_000_000_000))
             }
         }
     }
@@ -74,9 +77,9 @@ final class Connection: NSObject, RoomDelegate {
         pending[id] = then
         var m = Message(.open); m.win = id
         Task {
-            for _ in 0..<5 where pending[id] != nil && openedReplies[id] == nil {
+            for _ in 0..<RetryPolicy.open.times where pending[id] != nil && openedReplies[id] == nil {
                 send(m)
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(RetryPolicy.open.every * 1_000_000_000))
             }
         }
     }

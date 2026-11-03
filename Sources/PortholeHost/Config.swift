@@ -1,29 +1,15 @@
 import Foundation
 import PortholeCore
 
-struct HostConfig: Codable {
-    var password: String
-    var apiKey: String
-    var apiSecret: String
-    var httpPort: UInt16 = 7878
-    var livekitPort: Int = 7880
-
+extension HostConfig {
     static var directory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Porthole", isDirectory: true)
     }
 
     static func loadOrCreate() -> HostConfig {
-        let url = directory.appendingPathComponent("config.json")
-        if let data = try? Data(contentsOf: url), let cfg = try? JSONDecoder().decode(HostConfig.self, from: data) {
-            return cfg
-        }
-        let cfg = HostConfig(password: randomSecret(bytes: 9), apiKey: "PH" + randomSecret(bytes: 6),
-                             apiSecret: randomSecret(bytes: 32))
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? enc.encode(cfg).write(to: url, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let (cfg, backup) = load(in: directory)
+        if let backup { Log.info("config.json was unreadable; kept it as \(backup.lastPathComponent) and wrote a new one") }
         return cfg
     }
 }

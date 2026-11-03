@@ -1,27 +1,11 @@
-import CryptoKit
 import Foundation
 import PortholeCore
 
 func tokenTests() {
     let keys = AccessToken(apiKey: "key", apiSecret: "secret")
     let jwt = keys.make(identity: "host", room: "porthole", canPublish: true, now: Date(timeIntervalSince1970: 1_000_000))
-    let parts = jwt.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-    expect("token: three dot-separated parts", parts.count, 3)
-    guard parts.count == 3 else { return }
-
-    expect("token: header is the standard HS256 JWT header", parts[0], "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
-    expect("token: claims are exactly the LiveKit grant with sorted keys",
-           decodeBase64URL(parts[1]).map { String(decoding: $0, as: UTF8.self) },
-           #"{"exp":1086400,"iat":1000000,"iss":"key","name":"host","nbf":999990,"sub":"host","video":{"canPublish":true,"canPublishData":true,"canSubscribe":true,"room":"porthole","roomJoin":true}}"#)
-
-    let mac = HMAC<SHA256>.authenticationCode(for: Data("\(parts[0]).\(parts[1])".utf8), using: SymmetricKey(data: Data("secret".utf8)))
-    expect("token: signature is HMAC-SHA256 of header.claims with the API secret", decodeBase64URL(parts[2]), Data(mac))
-
-    let other = AccessToken(apiKey: "key", apiSecret: "other")
-        .make(identity: "host", room: "porthole", canPublish: true, now: Date(timeIntervalSince1970: 1_000_000))
-        .split(separator: ".").map(String.init)
-    check("token: a different secret changes only the signature",
-          other.count == 3 && other[0] == parts[0] && other[1] == parts[1] && other[2] != parts[2])
+    expect("token: matches a known-answer JWT computed with Python hmac/hashlib/base64", jwt,
+           "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjEwODY0MDAsImlhdCI6MTAwMDAwMCwiaXNzIjoia2V5IiwibmFtZSI6Imhvc3QiLCJuYmYiOjk5OTk5MCwic3ViIjoiaG9zdCIsInZpZGVvIjp7ImNhblB1Ymxpc2giOnRydWUsImNhblB1Ymxpc2hEYXRhIjp0cnVlLCJjYW5TdWJzY3JpYmUiOnRydWUsInJvb20iOiJwb3J0aG9sZSIsInJvb21Kb2luIjp0cnVlfX0.DZil8AHGEPo6tbQKXSw4mxxMPNFc9eanwbBemmalJaI")
 
     let viewer = keys.make(identity: "view-x-1", room: "lobby", canPublish: false, ttl: 60,
                            now: Date(timeIntervalSince1970: 1_000_000.9))
@@ -49,4 +33,6 @@ func tokenTests() {
     check("secret: only URL-safe base64 characters", s.allSatisfy { allowed.contains($0) })
     expect("secret: decodes back to the requested 24 bytes", decodeBase64URL(s)?.count, 24)
     check("secret: two secrets differ", randomSecret() != randomSecret())
+    let bytes = (0..<64).flatMap { _ in decodeBase64URL(randomSecret(bytes: 32)).map(Array.init) ?? [] }
+    check("secret: bytes use the full range (some >= 128 across 64 secrets)", bytes.count == 2048 && bytes.contains { $0 >= 128 })
 }

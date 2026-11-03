@@ -2,12 +2,19 @@ import Foundation
 
 messageTests()
 modifierTests()
-mouseAndTextTests()
+mouseTests()
+textTests()
+resizeTests()
+viewerTests()
 geometryTests()
 tokenTests()
+hostConfigTests()
+httpResponseTests()
 webRouteTests()
 networkTests()
+sessionTests()
 captureTests()
+pacingTests()
 labelTests()
 
 let total = Harness.passed + Harness.failed

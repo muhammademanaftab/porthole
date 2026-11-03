@@ -13,6 +13,10 @@ func labelTests() {
     expect("menu title: one window is singular", hostMenuTitle(state: "Sharing", openWindows: 1), "Porthole: Sharing · 1 window open")
     expect("menu title: several windows are plural", hostMenuTitle(state: "Sharing", openWindows: 3), "Porthole: Sharing · 3 windows open")
 
+    expect("picker status: none", pickerStatus(0), "No windows to share on the host.")
+    expect("picker status: one window is singular", pickerStatus(1), "1 window. Click one to open it.")
+    expect("picker status: several windows are plural", pickerStatus(3), "3 windows. Click one to open it.")
+
     let screen = CGSize(width: 1440, height: 900)
     expect("portal size: fits unchanged", portalContentSize(remote: CGSize(width: 800, height: 600), screen: screen),
            CGSize(width: 800, height: 600))

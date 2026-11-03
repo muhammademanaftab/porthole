@@ -76,7 +76,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func followSizeSoon() {
-        for delay in [0.15, 0.4, 0.8] {
+        for delay in CapturePacing.followSizeDelays {
             queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.followSize() }
         }
     }
@@ -97,7 +97,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
             return
         }
         followSize()
-        if Date().timeIntervalSince(lastFrameAt) > 1.0, let buf = lastBuffer {
+        if CapturePacing.shouldResend(now: Date(), lastFrameAt: lastFrameAt, hasBuffer: lastBuffer != nil), let buf = lastBuffer {
             capturer.capture(buf)
             lastFrameAt = Date()
         }
@@ -106,8 +106,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid,
               let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-              let statusRaw = attachments.first?[.status] as? Int,
-              SCFrameStatus(rawValue: statusRaw) == .complete,
+              CapturePacing.acceptsFrame(status: attachments.first?[.status] as? Int),
               let pb = sampleBuffer.imageBuffer else { return }
         lastBuffer = pb
         lastFrameAt = Date()

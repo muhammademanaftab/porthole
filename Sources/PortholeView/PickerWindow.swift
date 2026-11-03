@@ -58,7 +58,7 @@ final class PickerWindow: NSWindow {
         items = list
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         targets.removeAll { $0.tag >= 0 }
-        status.stringValue = list.isEmpty ? "No windows to share on the host." : "\(list.count) windows. Click one to open it."
+        status.stringValue = pickerStatus(list.count)
         for (i, info) in list.enumerated() {
             let b = NSButton(title: info.pickerLabel, target: nil, action: nil)
             b.bezelStyle = .recessed
