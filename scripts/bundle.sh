@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-release}
+SIGN_ID=${SIGN_ID:-$(security find-identity -p codesigning 2>/dev/null | awk '/"Porthole Dev"/{print $2; exit}')}
 SIGN_ID=${SIGN_ID:-"-"}
 swift build -c "$CONFIG" --arch arm64
 BIN=.build/arm64-apple-macosx/$CONFIG
@@ -38,7 +39,7 @@ PLIST
 make_app "Porthole Host" porthole-host io.github.muhammademanaftab.porthole true
 cp -R web "dist/Porthole Host.app/Contents/Resources/web"
 LK=$(command -v livekit-server || true)
-[ -n "$LK" ] && cp "$(realpath "$LK")" "dist/Porthole Host.app/Contents/Resources/livekit-server"
+if [ -n "$LK" ]; then cat "$(realpath "$LK")" > "dist/Porthole Host.app/Contents/Resources/livekit-server"; chmod 755 "dist/Porthole Host.app/Contents/Resources/livekit-server"; fi
 make_app "Porthole" porthole-view io.github.muhammademanaftab.porthole.view false
 
 for app in "dist/Porthole Host.app" "dist/Porthole.app"; do

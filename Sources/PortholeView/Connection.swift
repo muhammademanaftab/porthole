@@ -49,12 +49,27 @@ final class Connection: NSObject, RoomDelegate {
         Task { try? await room.localParticipant.publish(data: data, options: opts) }
     }
 
-    func requestList() { send(Message(.list)) }
+    private var listAnswered = false
+
+    func requestList() {
+        listAnswered = false
+        Task {
+            for _ in 0..<10 where !listAnswered {
+                send(Message(.list))
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
 
     func open(_ id: UInt32, then: @escaping (VideoTrack, Message) -> Void) {
         pending[id] = then
         var m = Message(.open); m.win = id
-        send(m)
+        Task {
+            for _ in 0..<5 where pending[id] != nil && openedReplies[id] == nil {
+                send(m)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
     }
 
     func close(_ id: UInt32) {
@@ -86,7 +101,9 @@ final class Connection: NSObject, RoomDelegate {
         guard topic == portholeTopic, let m = Message.decode(data) else { return }
         Task { @MainActor in
             switch m.t {
-            case .windows: self.onWindows?(m.list ?? [])
+            case .windows:
+                self.listAnswered = true
+                self.onWindows?(m.list ?? [])
             case .opened:
                 guard let id = m.win else { return }
                 self.openedReplies[id] = m

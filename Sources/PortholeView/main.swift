@@ -102,8 +102,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
-let app = NSApplication.shared
-let delegate = ViewerApp()
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = ViewerApp()
+    app.delegate = delegate
+    app.setActivationPolicy(.regular)
+    app.run()
+}

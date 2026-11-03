@@ -19,6 +19,9 @@ let package = Package(
         .executableTarget(name: "PortholeView", dependencies: [
             "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),
         ]),
-        .testTarget(name: "PortholeCoreTests", dependencies: ["PortholeCore"]),
+        .executableTarget(name: "PortholeSelfTest", dependencies: ["PortholeCore"]),
+        .executableTarget(name: "PortholeProbe", dependencies: [
+            "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),
+        ]),
     ]
 )

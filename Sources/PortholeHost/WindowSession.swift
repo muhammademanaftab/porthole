@@ -6,7 +6,7 @@ import ScreenCaptureKit
 
 final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     let windowID: UInt32
-    let track: LocalVideoTrack
+    private(set) var track: LocalVideoTrack!
     private(set) var publication: LocalTrackPublication?
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "porthole.capture", qos: .userInteractive)
@@ -22,9 +22,6 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     init(windowID: UInt32) {
         self.windowID = windowID
-        track = LocalVideoTrack.createBufferTrack(
-            name: Message.trackName(for: windowID), source: .screenShareVideo,
-            options: BufferCaptureOptions(dimensions: Dimensions(width: 1920, height: 1080), fps: 60))
         super.init()
     }
 
@@ -41,6 +38,9 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         let scale = LiveWindow.lookup(windowID)?.scale ?? 2
         pixelSize = Self.pixelSize(points: window.frame.size, scale: scale)
+        track = await LocalVideoTrack.createBufferTrack(
+            name: Message.trackName(for: windowID), source: .screenShareVideo,
+            options: BufferCaptureOptions(dimensions: Dimensions(width: Int32(pixelSize.width), height: Int32(pixelSize.height)), fps: 60))
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let s = SCStream(filter: filter, configuration: makeConfig(), delegate: self)
@@ -68,7 +68,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         c.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         c.showsCursor = false
         c.ignoreShadowsSingleWindow = true
-        c.includeChildWindows = true
+        if #available(macOS 14.2, *) { c.includeChildWindows = true }
         return c
     }
 
@@ -89,7 +89,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
         if want != pixelSize {
             pixelSize = want
             stream?.updateConfiguration(makeConfig()) { err in
-                if let err { NSLog("Porthole: resize capture failed: \(err.localizedDescription)") }
+                if let err { Log.info("resize capture failed: \(err.localizedDescription)") }
             }
         }
         if Date().timeIntervalSince(lastFrameAt) > 1.0, let buf = lastBuffer {
@@ -110,7 +110,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        NSLog("Porthole: capture of \(windowID) stopped: \(error.localizedDescription)")
+        Log.info("capture of \(windowID) stopped: \(error.localizedDescription)")
         DispatchQueue.main.async { self.onClosed?() }
     }
 

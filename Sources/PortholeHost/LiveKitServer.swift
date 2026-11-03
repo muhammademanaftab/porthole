@@ -44,7 +44,7 @@ final class LiveKitServer {
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         if let fh = try? FileHandle(forWritingTo: logURL) { p.standardOutput = fh; p.standardError = fh }
         p.terminationHandler = { proc in
-            NSLog("Porthole: livekit-server exited with status \(proc.terminationStatus)")
+            Log.info("livekit-server exited with status \(proc.terminationStatus)")
         }
         try p.run()
         process = p

@@ -35,7 +35,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
             host.onChange = { [weak self] in self?.refresh() }
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)", token: token)
             state = "Sharing"
-            print("Porthole host ready.\n  Browser: \(browserLink)\n  Mac viewer: porthole-view \(tailscaleAddress() ?? "<this-mac>") \(config.password)")
+            Log.info("host ready"); print("Porthole host ready.\n  Browser: \(browserLink)\n  Mac viewer: porthole-view \(tailscaleAddress() ?? "<this-mac>") \(config.password)")
             fflush(stdout)
         } catch {
             state = "Error: \(error.localizedDescription)"
@@ -85,8 +85,10 @@ final class HostApp: NSObject, NSApplicationDelegate {
 signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }
 signal(SIGINT) { _ in LiveKitServer.shared?.stop(); exit(0) }
 
-let app = NSApplication.shared
-let delegate = HostApp()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = HostApp()
+    app.delegate = delegate
+    app.setActivationPolicy(.accessory)
+    app.run()
+}

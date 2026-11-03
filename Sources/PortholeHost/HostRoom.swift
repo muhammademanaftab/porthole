@@ -22,9 +22,14 @@ final class HostRoom: NSObject, RoomDelegate {
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
                           forTopic topic: String, encryptionType: EncryptionType) {
+        Log.info("data topic=\(topic) from=\(participant?.identity?.stringValue ?? "server") bytes=\(data.count)")
         guard topic == portholeTopic, let m = Message.decode(data),
               let who = participant?.identity?.stringValue else { return }
         Task { @MainActor in await self.handle(m, from: who) }
+    }
+
+    nonisolated func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
+        Log.info("viewer joined: \(participant.identity?.stringValue ?? "?")")
     }
 
     nonisolated func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
@@ -35,15 +40,17 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
-        NSLog("Porthole: host left the room: \(error?.localizedDescription ?? "no error")")
+        Log.info("host left the room: \(error?.localizedDescription ?? "no error")")
     }
 
 
     private func handle(_ m: Message, from who: String) async {
+        if m.t != .mouse { Log.info("\(m.t.rawValue) from \(who)") }
         switch m.t {
         case .list:
             var reply = Message(.windows)
             do { reply.list = try await WindowCatalog.list() } catch {
+                Log.info("listing windows failed: \(error.localizedDescription)")
                 reply = Message(.error); reply.msg = "Can't list windows: \(error.localizedDescription). Check Screen Recording permission."
             }
             await send(reply, to: who)
@@ -109,7 +116,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private func send(_ m: Message, to who: String) async {
         let opts = DataPublishOptions(destinationIdentities: [Participant.Identity(from: who)], topic: portholeTopic, reliable: true)
         do { try await room.localParticipant.publish(data: m.encoded(), options: opts) } catch {
-            NSLog("Porthole: send to \(who) failed: \(error.localizedDescription)")
+            Log.info("send to \(who) failed: \(error.localizedDescription)")
         }
     }
 }
