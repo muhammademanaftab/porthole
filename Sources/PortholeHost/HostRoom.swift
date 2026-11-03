@@ -6,6 +6,7 @@ import PortholeCore
 final class HostRoom: NSObject, RoomDelegate {
     let room = Room()
     let input = InputInjector()
+    let stage = Stage()
     private var sessions: [UInt32: WindowSession] = [:]
     private var starting: [UInt32: Task<Void, Error>] = [:]
     private var registry = SessionRegistry()
@@ -38,6 +39,7 @@ final class HostRoom: NSObject, RoomDelegate {
         for id in registry.reset() {
             if let session = sessions.removeValue(forKey: id) { await session.stop(in: room) }
         }
+        stage.unparkAll()
         input.releaseAllButtons()
         var delay: UInt64 = 1
         while true {
@@ -121,17 +123,20 @@ final class HostRoom: NSObject, RoomDelegate {
             case .waitForStart:
                 try await starting[id]?.value
             case .start:
+                await stage.park(id)
                 let session = WindowSession(windowID: id)
                 let task = Task { try await session.start(in: room) }
                 starting[id] = task
                 do { try await task.value } catch {
                     starting[id] = nil
+                    stage.unpark(id)
                     registry.startFailed(id)
                     throw error
                 }
                 starting[id] = nil
                 guard registry.startSucceeded(id) else {
                     await session.stop(in: room)
+                    stage.unpark(id)
                     return
                 }
                 session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
@@ -159,12 +164,14 @@ final class HostRoom: NSObject, RoomDelegate {
     private func stopSession(_ id: UInt32) async {
         guard let session = sessions.removeValue(forKey: id) else { return }
         await session.stop(in: room)
+        stage.unpark(id)
         onChange?()
     }
 
     private func windowClosed(_ id: UInt32) async {
         guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
         await session.stop(in: room)
+        stage.unpark(id)
         var m = Message(.closed); m.win = id
         for v in who { await send(m, to: v) }
         onChange?()

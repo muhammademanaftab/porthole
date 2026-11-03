@@ -45,7 +45,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let opts = VideoPublishOptions(
             name: Message.trackName(for: windowID),
-            screenShareEncoding: VideoEncoding(maxBitrate: 15_000_000, maxFps: 60),
+            screenShareEncoding: VideoEncoding(maxBitrate: 25_000_000, maxFps: 60),
             simulcast: false,
             preferredCodec: .h264,
             degradationPreference: .maintainResolution)

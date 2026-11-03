@@ -13,8 +13,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "PortholeCore"),
+        .target(name: "VirtualDisplayBridge", linkerSettings: [.linkedFramework("CoreGraphics")]),
         .executableTarget(name: "PortholeHost", dependencies: [
-            "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),
+            "PortholeCore", "VirtualDisplayBridge", .product(name: "LiveKit", package: "client-sdk-swift"),
         ]),
         .executableTarget(name: "PortholeView", dependencies: [
             "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),

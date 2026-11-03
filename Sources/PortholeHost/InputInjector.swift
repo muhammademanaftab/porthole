@@ -2,9 +2,6 @@ import AppKit
 import ApplicationServices
 import PortholeCore
 
-@_silgen_name("_AXUIElementGetWindow")
-private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
-
 @MainActor
 final class InputInjector {
     private let source = CGEventSource(stateID: .hidSystemState)
@@ -30,37 +27,13 @@ final class InputInjector {
         }
     }
 
-
-    private func axWindow(id: UInt32, pid: pid_t) -> AXUIElement? {
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.5)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-              let windows = value as? [AXUIElement] else { return nil }
-        return windows.first { w in
-            var wid: CGWindowID = 0
-            return _AXUIElementGetWindow(w, &wid) == .success && wid == id
-        }
-    }
-
-    private func focusedWindowID(pid: pid_t) -> UInt32? {
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.5)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success,
-              let v = value, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
-        var wid: CGWindowID = 0
-        return _AXUIElementGetWindow(v as! AXUIElement, &wid) == .success ? wid : nil
-    }
-
     private func focus(id: UInt32, live: LiveWindow) {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        if front == live.pid && focusedWindowID(pid: live.pid) == id { return }
-        let app = AXUIElementCreateApplication(live.pid)
-        AXUIElementSetMessagingTimeout(app, 0.5)
+        if front == live.pid && AXWindows.focusedWindowID(pid: live.pid) == id { return }
+        let app = AXWindows.app(live.pid)
         AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         NSRunningApplication(processIdentifier: live.pid)?.activate()
-        if let w = axWindow(id: id, pid: live.pid) {
+        if let w = AXWindows.window(id: id, pid: live.pid) {
             AXUIElementSetAttributeValue(w, kAXMainAttribute as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(w, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             AXUIElementPerformAction(w, kAXRaiseAction as CFString)
@@ -77,7 +50,6 @@ final class InputInjector {
         }
         buttonsDown.removeAll()
     }
-
 
     private func mouse(_ m: Message, id: UInt32, live: LiveWindow) {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
@@ -109,7 +81,6 @@ final class InputInjector {
         e.location = p
         e.post(tap: .cghidEventTap)
     }
-
 
     private func flags(_ mods: UInt32?) -> CGEventFlags {
         Modifiers(rawValue: mods ?? 0).cgEventFlags
@@ -143,10 +114,8 @@ final class InputInjector {
         }
     }
 
-
     private func resize(id: UInt32, live: LiveWindow, w: Double?, h: Double?) {
-        guard var size = resizeTarget(w: w, h: h), let ax = axWindow(id: id, pid: live.pid) else { return }
-        guard let value = AXValueCreate(.cgSize, &size) else { return }
-        AXUIElementSetAttributeValue(ax, kAXSizeAttribute as CFString, value)
+        guard let size = resizeTarget(w: w, h: h), let ax = AXWindows.window(id: id, pid: live.pid) else { return }
+        AXWindows.setSize(ax, size)
     }
 }

@@ -16,6 +16,7 @@ sessionTests()
 captureTests()
 pacingTests()
 labelTests()
+stageTests()
 
 let total = Harness.passed + Harness.failed
 print(Harness.failed == 0 ? "\nAll \(total) checks passed." : "\n\(Harness.failed) of \(total) check(s) failed.")

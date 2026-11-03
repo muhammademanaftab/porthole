@@ -33,6 +33,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
             self.http = http
             let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh() }
+            await host.stage.start()
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
@@ -81,7 +82,9 @@ final class HostApp: NSObject, NSApplicationDelegate {
     @objc func openAXSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
-    @objc func quit() { server.stop(); NSApp.terminate(nil) }
+    @objc func quit() { host.stage.unparkAll(); server.stop(); NSApp.terminate(nil) }
+
+    func applicationWillTerminate(_ note: Notification) { host.stage.unparkAll() }
 }
 
 signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }
