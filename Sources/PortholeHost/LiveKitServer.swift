@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PortholeCore
 
@@ -21,6 +22,7 @@ final class LiveKitServer {
             throw NSError(domain: "Porthole", code: 1, userInfo: [NSLocalizedDescriptionKey:
                 "livekit-server not found. Install it with `brew install livekit` or bundle it in the app."])
         }
+        Self.stopLeftovers(of: bin)
         let yaml = liveKitConfigYAML(port: config.livekitPort, apiKey: config.apiKey, apiSecret: config.apiSecret)
         let url = HostConfig.directory.appendingPathComponent("livekit.yaml")
         try yaml.write(to: url, atomically: true, encoding: .utf8)
@@ -44,6 +46,26 @@ final class LiveKitServer {
         process = p
         atexit { LiveKitServer.shared?.process?.terminate() }
         LiveKitServer.shared = self
+    }
+
+    static func stopLeftovers(of bin: String) {
+        let target = URL(fileURLWithPath: bin).resolvingSymlinksInPath().path
+        let own = ProcessInfo.processInfo.processIdentifier
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 32)
+        let n = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        var buf = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+        let stale = pids.prefix(Int(max(n, 0))).filter { pid in
+            guard pid > 0, pid != own, proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return false }
+            return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path == target
+        }
+        guard !stale.isEmpty else { return }
+        for pid in stale { Log.info("stopping leftover livekit-server \(pid)"); kill(pid, SIGTERM) }
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, stale.contains(where: { kill($0, 0) == 0 }) { usleep(100_000) }
+        for pid in stale where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        usleep(200_000)
     }
 
     private var stopping = false

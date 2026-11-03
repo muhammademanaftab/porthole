@@ -47,11 +47,13 @@ func fail(_ s: String) -> Never { print("FAIL  \(s)"); exit(1) }
 let args = CommandLine.arguments
 let titleMatch = args.count > 1 ? args[1] : "porthole-probe"
 let typed = args.count > 2 ? args[2] : "hello from porthole"
+let env = ProcessInfo.processInfo.environment
+let hostAddress = env["PORTHOLE_HOST"] ?? "127.0.0.1"
 let cfgURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Porthole/config.json")
-guard let cfg = try? JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL)) as? [String: Any],
-      let pw = cfg["password"] as? String else { fail("no host config") }
+guard let pw = env["PORTHOLE_PW"] ?? ((try? JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL))) as? [String: Any])?["password"] as? String
+else { fail("no host config") }
 
-let (data, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:7878/token?pw=\(pw)&name=probe")!)
+let (data, _) = try await URLSession.shared.data(from: tokenURL(hostAddress: hostAddress, password: pw, name: "probe")!)
 guard let tok = try JSONSerialization.jsonObject(with: data) as? [String: String], let url = tok["url"], let token = tok["token"] else { fail("token endpoint") }
 print("PASS  token issued (\(url))")
 
