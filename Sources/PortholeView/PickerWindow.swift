@@ -60,8 +60,7 @@ final class PickerWindow: NSWindow {
         targets.removeAll { $0.tag >= 0 }
         status.stringValue = list.isEmpty ? "No windows to share on the host." : "\(list.count) windows. Click one to open it."
         for (i, info) in list.enumerated() {
-            let label = info.title.isEmpty ? info.app : "\(info.app) — \(info.title)"
-            let b = NSButton(title: label, target: nil, action: nil)
+            let b = NSButton(title: info.pickerLabel, target: nil, action: nil)
             b.bezelStyle = .recessed
             b.isBordered = false
             b.alignment = .left

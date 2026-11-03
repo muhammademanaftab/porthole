@@ -35,7 +35,7 @@ public struct AccessToken {
         return "\(input).\(Self.b64(Data(mac)))"
     }
 
-    static func b64(_ d: Data) -> String {
+    public static func b64(_ d: Data) -> String {
         d.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")

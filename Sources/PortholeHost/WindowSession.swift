@@ -16,8 +16,6 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pixelSize = CGSize.zero
     var onClosed: (() -> Void)?
 
-    static let maxPixels = CGSize(width: 3840, height: 2400)
-
     private var capturer: BufferCapturer { track.capturer as! BufferCapturer }
 
     init(windowID: UInt32) {
@@ -26,10 +24,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     static func pixelSize(points: CGSize, scale: CGFloat) -> CGSize {
-        var w = points.width * scale, h = points.height * scale
-        let f = min(1, maxPixels.width / w, maxPixels.height / h)
-        w = (w * f).rounded(.down); h = (h * f).rounded(.down)
-        return CGSize(width: max(2, Int(w) & ~1), height: max(2, Int(h) & ~1))
+        capturePixelSize(points: points, scale: scale)
     }
 
     func start(in room: Room) async throws {

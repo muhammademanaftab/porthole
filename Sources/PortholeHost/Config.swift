@@ -39,9 +39,7 @@ func tailscaleAddress() -> String? {
         var sin = sockaddr_in()
         memcpy(&sin, sa, MemoryLayout<sockaddr_in>.size)
         let ip = UInt32(bigEndian: sin.sin_addr.s_addr)
-        if ip >> 22 == (100 << 2) | 1 {
-            return "\(ip >> 24).\((ip >> 16) & 255).\((ip >> 8) & 255).\(ip & 255)"
-        }
+        if isTailscaleIPv4(ip) { return dottedQuad(ip) }
     }
     return nil
 }

@@ -23,15 +23,9 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func connect() async throws {
-        var comps = URLComponents()
-        comps.scheme = "http"
-        let parts = hostAddress.split(separator: ":")
-        comps.host = String(parts[0])
-        comps.port = parts.count > 1 ? Int(parts[1]) : 7878
-        comps.path = "/token"
-        comps.queryItems = [URLQueryItem(name: "pw", value: password),
-                            URLQueryItem(name: "name", value: ProcessInfo.processInfo.hostName.components(separatedBy: ".").first ?? "mac")]
-        let (data, resp) = try await URLSession.shared.data(from: comps.url!)
+        let url = tokenURL(hostAddress: hostAddress, password: password,
+                           name: ProcessInfo.processInfo.hostName.components(separatedBy: ".").first ?? "mac")
+        let (data, resp) = try await URLSession.shared.data(from: url!)
         guard (resp as? HTTPURLResponse)?.statusCode == 200,
               let obj = try JSONSerialization.jsonObject(with: data) as? [String: String],
               let url = obj["url"], let token = obj["token"] else {

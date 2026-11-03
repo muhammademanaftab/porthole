@@ -72,9 +72,8 @@ final class InputInjector {
         guard !buttonsDown.isEmpty else { return }
         let p = CGEvent(source: nil)?.location ?? .zero
         for btn in buttonsDown {
-            let type: CGEventType = btn == 1 ? .rightMouseUp : (btn == 2 ? .otherMouseUp : .leftMouseUp)
-            let button: CGMouseButton = btn == 1 ? .right : (btn == 2 ? .center : .left)
-            CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button)?.post(tap: .cghidEventTap)
+            CGEvent(mouseEventSource: source, mouseType: MouseMapping.eventType(.up, button: btn), mouseCursorPosition: p,
+                    mouseButton: MouseMapping.button(btn))?.post(tap: .cghidEventTap)
         }
         buttonsDown.removeAll()
     }
@@ -83,23 +82,19 @@ final class InputInjector {
     private func mouse(_ m: Message, id: UInt32, live: LiveWindow) {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
         let btn = m.btn ?? 0
-        let button: CGMouseButton = btn == 1 ? .right : (btn == 2 ? .center : .left)
-        let type: CGEventType
-        switch m.kind ?? .move {
+        let kind = m.kind ?? .move
+        switch kind {
         case .down:
             focus(id: id, live: live)
             buttonsDown.insert(btn)
-            type = btn == 1 ? .rightMouseDown : (btn == 2 ? .otherMouseDown : .leftMouseDown)
         case .up:
             buttonsDown.remove(btn)
-            type = btn == 1 ? .rightMouseUp : (btn == 2 ? .otherMouseUp : .leftMouseUp)
-        case .drag:
-            type = btn == 1 ? .rightMouseDragged : (btn == 2 ? .otherMouseDragged : .leftMouseDragged)
-        case .move:
-            type = .mouseMoved
+        case .drag, .move:
+            break
         }
-        guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button) else { return }
-        if let clicks = m.clicks, clicks > 1 { e.setIntegerValueField(.mouseEventClickState, value: Int64(clicks)) }
+        guard let e = CGEvent(mouseEventSource: source, mouseType: MouseMapping.eventType(kind, button: btn),
+                              mouseCursorPosition: p, mouseButton: MouseMapping.button(btn)) else { return }
+        if let clicks = MouseMapping.clickState(m.clicks) { e.setIntegerValueField(.mouseEventClickState, value: clicks) }
         e.flags = flags(m.mods)
         e.post(tap: .cghidEventTap)
     }
@@ -108,29 +103,22 @@ final class InputInjector {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
             .post(tap: .cghidEventTap)
+        let (wheel1, wheel2) = MouseMapping.wheelDeltas(dx: m.dx, dy: m.dy)
         guard let e = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
-                              wheel1: Int32((m.dy ?? 0).rounded()), wheel2: Int32((m.dx ?? 0).rounded()), wheel3: 0) else { return }
+                              wheel1: wheel1, wheel2: wheel2, wheel3: 0) else { return }
         e.location = p
         e.post(tap: .cghidEventTap)
     }
 
 
     private func flags(_ mods: UInt32?) -> CGEventFlags {
-        let m = Modifiers(rawValue: mods ?? 0)
-        var f: CGEventFlags = []
-        if m.contains(.shift) { f.insert(.maskShift) }
-        if m.contains(.control) { f.insert(.maskControl) }
-        if m.contains(.option) { f.insert(.maskAlternate) }
-        if m.contains(.command) { f.insert(.maskCommand) }
-        return f
+        Modifiers(rawValue: mods ?? 0).cgEventFlags
     }
-
-    private static let modifierCodes: Set<UInt16> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
 
     private func key(_ m: Message, id: UInt32, live: LiveWindow) {
         guard let code = m.code else { return }
         let down = m.down ?? true
-        if Self.modifierCodes.contains(code) {
+        if Modifiers.flagKeyCodes.contains(code) {
             guard let e = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { return }
             e.type = .flagsChanged
             e.flags = flags(m.mods)
@@ -146,23 +134,18 @@ final class InputInjector {
     private func text(_ m: Message, id: UInt32, live: LiveWindow) {
         guard let s = m.s, !s.isEmpty else { return }
         focus(id: id, live: live)
-        let units = Array(s.utf16)
-        var i = 0
-        while i < units.count {
-            let chunk = Array(units[i..<min(i + 20, units.count)])
+        for chunk in utf16Chunks(s) {
             for down in [true, false] {
                 guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else { continue }
                 chunk.withUnsafeBufferPointer { e.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: $0.baseAddress) }
                 e.post(tap: .cghidEventTap)
             }
-            i += 20
         }
     }
 
 
     private func resize(id: UInt32, live: LiveWindow, w: Double?, h: Double?) {
-        guard let w, let h, w >= 100, h >= 80, let ax = axWindow(id: id, pid: live.pid) else { return }
-        var size = CGSize(width: w, height: h)
+        guard var size = resizeTarget(w: w, h: h), let ax = axWindow(id: id, pid: live.pid) else { return }
         guard let value = AXValueCreate(.cgSize, &size) else { return }
         AXUIElementSetAttributeValue(ax, kAXSizeAttribute as CFString, value)
     }

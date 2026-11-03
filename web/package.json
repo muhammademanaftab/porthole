@@ -1,0 +1,8 @@
+{
+  "name": "porthole-web",
+  "private": true,
+  "main": "tests/index.js",
+  "scripts": {
+    "test": "node --test ."
+  }
+}

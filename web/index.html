@@ -35,6 +35,7 @@
 </div>
 <div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button></div>
 <script src="livekit-client.umd.min.js"></script>
+<script src="porthole-core.js"></script>
 <script>
 const LK = window.LivekitClient;
 const params = new URLSearchParams(location.search);
@@ -47,16 +48,8 @@ async function retry(fn, done, every = 1000, times = 10) {
   for (let i = 0; i < times && !done(); i++) { fn(); await new Promise(r => setTimeout(r, every)); }
 }
 
-const KEYS = {KeyA:0,KeyS:1,KeyD:2,KeyF:3,KeyH:4,KeyG:5,KeyZ:6,KeyX:7,KeyC:8,KeyV:9,IntlBackslash:10,KeyB:11,KeyQ:12,KeyW:13,KeyE:14,KeyR:15,KeyY:16,KeyT:17,Digit1:18,Digit2:19,Digit3:20,Digit4:21,Digit6:22,Digit5:23,Equal:24,Digit9:25,Digit7:26,Minus:27,Digit8:28,Digit0:29,BracketRight:30,KeyO:31,KeyU:32,BracketLeft:33,KeyI:34,KeyP:35,Enter:36,KeyL:37,KeyJ:38,Quote:39,KeyK:40,Semicolon:41,Backslash:42,Comma:43,Slash:44,KeyN:45,KeyM:46,Period:47,Tab:48,Space:49,Backquote:50,Backspace:51,Escape:53,MetaRight:54,MetaLeft:55,ShiftLeft:56,CapsLock:57,AltLeft:58,ControlLeft:59,ShiftRight:60,AltRight:61,ControlRight:62,NumpadDecimal:65,NumpadMultiply:67,NumpadAdd:69,NumLock:71,NumpadDivide:75,NumpadEnter:76,NumpadSubtract:78,NumpadEqual:81,Numpad0:82,Numpad1:83,Numpad2:84,Numpad3:85,Numpad4:86,Numpad5:87,Numpad6:88,Numpad7:89,Numpad8:91,Numpad9:92,F5:96,F6:97,F7:98,F3:99,F8:100,F9:101,F11:103,F13:105,F14:107,F10:109,F12:111,F15:113,Help:114,Insert:114,Home:115,PageUp:116,Delete:117,F4:118,End:119,F2:120,PageDown:121,F1:122,ArrowLeft:123,ArrowRight:124,ArrowDown:125,ArrowUp:126};
-
-function mods(e) {
-  let m = 0;
-  if (e.shiftKey) m |= 1;
-  if (e.altKey) m |= 4;
-  if (isMac) { if (e.ctrlKey) m |= 2; if (e.metaKey) m |= 8; }
-  else { if (e.ctrlKey) m |= 8; if (e.metaKey) m |= 2; }
-  return m;
-}
+const PC = window.PortholeCore;
+const mods = (e) => PC.mods(e, isMac);
 
 function send(msg, reliable = true) {
   const data = new TextEncoder().encode(JSON.stringify(msg));
@@ -133,67 +126,47 @@ function hud(text, sticky) {
 }
 
 function norm(e, clamp) {
-  const v = $('video'), r = v.getBoundingClientRect();
-  const vw = v.videoWidth || r.width, vh = v.videoHeight || r.height;
-  const s = Math.min(r.width / vw, r.height / vh);
-  const w = vw * s, h = vh * s, x0 = r.left + (r.width - w) / 2, y0 = r.top + (r.height - h) / 2;
-  let x = (e.clientX - x0) / w, y = (e.clientY - y0) / h;
-  if (clamp) return { x: Math.min(Math.max(x, 0), 1), y: Math.min(Math.max(y, 0), 1) };
-  return (x < 0 || y < 0 || x > 1 || y > 1) ? null : { x, y };
+  const v = $('video');
+  return PC.norm(e.clientX, e.clientY, v.getBoundingClientRect(), v.videoWidth, v.videoHeight, clamp);
 }
 
 const video = $('video');
-let lastMove = 0, buttons = 0, clickCount = 0, lastDown = { t: 0, x: 0, y: 0 };
-const btnOf = (e) => e.button === 2 ? 1 : e.button === 1 ? 2 : 0;
+let lastMove = 0, buttons = 0, click = { t: 0, x: 0, y: 0, count: 0 };
+const btnOf = PC.btnOf;
 video.addEventListener('contextmenu', e => e.preventDefault());
 video.addEventListener('pointerdown', e => {
   const p = norm(e); if (!p) return;
   video.focus(); video.setPointerCapture(e.pointerId); buttons |= 1 << e.button;
-  const now = performance.now();
-  const near = Math.abs(e.clientX - lastDown.x) < 5 && Math.abs(e.clientY - lastDown.y) < 5;
-  clickCount = (now - lastDown.t < 450 && near) ? clickCount + 1 : 1;
-  lastDown = { t: now, x: e.clientX, y: e.clientY };
-  send({ t: 'mouse', win: winId, kind: 'down', btn: btnOf(e), x: p.x, y: p.y, clicks: clickCount, mods: mods(e) });
+  click = PC.countClick(click, performance.now(), e.clientX, e.clientY);
+  send({ t: 'mouse', win: winId, kind: 'down', btn: btnOf(e), x: p.x, y: p.y, clicks: click.count, mods: mods(e) });
   e.preventDefault();
 });
 function pointerUp(e) {
   if (!(buttons & (1 << e.button))) return;
   const p = norm(e, true); buttons &= ~(1 << e.button);
-  send({ t: 'mouse', win: winId, kind: 'up', btn: btnOf(e), x: p.x, y: p.y, clicks: clickCount, mods: mods(e) });
+  send({ t: 'mouse', win: winId, kind: 'up', btn: btnOf(e), x: p.x, y: p.y, clicks: click.count, mods: mods(e) });
 }
 video.addEventListener('pointerup', pointerUp);
 video.addEventListener('pointercancel', pointerUp);
 video.addEventListener('pointermove', e => {
   const now = performance.now(); if (now - lastMove < 16) return; lastMove = now;
   const p = norm(e, !!buttons); if (!p) return;
-  if (buttons) send({ t: 'mouse', win: winId, kind: 'drag', btn: (buttons & 4) ? 1 : (buttons & 2) ? 2 : 0, x: p.x, y: p.y, mods: mods(e) });
+  if (buttons) send({ t: 'mouse', win: winId, kind: 'drag', btn: PC.dragButton(buttons), x: p.x, y: p.y, mods: mods(e) });
   else send({ t: 'mouse', win: winId, kind: 'move', btn: 0, x: p.x, y: p.y, mods: mods(e) }, false);
 });
 video.addEventListener('wheel', e => {
   const p = norm(e); if (!p) return;
-  const k = e.deltaMode === 1 ? 16 : 1;
-  send({ t: 'scroll', win: winId, x: p.x, y: p.y, dx: -e.deltaX * k, dy: -e.deltaY * k });
+  const { dx, dy } = PC.scrollDelta(e);
+  send({ t: 'scroll', win: winId, x: p.x, y: p.y, dx, dy });
   e.preventDefault();
 }, { passive: false });
 
 const swallowedUp = new Set();
 function onKey(e, down) {
   if (!winId || !room) return;
-  const shortcut = isMac ? e.metaKey : e.ctrlKey;
-  if (shortcut && e.code === 'KeyV') return;
-  const code = KEYS[e.code];
-  e.preventDefault();
-  if (code === undefined) {
-    if (down && e.key.length === 1) send({ t: 'text', win: winId, s: e.key });
-    return;
-  }
-  if (!down && swallowedUp.delete(e.code)) return;
-  const msg = { t: 'key', win: winId, code, down, mods: mods(e), s: e.key.length === 1 ? e.key : undefined };
-  send(msg);
-  if (down && isMac && e.metaKey && !e.code.startsWith('Meta')) {
-    send({ ...msg, down: false });
-    swallowedUp.add(e.code);
-  }
+  const r = PC.keyMessages(e, down, isMac, winId, swallowedUp);
+  if (r.prevent) e.preventDefault();
+  for (const m of r.send) send(m);
 }
 window.addEventListener('keydown', e => onKey(e, true));
 window.addEventListener('keyup', e => onKey(e, false));

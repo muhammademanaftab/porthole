@@ -3,32 +3,23 @@ import PortholeCore
 import ScreenCaptureKit
 
 enum WindowCatalog {
-    static let blockedBundles: Set<String> = [
-        "com.apple.Passwords", "com.apple.keychainaccess", "com.1password.1password",
-        "com.agilebits.onepassword7", "com.bitwarden.desktop", "com.lastpass.LastPass",
-        "com.dashlane.dashlanephonefinal",
-    ]
-
     static func shareable(onScreenOnly: Bool = true) async throws -> [SCWindow] {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: onScreenOnly)
         let me = Bundle.main.bundleIdentifier
         let myPID = ProcessInfo.processInfo.processIdentifier
         return content.windows.filter { w in
-            guard w.windowLayer == 0, w.frame.width >= 60, w.frame.height >= 40,
-                  let app = w.owningApplication else { return false }
-            if app.processID == myPID || app.bundleIdentifier == me { return false }
-            if blockedBundles.contains(app.bundleIdentifier) { return false }
-            if app.bundleIdentifier == "com.apple.WindowManager" || app.bundleIdentifier == "com.apple.dock" { return false }
-            return true
+            WindowFilter.isShareable(layer: w.windowLayer, size: w.frame.size,
+                                     owner: w.owningApplication.map { WindowOwner(pid: $0.processID, bundle: $0.bundleIdentifier) },
+                                     myPID: myPID, myBundle: me)
         }
     }
 
     static func list() async throws -> [WindowInfo] {
-        try await shareable().map { w in
+        WindowFilter.sortedForPicker(try await shareable().map { w in
             WindowInfo(id: w.windowID, app: w.owningApplication?.applicationName ?? "",
                        title: w.title ?? "", bundle: w.owningApplication?.bundleIdentifier,
                        w: w.frame.width, h: w.frame.height)
-        }.sorted { ($0.app, $0.title) < ($1.app, $1.title) }
+        })
     }
 
     static func window(id: UInt32) async throws -> SCWindow? {

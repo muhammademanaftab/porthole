@@ -16,8 +16,8 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         self.connection = connection
         inputView = InputCaptureView(windowID: windowID, connection: connection)
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let w = min(max(size.width, 320), screen.width), h = min(max(size.height, 200), screen.height)
-        super.init(contentRect: CGRect(x: 0, y: 0, width: w, height: h),
+        let fitted = portalContentSize(remote: size, screen: screen.size)
+        super.init(contentRect: CGRect(origin: .zero, size: fitted),
                    styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         self.title = title
         isReleasedWhenClosed = false
@@ -95,12 +95,7 @@ final class InputCaptureView: NSView {
     }
 
     static func mods(_ f: NSEvent.ModifierFlags) -> UInt32 {
-        var m = Modifiers()
-        if f.contains(.shift) { m.insert(.shift) }
-        if f.contains(.control) { m.insert(.control) }
-        if f.contains(.option) { m.insert(.option) }
-        if f.contains(.command) { m.insert(.command) }
-        return m.rawValue
+        Modifiers(f).rawValue
     }
 
     private func point(_ e: NSEvent, clamp: Bool = false) -> CGPoint? {
@@ -149,14 +144,8 @@ final class InputCaptureView: NSView {
     }
 
     override func flagsChanged(with e: NSEvent) {
-        let down: Bool
-        switch e.keyCode {
-        case 56, 60: down = e.modifierFlags.contains(.shift)
-        case 59, 62: down = e.modifierFlags.contains(.control)
-        case 58, 61: down = e.modifierFlags.contains(.option)
-        case 55, 54: down = e.modifierFlags.contains(.command)
-        default: return
-        }
+        guard let which = Modifiers.forKeyCode(e.keyCode) else { return }
+        let down = Modifiers(e.modifierFlags).contains(which)
         var m = Message(.key)
         m.win = windowID; m.code = e.keyCode; m.down = down; m.mods = Self.mods(e.modifierFlags)
         connection.send(m)

@@ -89,8 +89,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.open(info.id) { [weak self] track, reply in
             guard let self else { return }
             let size = CGSize(width: reply.w ?? info.w, height: reply.h ?? info.h)
-            let title = info.title.isEmpty ? "\(info.app) (\(host))" : "\(info.title) · \(info.app) (\(host))"
-            let portal = PortalWindow(windowID: info.id, title: title, size: size, track: track, connection: c)
+            let portal = PortalWindow(windowID: info.id, title: info.portalTitle(host: host), size: size, track: track, connection: c)
             portal.onClose = { [weak self] in
                 self?.connection?.close(info.id)
                 self?.portals[info.id] = nil

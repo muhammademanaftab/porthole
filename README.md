@@ -13,9 +13,11 @@ Share single windows from a Mac (the host) to your other machines: as real windo
 Needs macOS 14+ and the Xcode Command Line Tools, plus `brew install livekit`.
 
 ```
-swift test
+scripts/test.sh
 scripts/bundle.sh          # dist/Porthole Host.app, dist/Porthole.app
 ```
+
+`scripts/test.sh` runs the Swift self-test (`swift run PortholeSelfTest`) and the browser tests (`node --test web/`).
 
 Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Accessibility permissions across rebuilds.
 

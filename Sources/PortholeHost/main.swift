@@ -12,7 +12,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
     var state = "Starting…"
 
     var browserLink: String {
-        "http://\(tailscaleAddress() ?? ProcessInfo.processInfo.hostName):\(config.httpPort)/?pw=\(config.password)"
+        viewerLink(host: tailscaleAddress() ?? ProcessInfo.processInfo.hostName, port: config.httpPort, password: config.password)
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -57,7 +57,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
     func refresh() {
         let menu = NSMenu()
         let n = host.openWindowCount
-        menu.addItem(withTitle: "Porthole: \(state)\(n > 0 ? " · \(n) window\(n == 1 ? "" : "s") open" : "")", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: hostMenuTitle(state: state, openWindows: n), action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Browser Link", action: #selector(copyLink), keyEquivalent: "c").target = self
         menu.addItem(withTitle: "Copy Password", action: #selector(copyPassword), keyEquivalent: "").target = self

@@ -1,4 +1,5 @@
 import Foundation
+import PortholeCore
 
 final class LiveKitServer {
     private var process: Process?
@@ -20,20 +21,7 @@ final class LiveKitServer {
             throw NSError(domain: "Porthole", code: 1, userInfo: [NSLocalizedDescriptionKey:
                 "livekit-server not found. Install it with `brew install livekit` or bundle it in the app."])
         }
-        let yaml = """
-        port: \(config.livekitPort)
-        bind_addresses:
-          - ""
-        rtc:
-          tcp_port: \(config.livekitPort + 1)
-          udp_port: \(config.livekitPort + 2)
-          use_external_ip: false
-          enable_loopback_candidate: true
-        keys:
-          \(config.apiKey): \(config.apiSecret)
-        logging:
-          level: warn
-        """
+        let yaml = liveKitConfigYAML(port: config.livekitPort, apiKey: config.apiKey, apiSecret: config.apiSecret)
         let url = HostConfig.directory.appendingPathComponent("livekit.yaml")
         try yaml.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
