@@ -1,0 +1,212 @@
+import Foundation
+
+public enum HostCommand: Equatable, Sendable {
+    case app, watchdog, agentPlist
+
+    public static let envKey = "PORTHOLE_COMMAND"
+
+    public static func parse(arguments: [String], environment: [String: String]) -> HostCommand {
+        if arguments.first == "agent-plist" { return .agentPlist }
+        if arguments.first == "watchdog" { return .watchdog }
+        if arguments.isEmpty || arguments.first?.hasPrefix("-") == true, environment[envKey] == "watchdog" { return .watchdog }
+        return .app
+    }
+}
+
+public enum WatchdogReason: String, Sendable {
+    case login, crash, hang, remote, migrate
+
+    public static let envKey = "PORTHOLE_WATCHDOG_RELAUNCH"
+}
+
+public enum ExitMarker: String, Sendable {
+    case quit, session, remote, migrate
+
+    public var relaunch: WatchdogReason? {
+        switch self {
+        case .quit, .session: return nil
+        case .remote: return .remote
+        case .migrate: return .migrate
+        }
+    }
+
+    public init?(text: String) {
+        self.init(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
+public struct Heartbeat: Equatable, Sendable {
+    public var pid: Int32
+    public var time: Double
+
+    public init(pid: Int32, time: Double) { self.pid = pid; self.time = time }
+
+    public var text: String { "\(pid) \(String(format: "%.3f", time))\n" }
+
+    public init?(text: String) {
+        let parts = text.split(whereSeparator: { $0 == " " || $0 == "\n" })
+        guard parts.count == 2, let pid = Int32(parts[0]), pid > 0, let time = Double(parts[1]), time.isFinite else { return nil }
+        self.init(pid: pid, time: time)
+    }
+}
+
+public enum WatchdogAction: Equatable, Sendable {
+    case none
+    case kill(Int32)
+    case launch(WatchdogReason)
+}
+
+public struct WatchdogMonitor: Sendable {
+    public static let tick: Double = 2
+    public static let heartbeatEvery: Double = 5
+    public static let defaultHangLimit: Double = 30
+    public static let minimumHangLimit: Double = 15
+    public static let wakeGap: Double = 15
+    public static let launchGap: Double = 10
+    public static let crashLoopGap: Double = 120
+    public static let crashLoopLaunches = 5
+    public static let crashLoopWindow: Double = 600
+    public static let hangEnvKey = "PORTHOLE_WATCHDOG_HANG_SECS"
+
+    public let hangLimit: Double
+    public private(set) var watched: Int32?
+    public private(set) var since: Double = 0
+    public private(set) var pending: WatchdogReason?
+    private var lastTick: Double?
+    private var hungPid: Int32?
+    private var launches: [Double] = []
+
+    public init(hangLimit: Double = defaultHangLimit) {
+        self.hangLimit = max(hangLimit, Self.minimumHangLimit)
+    }
+
+    public static func hangLimit(from env: String?) -> Double {
+        guard let env, let n = Double(env), n.isFinite else { return defaultHangLimit }
+        return max(n, minimumHangLimit)
+    }
+
+    public static func isHung(heartbeat: Heartbeat?, pid: Int32, watchingSince: Double, now: Double, limit: Double) -> Bool {
+        let beat = heartbeat.flatMap { $0.pid == pid ? $0.time : nil } ?? watchingSince
+        return now - max(beat, watchingSince) > limit
+    }
+
+    public static func pickHost(_ pids: [Int32], heartbeat: Heartbeat?) -> Int32? {
+        if let hb = heartbeat, pids.contains(hb.pid) { return hb.pid }
+        return pids.max()
+    }
+
+    public func launchGap(at now: Double) -> Double {
+        launches.filter { now - $0 < Self.crashLoopWindow }.count >= Self.crashLoopLaunches ? Self.crashLoopGap : Self.launchGap
+    }
+
+    public mutating func step(now: Double, host: Int32?, heartbeat: Heartbeat?, marker: ExitMarker?) -> WatchdogAction {
+        let first = lastTick == nil
+        if let last = lastTick, now - last > Self.wakeGap { since = now }
+        lastTick = now
+        if let pid = host {
+            if pid != watched { watched = pid; since = now; pending = nil; hungPid = nil }
+            if hungPid == pid { return .none }
+            if Self.isHung(heartbeat: heartbeat, pid: pid, watchingSince: since, now: now, limit: hangLimit) {
+                hungPid = pid
+                return .kill(pid)
+            }
+            return .none
+        }
+        if watched != nil {
+            watched = nil
+            if hungPid != nil { pending = .hang } else if let marker { pending = marker.relaunch } else { pending = .crash }
+            hungPid = nil
+        } else if first {
+            pending = .login
+        }
+        guard let reason = pending else { return .none }
+        if let last = launches.last, now - last < launchGap(at: now) { return .none }
+        launches = launches.filter { now - $0 < Self.crashLoopWindow } + [now]
+        return .launch(reason)
+    }
+}
+
+public enum LaunchAgent {
+    public static let label = "io.github.muhammademanaftab.porthole.watchdog"
+    public static let plistName = label + ".plist"
+    public static let hostBundleID = "io.github.muhammademanaftab.porthole"
+    public static let legacyLabel = "io.github.muhammademanaftab.porthole"
+    public static let legacyLaunchedEnvKey = "PORTHOLE_LAUNCH_AGENT"
+
+    public static func plist(executableName: String) -> [String: Any] {
+        let program = "Contents/MacOS/\(executableName)"
+        return [
+            "Label": label,
+            "BundleProgram": program,
+            "ProgramArguments": [program, "watchdog"],
+            "EnvironmentVariables": [HostCommand.envKey: "watchdog"],
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "ThrottleInterval": 5,
+            "ProcessType": "Interactive",
+            "LimitLoadToSessionType": "Aqua",
+            "AssociatedBundleIdentifiers": [hostBundleID],
+        ]
+    }
+
+    public static func plistData(executableName: String) -> Data? {
+        try? PropertyListSerialization.data(fromPropertyList: plist(executableName: executableName), format: .xml, options: 0)
+    }
+}
+
+public struct HostSettings: Equatable, Sendable {
+    public static let keepRunningKey = "keepRunning"
+    public static let verboseKey = "verboseLogging"
+    public static let overrideEnvKey = "PORTHOLE_WATCHDOG"
+
+    public var keepRunning: Bool
+    public var verbose: Bool
+
+    public static let defaults = HostSettings(keepRunning: true, verbose: false)
+
+    public init(keepRunning: Bool, verbose: Bool) { self.keepRunning = keepRunning; self.verbose = verbose }
+
+    public init(lookup: (String) -> Any?) {
+        keepRunning = lookup(Self.keepRunningKey) as? Bool ?? Self.defaults.keepRunning
+        verbose = lookup(Self.verboseKey) as? Bool ?? Self.defaults.verbose
+    }
+
+    public func keepRunningThisRun(environment: [String: String]) -> Bool {
+        switch environment[Self.overrideEnvKey] {
+        case "1": return true
+        case "0": return false
+        default: return keepRunning
+        }
+    }
+}
+
+public enum RestartDecision: Equatable, Sendable {
+    case restart
+    case refuse(String)
+}
+
+public func restartDecision(from who: String, agentEnabled: Bool) -> RestartDecision {
+    guard !who.isEmpty, who != "host" else { return .refuse("Only a connected viewer can restart the host.") }
+    guard agentEnabled else {
+        return .refuse("Keep Porthole Host running is off on that Mac, so it can't restart itself. Turn it on in Porthole Host Settings.")
+    }
+    return .restart
+}
+
+public func parseProcessArguments(_ bytes: [UInt8]) -> [String] {
+    let head = MemoryLayout<Int32>.size
+    guard bytes.count > head else { return [] }
+    let argc = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
+    guard argc > 0, argc < 4096 else { return [] }
+    var i = head
+    while i < bytes.count && bytes[i] != 0 { i += 1 }
+    while i < bytes.count && bytes[i] == 0 { i += 1 }
+    var args: [String] = []
+    while args.count < argc && i < bytes.count {
+        let start = i
+        while i < bytes.count && bytes[i] != 0 { i += 1 }
+        args.append(String(decoding: bytes[start..<i], as: UTF8.self))
+        i += 1
+    }
+    return args
+}

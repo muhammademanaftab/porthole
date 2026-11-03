@@ -25,6 +25,21 @@ for app in "$HOST" "$VIEW"; do
   expect "$(basename "$app") declares the _porthole._tcp Bonjour service" "$(plist "$app" NSBonjourServices.0)" "_porthole._tcp"
 done
 
+AGENT="$HOST/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist"
+aplist() { plutil -extract "$1" raw -o - "$AGENT" 2>/dev/null || echo "<missing>"; }
+if [ -f "$AGENT" ]; then pass "watchdog agent plist is bundled"; else fail "watchdog agent plist is bundled"; fi
+if plutil -lint -s "$AGENT" >/dev/null 2>&1; then pass "watchdog agent plist is valid"; else fail "watchdog agent plist is valid"; fi
+expect "watchdog agent label matches its file name" "$(aplist Label)" "io.github.muhammademanaftab.porthole.watchdog"
+expect "watchdog agent runs the host binary" "$(aplist BundleProgram)" "Contents/MacOS/porthole-host"
+if [ -x "$HOST/$(aplist BundleProgram)" ]; then pass "watchdog agent program exists in the bundle"; else fail "watchdog agent program exists in the bundle"; fi
+expect "watchdog agent passes watchdog" "$(aplist ProgramArguments.1)" "watchdog"
+expect "watchdog agent sets PORTHOLE_COMMAND=watchdog" "$(aplist EnvironmentVariables.PORTHOLE_COMMAND)" "watchdog"
+expect "watchdog agent starts at login" "$(aplist RunAtLoad)" "true"
+if "$HOST/Contents/MacOS/porthole-host" agent-plist 2>/dev/null | cmp -s - "$AGENT"; then
+  pass "bundled agent plist matches what the host binary generates"
+else fail "bundled agent plist matches what the host binary generates"; fi
+if [ ! -e "$HOST/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist" ]; then pass "the old login agent plist is not bundled"; else fail "the old login agent plist is not bundled"; fi
+
 for f in index.html porthole-core.js livekit-client.umd.min.js; do
   if [ -f "$WEB/$f" ]; then pass "web/$f is bundled"; else fail "web/$f is bundled"; fi
 done

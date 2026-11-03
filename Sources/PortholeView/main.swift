@@ -44,6 +44,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "")
         appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "")
         appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Restart Host", action: #selector(restartHost), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Porthole", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -55,6 +56,17 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         muted.toggle()
         item.state = muted ? .on : .off
         connection?.muted = muted
+    }
+
+    @objc func restartHost() {
+        guard let c = connection else { return }
+        let alert = NSAlert()
+        alert.messageText = "Restart Porthole Host on \(c.hostAddress)?"
+        alert.informativeText = "Every window open from that Mac closes, for all viewers. Its watchdog starts it again in a few seconds."
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        c.send(Message(.restart))
     }
 
     @objc func connectToHost() { showConnect(address: connection?.hostAddress) }

@@ -28,4 +28,15 @@ Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Acc
 2. Copy the browser link or password from its menu-bar icon.
 3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). Pick one; the first time, choose Pair a New Viewer… on the host and type the 6-digit code (valid 2 minutes, single use, 5 tries). The password is then kept in the Keychain per host. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
 
+## Keep running
+
+Porthole Host's Settings… (⌘, in its menu) has "Keep Porthole Host running on this Mac", on by default. It registers a launch agent with ServiceManagement (`Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist`, shown in System Settings > General > Login Items as Porthole Host). The agent runs the host binary with `watchdog`, a small loop with no UI that:
+
+- opens the host at login,
+- relaunches it when it disappears without saying why (`crash`),
+- kills and relaunches it when its main thread stops writing `~/Library/Application Support/Porthole/heartbeat` for 30 s (`hang`; `PORTHOLE_WATCHDOG_HANG_SECS`, at least 15),
+- relaunches it right away after a paired Mac chooses Restart Host in Porthole's app menu (`remote`).
+
+Each launch is logged in `~/Library/Logs/Porthole/host.log` as `watchdog relaunch reason=<reason>`. Quit from the menu means stay quit: the watchdog leaves it stopped until you open it again or log in again. Turning the switch off unregisters the agent; the host keeps running. `PORTHOLE_WATCHDOG=0|1` overrides the switch for one run. The old `~/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist` is booted out and deleted on first launch.
+
 Ports: 7878 (web and tokens), 7880 to 7882 (LiveKit).

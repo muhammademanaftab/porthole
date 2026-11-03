@@ -23,18 +23,6 @@ func clipboardTests() {
     check("empty remote text is ignored", !r.incoming(""))
     check("multi-byte text counts bytes, not characters", !ClipboardSync.fits(String(repeating: "é", count: ClipboardSync.maxBytes / 2 + 1)))
 
-    let p = LaunchAgent.plist(executable: "/Applications/Porthole Host.app/Contents/MacOS/porthole-host", logDirectory: "/tmp/logs")
-    expect("agent label", p["Label"] as? String, "io.github.muhammademanaftab.porthole")
-    expect("agent runs the host binary", p["ProgramArguments"] as? [String], ["/Applications/Porthole Host.app/Contents/MacOS/porthole-host"])
-    expect("agent starts at login", p["RunAtLoad"] as? Bool, true)
-    expect("agent restarts only after a crash, not after Quit", (p["KeepAlive"] as? [String: Bool])?["SuccessfulExit"], false)
-    expect("agent only runs in a GUI login session", p["LimitLoadToSessionType"] as? String, "Aqua")
-    expect("agent marks its launches", (p["EnvironmentVariables"] as? [String: String])?[LaunchAgent.launchedEnvKey], "1")
-    expect("agent output goes to the log folder", p["StandardOutPath"] as? String, "/tmp/logs/host.out.log")
-    let data = LaunchAgent.plistData(executable: "/x", logDirectory: "/y")
-    let back = data.flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
-    expect("agent plist serialises and reads back", back?["Label"] as? String, LaunchAgent.label)
-
     var reg = SessionRegistry()
     _ = reg.beginOpen(1, by: "a"); _ = reg.startSucceeded(1)
     _ = reg.beginOpen(2, by: "b"); _ = reg.startSucceeded(2)

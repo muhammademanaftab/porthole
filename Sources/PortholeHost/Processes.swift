@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PortholeCore
 
 enum Processes {
     static func running(executable path: String) -> [pid_t] {
@@ -14,6 +15,23 @@ enum Processes {
             guard pid > 0, pid != own, proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return false }
             return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path == target
         }
+    }
+
+    static func arguments(_ pid: pid_t) -> [String] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        var buf = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return [] }
+        return parseProcessArguments(Array(buf.prefix(size)))
+    }
+
+    static func isWatchdog(_ pid: pid_t) -> Bool {
+        HostCommand.parse(arguments: Array(arguments(pid).dropFirst()), environment: [:]) == .watchdog
+    }
+
+    static func hosts(executable path: String) -> [pid_t] {
+        running(executable: path).filter { !isWatchdog($0) }
     }
 
     static func stop(_ pids: [pid_t], timeout: TimeInterval = 3) {

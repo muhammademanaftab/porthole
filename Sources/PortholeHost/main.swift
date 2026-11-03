@@ -11,6 +11,9 @@ final class HostApp: NSObject, NSApplicationDelegate {
     let pairing = PairingDesk()
     var pairingWindow: PairingWindow?
     var statusItem: NSStatusItem?
+    var settingsWindow: SettingsWindow?
+    let heartbeats = Heartbeats()
+    let settings = HostSettings(lookup: { UserDefaults.standard.object(forKey: $0) })
     var state = "Starting…"
 
     var browserLink: String {
@@ -18,21 +21,45 @@ final class HostApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        LoginAgent.installOnFirstRun()
-        if !LoginAgent.launchedByAgent && LoginAgent.isInstalled {
-            Log.info("handing over to the login agent")
-            LoginAgent.handOver()
-            exit(0)
-        }
+        HostFiles.clearMarker()
+        let env = ProcessInfo.processInfo.environment
+        if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)") }
+        let fromLegacy = LegacyAgent.launchedUs
+        if !fromLegacy { LegacyAgent.bootOut() }
+        LegacyAgent.removeFiles()
         if let exe = Bundle.main.executableURL?.path {
-            let others = Processes.running(executable: exe)
+            let others = Processes.hosts(executable: exe)
             if !others.isEmpty { Log.info("stopping older host instance(s) \(others)"); Processes.stop(others) }
         }
+        heartbeats.start()
+        let keep = settings.keepRunningThisRun(environment: env)
+        KeepRunning.apply(keep)
+        if fromLegacy {
+            if KeepRunning.isEnabled {
+                HostFiles.writeMarker(.migrate)
+                LegacyAgent.bootOutSelf()
+                return
+            }
+            Log.info("launched by the old login agent but the watchdog is \(KeepRunning.describe(KeepRunning.status)); staying up")
+        }
         setUpMenu()
-        Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), launched by agent \(LoginAgent.launchedByAgent)")
+        Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), keep running \(keep) (watchdog \(KeepRunning.describe(KeepRunning.status)))")
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
+        host.onRestart = { [weak self] who in self?.restartRequested(by: who) }
         Task { await start() }
+    }
+
+    func restartRequested(by who: String) -> String? {
+        switch restartDecision(from: who, agentEnabled: KeepRunning.isEnabled) {
+        case .refuse(let why):
+            Log.info("restart from \(who) refused: \(why)")
+            return why
+        case .restart:
+            Log.info("restart requested by \(who); quitting so the watchdog relaunches")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.quitHost(marker: .remote) }
+            return nil
+        }
     }
 
     func start() async {
@@ -84,9 +111,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
                               action: #selector(openAXSettings), keyEquivalent: "")
         ax.target = self
         menu.addItem(.separator())
-        let login = menu.addItem(withTitle: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
-        login.target = self
-        login.state = LoginAgent.isInstalled ? .on : .off
+        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Porthole Host", action: #selector(quit), keyEquivalent: "q").target = self
         statusItem?.menu = menu
@@ -105,22 +130,41 @@ final class HostApp: NSObject, NSApplicationDelegate {
     @objc func openAXSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
-    @objc func toggleLogin() {
-        if LoginAgent.isInstalled { LoginAgent.uninstall() } else { LoginAgent.install() }
-        refresh()
+    @objc func showSettings() {
+        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password })
+        settingsWindow = w
+        w.present()
     }
-    @objc func quit() { host.stage.release(); server.stop(); NSApp.terminate(nil) }
+    @objc func quit() { quitHost(marker: .quit) }
 
-    func applicationWillTerminate(_ note: Notification) { host.stage.release() }
+    func quitHost(marker: ExitMarker) {
+        HostFiles.writeMarker(marker)
+        Log.info("quitting (\(marker.rawValue))")
+        host.stage.release()
+        server.stop()
+        NSApp.terminate(nil)
+    }
+
+    func applicationWillTerminate(_ note: Notification) {
+        HostFiles.writeMarker(.session, unlessPresent: true)
+        host.stage.release()
+        Log.flush()
+    }
 }
 
-signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }
-signal(SIGINT) { _ in LiveKitServer.shared?.stop(); exit(0) }
-
-MainActor.assumeIsolated {
-    let app = NSApplication.shared
-    let delegate = HostApp()
-    app.delegate = delegate
-    app.setActivationPolicy(.accessory)
-    app.run()
+switch HostCommand.parse(arguments: Array(CommandLine.arguments.dropFirst()), environment: ProcessInfo.processInfo.environment) {
+case .agentPlist:
+    FileHandle.standardOutput.write(LaunchAgent.plistData(executableName: Bundle.main.executableURL?.lastPathComponent ?? "porthole-host") ?? Data())
+case .watchdog:
+    WatchdogRunner.run()
+case .app:
+    signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }
+    signal(SIGINT) { _ in LiveKitServer.shared?.stop(); exit(0) }
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        let delegate = HostApp()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
+    }
 }

@@ -18,6 +18,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private var clipTimer: Timer?
     private var lockWarnedAt: [String: Date] = [:]
     var onChange: (() -> Void)?
+    var onRestart: ((String) -> String?)?
     private(set) var isConnected = false
 
     var openWindowCount: Int { sessions.count }
@@ -120,7 +121,7 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func handle(_ m: Message, from who: String) async {
-        if m.t != .mouse && m.t != .key { Log.info("\(m.t.rawValue) from \(who)") }
+        if m.t != .mouse && m.t != .key { Log.info("\(m.t.rawValue) from \(who)") } else { Log.debug("\(m.t.rawValue) from \(who) win \(m.win ?? 0)") }
         switch m.t {
         case .list:
             var reply = Message(.windows)
@@ -152,6 +153,11 @@ final class HostRoom: NSObject, RoomDelegate {
             await warnIfLocked(who)
             input.handle(m)
             if m.t == .resize { sessions[id]?.followSizeSoon() }
+        case .restart:
+            let refusal = onRestart.map { $0(who) } ?? "This host can't restart itself."
+            guard let refusal else { return }
+            var reply = Message(.error); reply.msg = refusal
+            await send(reply, to: who)
         default:
             break
         }
