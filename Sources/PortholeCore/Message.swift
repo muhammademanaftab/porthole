@@ -19,6 +19,7 @@ public struct Message: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case list, open, close, key, text, mouse, scroll, resize
         case windows, opened, closed, error
+        case icon
     }
 
     public enum MouseKind: String, Codable, Sendable {

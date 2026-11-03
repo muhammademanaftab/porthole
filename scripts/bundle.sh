@@ -48,6 +48,10 @@ cat "$(realpath "$LK")" > "$LKDST"
 chmod 755 "$LKDST"
 codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$LKDST"
 make_app "Porthole" porthole-view io.github.muhammademanaftab.porthole.view false
+TILEDST="dist/Porthole.app/Contents/Helpers/porthole-tile"
+mkdir -p "$(dirname "$TILEDST")"
+cp "$BIN/porthole-tile" "$TILEDST"
+codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$TILEDST"
 
 for app in "dist/Porthole Host.app" "dist/Porthole.app"; do
   codesign --force --deep --options runtime --timestamp=none -s "$SIGN_ID" \

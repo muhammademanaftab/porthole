@@ -11,6 +11,7 @@ final class Connection: NSObject, RoomDelegate {
     var onError: ((String) -> Void)?
     var onClosed: ((UInt32) -> Void)?
     var onClipboard: ((String) -> Void)?
+    var onIcon: ((UInt32, Data) -> Void)?
     private var pending: [UInt32: (VideoTrack, Message) -> Void] = [:]
     private var openedReplies: [UInt32: Message] = [:]
 
@@ -40,6 +41,12 @@ final class Connection: NSObject, RoomDelegate {
             guard identity.stringValue == "host" else { return }
             let text = try await reader.readAll()
             Task { @MainActor [weak self] in self?.onClipboard?(text) }
+        }
+        try await room.registerByteStreamHandler(for: iconTopic) { [weak self] reader, identity in
+            guard identity.stringValue == "host", let win = AppIcon.window(from: reader.info.attributes) else { return }
+            let png = try await reader.readAll()
+            guard AppIcon.isAcceptable(png) else { return }
+            Task { @MainActor [weak self] in self?.onIcon?(win, png) }
         }
         try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
                                roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
@@ -93,6 +100,11 @@ final class Connection: NSObject, RoomDelegate {
                 try? await Task.sleep(nanoseconds: UInt64(RetryPolicy.open.every * 1_000_000_000))
             }
         }
+    }
+
+    func requestIcon(_ id: UInt32) {
+        var m = Message(.icon); m.win = id
+        send(m)
     }
 
     func close(_ id: UInt32) {

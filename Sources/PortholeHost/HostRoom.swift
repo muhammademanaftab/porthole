@@ -130,6 +130,9 @@ final class HostRoom: NSObject, RoomDelegate {
         case .close:
             guard let id = m.win else { return }
             await release(id, by: who)
+        case .icon:
+            guard let id = m.win else { return }
+            await sendIcon(id, to: who)
         case .key, .text, .mouse, .scroll, .resize:
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
             input.handle(m)
@@ -205,6 +208,16 @@ final class HostRoom: NSObject, RoomDelegate {
         var m = Message(.closed); m.win = id
         for v in who { await send(m, to: v) }
         onChange?()
+    }
+
+    private func sendIcon(_ id: UInt32, to who: String) async {
+        guard let png = await AppIcons.png(forWindow: id) else { Log.info("no icon for window \(id)"); return }
+        let opts = StreamByteOptions(topic: iconTopic, attributes: AppIcon.attributes(win: id),
+                                     destinationIdentities: [Participant.Identity(from: who)],
+                                     mimeType: "image/png", name: "icon-\(id).png", totalSize: png.count)
+        do { _ = try await room.localParticipant.sendBytes(png, options: opts) } catch {
+            Log.info("icon send to \(who) failed: \(error.localizedDescription)")
+        }
     }
 
     private func send(_ m: Message, to who: String) async {

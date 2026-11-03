@@ -33,6 +33,15 @@ if [ -z "$extra" ]; then pass "web holds only servable files"; else fail "web ho
 
 if [ -x "$HOST/Contents/MacOS/livekit-server" ]; then pass "livekit-server is executable"; else fail "livekit-server is executable"; fi
 if codesign --verify --strict "$HOST/Contents/MacOS/livekit-server" 2>/dev/null; then pass "livekit-server signature"; else fail "livekit-server signature"; fi
+TILE="$VIEW/Contents/Helpers/porthole-tile"
+if [ -x "$TILE" ]; then pass "porthole-tile helper is executable"; else fail "porthole-tile helper is executable"; fi
+if codesign --verify --strict "$TILE" 2>/dev/null; then pass "porthole-tile signature"; else fail "porthole-tile signature"; fi
+if otool -L "$TILE" 2>/dev/null | tail -n +2 | grep -qv -e '^[[:space:]]*/usr/lib/' -e '^[[:space:]]*/System/Library/'; then
+  fail "porthole-tile links only system libraries"
+else pass "porthole-tile links only system libraries"; fi
+"$TILE" >/dev/null 2>&1
+expect "porthole-tile refuses to run without arguments" "$?" "2"
+
 for app in "$HOST" "$VIEW"; do
   if codesign --verify --deep --strict "$app" 2>/dev/null; then pass "codesign --verify --deep --strict $app"; else fail "codesign --verify --deep --strict $app"; fi
 done

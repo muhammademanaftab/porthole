@@ -10,9 +10,13 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var titles: [UInt32: String] = [:]
     var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     var clipTimer: Timer?
+    let tiles = TileManager()
+    var icons: [UInt32: Data] = [:]
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
+        tiles.onActivate = { [weak self] id in self?.raise(id) }
+        tiles.onQuit = { [weak self] id in self?.portals[id]?.close() }
         clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollClipboard() }
         }
@@ -75,6 +79,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.onError = { [weak picker] msg in picker?.showError(msg) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
         c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
+        c.onIcon = { [weak self] id, png in self?.icons[id] = png }
         Task {
             do {
                 try await c.connect()
@@ -92,6 +97,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         if let existing = portals[info.id] { existing.makeKeyAndOrderFront(nil); return }
         guard let c = connection else { return }
         let host = c.hostAddress
+        icons[info.id] = nil
+        c.requestIcon(info.id)
         c.open(info.id) { [weak self] track, reply in
             guard let self else { return }
             let size = CGSize(width: reply.w ?? info.w, height: reply.h ?? info.h)
@@ -99,12 +106,38 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             portal.onClose = { [weak self] in
                 self?.connection?.close(info.id)
                 self?.portals[info.id] = nil
+                self?.tiles.remove(info.id)
             }
             self.portals[info.id] = portal
             portal.makeKeyAndOrderFront(nil)
             NSApp.activate()
+            self.startTile(info, portal: portal)
         }
     }
+
+    func startTile(_ info: WindowInfo, portal: PortalWindow) {
+        Task {
+            for _ in 0..<30 where icons[info.id] == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
+            guard portals[info.id] === portal else { return }
+            tiles.show(win: info.id, app: info.app, icon: icons.removeValue(forKey: info.id) ?? localIcon(info))
+        }
+    }
+
+    func localIcon(_ info: WindowInfo) -> Data? {
+        let image = info.bundle.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+            .map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSWorkspace.shared.icon(for: .applicationBundle)
+        var rect = CGRect(x: 0, y: 0, width: AppIcon.pixels, height: AppIcon.pixels)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil).flatMap { AppIcon.png(from: $0) }
+    }
+
+    func raise(_ id: UInt32) {
+        guard let portal = portals[id] else { return }
+        if portal.isMiniaturized { portal.deminiaturize(nil) }
+        portal.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    func applicationWillTerminate(_ note: Notification) { tiles.removeAll() }
 
     func pollClipboard() {
         guard !portals.isEmpty, let c = connection else { return }
