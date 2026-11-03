@@ -9,7 +9,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
     let host = HostRoom()
     var http: HTTPServer?
     let pairing = PairingDesk()
-    var pairingWindow: PairingWindow?
+    lazy var trust = HostTrust(desk: pairing, config: config)
     var statusItem: NSStatusItem?
     var settingsWindow: SettingsWindow?
     let heartbeats = Heartbeats()
@@ -69,12 +69,13 @@ final class HostApp: NSObject, NSApplicationDelegate {
             try server.start()
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
-            let http = try HTTPServer(config: config, pairing: pairing)
+            let http = try HTTPServer(config: config, pairing: pairing, trust: trust)
             http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
             let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh() }
+            trust.attach(to: host)
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
@@ -105,6 +106,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Copy Browser Link", action: #selector(copyLink), keyEquivalent: "c").target = self
         menu.addItem(withTitle: "Copy Password", action: #selector(copyPassword), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Pair a New Viewer…", action: #selector(pairViewer), keyEquivalent: "p").target = self
+        menu.addItem(withTitle: "Paired Macs…", action: #selector(showPairedMacs), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let perms = menu.addItem(withTitle: "Screen Recording: \(CGPreflightScreenCaptureAccess() ? "on" : "OFF, click to fix")",
                                  action: #selector(openScreenSettings), keyEquivalent: "")
@@ -121,11 +123,8 @@ final class HostApp: NSObject, NSApplicationDelegate {
 
     @objc func copyLink() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(browserLink, forType: .string) }
     @objc func copyPassword() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(config.password, forType: .string) }
-    @objc func pairViewer() {
-        let w = pairingWindow ?? PairingWindow(desk: pairing)
-        pairingWindow = w
-        w.present()
-    }
+    @objc func pairViewer() { trust.presentNewCode() }
+    @objc func showPairedMacs() { trust.showPaired() }
     @objc func openScreenSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
@@ -160,6 +159,7 @@ case .agentPlist:
 case .watchdog:
     WatchdogRunner.run()
 case .app:
+    if let status = HostCLI.run(Array(CommandLine.arguments.dropFirst())) { exit(status) }
     signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }
     signal(SIGINT) { _ in LiveKitServer.shared?.stop(); exit(0) }
     MainActor.assumeIsolated {

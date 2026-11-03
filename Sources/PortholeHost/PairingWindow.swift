@@ -5,6 +5,7 @@ import PortholeCore
 final class PairingWindow: NSPanel, NSWindowDelegate {
     private let desk: PairingDesk
     private let codeLabel = NSTextField(labelWithString: "")
+    private let intro = NSTextField(wrappingLabelWithString: "")
     private let detail = NSTextField(wrappingLabelWithString: "")
     private var timer: Timer?
 
@@ -18,8 +19,6 @@ final class PairingWindow: NSPanel, NSWindowDelegate {
         level = .floating
         delegate = self
 
-        let intro = NSTextField(wrappingLabelWithString:
-            "On the other Mac, open Porthole, choose Connect to Host…, pick this Mac and type this code.")
         codeLabel.font = .monospacedDigitSystemFont(ofSize: 44, weight: .semibold)
         codeLabel.alignment = .center
         codeLabel.isSelectable = true
@@ -41,14 +40,34 @@ final class PairingWindow: NSPanel, NSWindowDelegate {
     }
 
     func present() {
-        newCode()
-        center()
+        _ = desk.issue()
+        show()
+    }
+
+    func presentRequest() {
+        show()
+    }
+
+    private func show() {
+        if let who = desk.requester {
+            title = "\(who.name) wants to view this Mac"
+            intro.stringValue = "Type this code on \(who.name) to let it view this Mac's windows from now on. Pairing is one way."
+        } else {
+            title = "Pair a New Viewer"
+            intro.stringValue = "On the other Mac, open Porthole, choose Connect to Host…, pick this Mac and type this code."
+        }
+        watch()
+        if !isVisible { center() }
         NSApp.activate()
         makeKeyAndOrderFront(nil)
     }
 
     @objc private func newCode() {
-        _ = desk.issue()
+        _ = desk.reissue()
+        watch()
+    }
+
+    private func watch() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.showState() }
@@ -64,8 +83,9 @@ final class PairingWindow: NSPanel, NSWindowDelegate {
             detail.stringValue = "Valid for \(left / 60):\(String(format: "%02d", left % 60)), one viewer, \(PairingCodes.maxWrongTries) tries."
             return
         case .used:
-            detail.stringValue = "Paired. The viewer has this Mac's password now."
-            Log.info("a viewer paired with a code")
+            let who = desk.requester?.name ?? "The viewer"
+            detail.stringValue = "Paired. \(who) can view this Mac from now on."
+            Log.info("\(who) paired with a code")
         case .expired: detail.stringValue = "The code expired. Click New Code for another."
         case .locked:
             detail.stringValue = "Too many wrong tries, so the code was cancelled."

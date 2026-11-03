@@ -26,7 +26,21 @@ Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Acc
 
 1. On the host, open Porthole Host and grant Screen Recording and Accessibility.
 2. Copy the browser link or password from its menu-bar icon.
-3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). Pick one; the first time, choose Pair a New Viewer… on the host and type the 6-digit code (valid 2 minutes, single use, 5 tries). The password is then kept in the Keychain per host. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
+3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). A host this Mac hasn't paired with shows a padlock; picking it asks that host to show a 6-digit code on its screen (valid 2 minutes, single use, 5 tries). Type the code once and this Mac may view that host from then on, with no password. Pairing is one way. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
+
+## Pairing
+
+Trust is per Mac. Each Mac has a device ID in `~/Library/Application Support/Porthole/identity.json`. The host keeps the Macs paired with it in `paired.json` (0600, secrets stored as SHA-256); the viewer keeps each host's secret in the Keychain. The host menu has Pair a New Viewer… (a code for whoever types it first) and Paired Macs… (Unpair removes a Mac and disconnects it at once).
+
+```
+porthole-host paircode          # the code a Mac is waiting for, or a fresh one; works over SSH on a Mac with no screen
+porthole-host devices           # this Mac's device ID and the Macs paired with it
+porthole-host unpair <name|id>  # it loses access immediately
+porthole-view request <host>    # ask the host to show a code for this Mac
+porthole-view pair <host> <code>
+```
+
+Run them from the app bundles (`"/Applications/Porthole Host.app/Contents/MacOS/porthole-host" paircode`) so the Keychain recognises the binary. Pairing requests also print their code to the host's standard output; `PORTHOLE_PAIR_HEADLESS=1` prints it without opening the window. `PORTHOLE_HOME` moves the host's and viewer's state folder (for a second, isolated instance).
 
 ## Keep running
 

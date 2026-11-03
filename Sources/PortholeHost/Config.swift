@@ -2,9 +2,11 @@ import Foundation
 import PortholeCore
 
 extension HostConfig {
-    static var directory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Porthole", isDirectory: true)
+    static var directory: URL { portholeSupportDirectory() }
+
+    static func saved() -> HostConfig? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")) else { return nil }
+        return try? JSONDecoder().decode(HostConfig.self, from: data)
     }
 
     static func loadOrCreate() -> HostConfig {

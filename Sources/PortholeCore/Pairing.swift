@@ -1,31 +1,68 @@
 import Foundation
 
+public struct PairRequester: Equatable, Sendable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id; self.name = cleanDeviceName(name)
+    }
+}
+
 public struct PairingCodes: Sendable {
     public enum Outcome: Equatable, Sendable { case accepted, wrong(left: Int), locked, expired, noCode }
     public enum State: Equatable, Sendable { case idle, active(code: String, secondsLeft: Int), used, expired, locked }
 
     public static let lifetime: TimeInterval = 120
     public static let maxWrongTries = 5
+    public static let requestWindow: TimeInterval = 600
+    public static let maxRequests = 6
+
+    public enum RequestOutcome: Equatable, Sendable { case issued(String), same(String), throttled }
 
     private var code: String?
     private var expires = Date.distantPast
     private var wrong = 0
     private var ended: State = .idle
+    public private(set) var requester: PairRequester?
+    private var requestTimes: [Date] = []
 
     public init() {}
 
-    public mutating func issue(now: Date, random: () -> UInt32 = { UInt32.random(in: 0..<1_000_000) }) -> String {
+    public mutating func issue(now: Date, random: () -> UInt32 = { UInt32.random(in: 0..<1_000_000) },
+                               for requester: PairRequester? = nil) -> String {
         let c = String(format: "%06u", random() % 1_000_000)
         code = c
         expires = now.addingTimeInterval(Self.lifetime)
         wrong = 0
         ended = .idle
+        self.requester = requester
         return c
     }
 
     public mutating func cancel() {
         code = nil
         ended = .idle
+        requester = nil
+    }
+
+    public mutating func request(from who: PairRequester, now: Date,
+                                 random: () -> UInt32 = { UInt32.random(in: 0..<1_000_000) }) -> RequestOutcome {
+        expireIfDue(now)
+        if let code, requester?.id == who.id {
+            requester = who
+            return .same(code)
+        }
+        requestTimes = requestTimes.filter { now.timeIntervalSince($0) < Self.requestWindow }
+        guard requestTimes.count < Self.maxRequests else { return .throttled }
+        requestTimes.append(now)
+        return .issued(issue(now: now, random: random, for: who))
+    }
+
+    public mutating func currentOrIssue(now: Date, random: () -> UInt32 = { UInt32.random(in: 0..<1_000_000) }) -> String {
+        expireIfDue(now)
+        if let code { return code }
+        return issue(now: now, random: random)
     }
 
     public mutating func state(now: Date) -> State {
@@ -34,7 +71,7 @@ public struct PairingCodes: Sendable {
         return .active(code: code, secondsLeft: Int(expires.timeIntervalSince(now).rounded(.up)))
     }
 
-    public mutating func redeem(_ input: String, now: Date) -> Outcome {
+    public mutating func redeem(_ input: String, device: String? = nil, now: Date) -> Outcome {
         expireIfDue(now)
         guard let code else {
             switch ended {
@@ -43,7 +80,8 @@ public struct PairingCodes: Sendable {
             default: return .noCode
             }
         }
-        if Self.sameDigits(normalizePairingCode(input), code) {
+        let forThisDevice = requester.map { $0.id == device } ?? true
+        if Self.sameDigits(normalizePairingCode(input), code) && forThisDevice {
             self.code = nil
             ended = .used
             return .accepted
@@ -101,6 +139,28 @@ public final class PairingDesk: @unchecked Sendable {
         return codes.issue(now: clock(), random: random)
     }
 
+    public func reissue() -> String {
+        lock.lock(); defer { lock.unlock() }
+        return codes.issue(now: clock(), random: random, for: codes.requester)
+    }
+
+    public func request(from who: PairRequester) -> PairingCodes.RequestOutcome {
+        lock.lock(); defer { lock.unlock() }
+        return codes.request(from: who, now: clock(), random: random)
+    }
+
+    public func currentOrIssue() -> (code: String, requester: PairRequester?, secondsLeft: Int) {
+        lock.lock(); defer { lock.unlock() }
+        let c = codes.currentOrIssue(now: clock(), random: random)
+        if case .active(_, let left) = codes.state(now: clock()) { return (c, codes.requester, left) }
+        return (c, codes.requester, Int(PairingCodes.lifetime))
+    }
+
+    public var requester: PairRequester? {
+        lock.lock(); defer { lock.unlock() }
+        return codes.requester
+    }
+
     public func cancel() {
         lock.lock(); defer { lock.unlock() }
         codes.cancel()
@@ -111,30 +171,29 @@ public final class PairingDesk: @unchecked Sendable {
         return codes.state(now: clock())
     }
 
-    public func redeem(_ code: String) -> PairingCodes.Outcome {
+    public func redeem(_ code: String, device: String? = nil) -> PairingCodes.Outcome {
         lock.lock(); defer { lock.unlock() }
-        return codes.redeem(code, now: clock())
+        return codes.redeem(code, device: device, now: clock())
     }
 }
 
-public func pairURL(hostAddress: String, code: String) -> URL? {
-    guard let (host, port) = splitHostAddress(hostAddress) else { return nil }
-    var comps = URLComponents()
-    comps.scheme = "http"
-    comps.host = host
-    comps.port = port
-    comps.path = "/pair"
-    comps.queryItems = [URLQueryItem(name: "code", value: normalizePairingCode(code))]
-    return comps.url
+public func pairURL(hostAddress: String, code: String, device: String? = nil, name: String? = nil) -> URL? {
+    guard let device else { return hostURL(hostAddress, path: "/pair", ["code": normalizePairingCode(code)]) }
+    return hostURL(hostAddress, path: "/pair", ["code": normalizePairingCode(code), "device": device, "name": name ?? "Mac"])
 }
 
 public enum PairReply: Equatable, Sendable {
+    case paired(secret: String, hostID: String?, hostName: String?)
     case password(String)
     case refused(String)
 }
 
 public func parsePairReply(status: Int, body: Data) -> PairReply {
     let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    if status == 200, let secret = obj?["secret"] as? String, !secret.isEmpty {
+        let id = (obj?["host_id"] as? String).flatMap { DeviceIdentity.isValidID($0) ? $0 : nil }
+        return .paired(secret: secret, hostID: id, hostName: obj?["host"] as? String)
+    }
     if status == 200, let pw = obj?["password"] as? String, !pw.isEmpty { return .password(pw) }
     if let msg = obj?["error"] as? String, !msg.isEmpty { return .refused(msg) }
     if status == 404 { return .refused("This host is an older Porthole without pairing codes. Use its password instead.") }

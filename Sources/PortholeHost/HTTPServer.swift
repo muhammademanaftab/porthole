@@ -9,15 +9,19 @@ final class HTTPServer {
     private let routes: WebRoutes
     private let queue = DispatchQueue(label: "porthole.http")
 
-    init(config: HostConfig, pairing: PairingDesk? = nil) throws {
+    init(config: HostConfig, pairing: PairingDesk? = nil, trust: HostTrust? = nil) throws {
         self.config = config
         listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: config.httpPort)!)
         let name = HTTPServer.computerName
-        routes = WebRoutes(password: config.password, livekitPort: config.livekitPort,
-                           tokens: AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret),
-                           webRoot: HTTPServer.locateWebRoot(), pairing: pairing, hostName: name)
+        var routes = WebRoutes(password: config.password, livekitPort: config.livekitPort,
+                               tokens: AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret),
+                               webRoot: HTTPServer.locateWebRoot(), pairing: pairing, hostName: name,
+                               trust: trust?.store, hostID: trust?.identity.id)
+        routes.onPairRequest = { [weak trust] who, code in trust?.requested(by: who, code: code) }
+        routes.onUnpair = { [weak trust] device in trust?.unpaired(device) }
+        self.routes = routes
         let txt = BonjourTXT.make(name: name, tailscaleIP: tailscaleAddress(), localHost: HTTPServer.localHostName,
-                                 port: Int(config.httpPort))
+                                 port: Int(config.httpPort), id: trust?.identity.id)
         listener.service = NWListener.Service(name: name, type: portholeServiceType, domain: nil, txtRecord: NWTXTRecord(txt))
     }
 
@@ -58,11 +62,21 @@ final class HTTPServer {
         conn.start(queue: queue)
         conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
             guard let self, let data, let req = String(data: data, encoding: .utf8) else { conn.cancel(); return }
-            conn.send(content: self.respond(to: req).serialized, completion: .contentProcessed { _ in conn.cancel() })
+            let loopback = Self.isLoopback(conn.endpoint)
+            conn.send(content: self.routes.respond(to: req, fromLoopback: loopback).serialized, completion: .contentProcessed { _ in conn.cancel() })
         }
     }
 
     func respond(to request: String) -> HTTPResponse {
         routes.respond(to: request)
+    }
+
+    static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
+        guard case .hostPort(let host, _) = endpoint else { return false }
+        switch host {
+        case .ipv4(let a): return a.isLoopback
+        case .ipv6(let a): return a.isLoopback || (a.asIPv4?.isLoopback ?? false)
+        default: return false
+        }
     }
 }

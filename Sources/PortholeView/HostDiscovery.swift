@@ -66,7 +66,7 @@ final class HostDiscovery {
                 group.addTask {
                     switch await probe(host: ip, port: Int(HostConfig.defaultHTTPPort)) {
                     case .porthole(let hello):
-                        return DiscoveredHost(name: hello.name, tailscaleIP: ip, status: .online, viaTailscale: true)
+                        return DiscoveredHost(name: hello.name, tailscaleIP: ip, status: .online, viaTailscale: true, hostID: hello.id)
                     case .olderPorthole:
                         return DiscoveredHost(name: peerDisplayName(peer), tailscaleIP: ip, status: .older, viaTailscale: true)
                     case .notPorthole:
@@ -125,8 +125,8 @@ final class HostDiscovery {
         return probeVerdict(helloStatus: helloStatus, helloBody: helloBody, rootStatus: root.0, rootBody: root.1)
     }
 
-    nonisolated static func pair(address: String, code: String) async -> PairReply {
-        guard let url = pairURL(hostAddress: address, code: code) else {
+    nonisolated static func pair(address: String, code: String, device: String, name: String) async -> PairReply {
+        guard let url = pairURL(hostAddress: address, code: code, device: device, name: name) else {
             return .refused("\"\(address)\" isn't a host address. Use a name or IP, optionally with :port.")
         }
         var req = URLRequest(url: url)
@@ -135,5 +135,17 @@ final class HostDiscovery {
             return .refused("Couldn't reach \(address). Is Porthole Host running there?")
         }
         return parsePairReply(status: http.statusCode, body: data)
+    }
+
+    nonisolated static func requestPairing(address: String, device: String, name: String) async -> PairRequestReply {
+        guard let url = pairRequestURL(hostAddress: address, device: device, name: name) else {
+            return .refused("\"\(address)\" isn't a host address. Use a name or IP, optionally with :port.")
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 5
+        guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse else {
+            return .refused("Couldn't reach \(address). Is Porthole Host running there?")
+        }
+        return parsePairRequestReply(status: http.statusCode, body: data)
     }
 }

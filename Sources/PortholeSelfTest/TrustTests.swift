@@ -1,0 +1,460 @@
+import Foundation
+import PortholeCore
+
+private func get(_ target: String, method: String = "GET", host: String = "mini:7878", extra: [String] = []) -> String {
+    "\(method) \(target) HTTP/1.1\r\nHost: \(host)\r\n" + extra.map { $0 + "\r\n" }.joined() + "\r\n"
+}
+
+private func body(_ r: HTTPResponse) -> [String: Any]? { json(r.body) }
+
+private func tempDir() -> URL {
+    let d = FileManager.default.temporaryDirectory.appendingPathComponent("porthole-trust-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    return d
+}
+
+private func mode(_ url: URL) -> Int? {
+    (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int) ?? nil
+}
+
+private func claims(_ token: String) -> [String: Any]? {
+    let parts = token.split(separator: ".").map(String.init)
+    guard parts.count == 3 else { return nil }
+    return decodeBase64URL(parts[1]).flatMap(json)
+}
+
+private let viewerA = "0123456789abcdef"
+private let viewerB = "fedcba9876543210"
+private let hostID = "aaaabbbbccccdddd"
+
+func trustTests() {
+    identityTests()
+    trustStoreTests()
+    tokenAuthTests()
+    requestStateTests()
+    trustRouteTests()
+    localRouteTests()
+    viewerSideTests()
+    commandTests()
+}
+
+private func identityTests() {
+    var bytes: [UInt8] = [0, 1, 0xab, 0xff, 0x10, 0x20, 0x30, 0x40]
+    expect("device id: 16 lowercase hex characters from 8 random bytes",
+           DeviceIdentity.makeID(random: { bytes.removeFirst() }), "0001abff10203040")
+    check("device id: default ids are valid", (0..<20).allSatisfy { _ in DeviceIdentity.isValidID(DeviceIdentity.makeID()) })
+    check("device id: two default ids differ", DeviceIdentity.makeID() != DeviceIdentity.makeID())
+    for bad in ["", "0123456789ABCDEF", "0123456789abcde", "0123456789abcdef0", "0123456789abcdeg", "../../etc/passwd"] {
+        check("device id: \"\(bad)\" is not valid", !DeviceIdentity.isValidID(bad))
+    }
+
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let first = DeviceIdentity.loadOrCreate(in: dir, makeID: { viewerA })
+    expect("device identity: created on first use", first.id, viewerA)
+    expect("device identity: stable on the next load", DeviceIdentity.loadOrCreate(in: dir, makeID: { viewerB }).id, viewerA)
+    expect("device identity: file is 0600", mode(dir.appendingPathComponent("identity.json")), 0o600)
+    try? Data("{garbage".utf8).write(to: dir.appendingPathComponent("identity.json"))
+    expect("device identity: an unreadable file is replaced", DeviceIdentity.loadOrCreate(in: dir, makeID: { viewerB }).id, viewerB)
+    try? Data(#"{"id":"NOT-HEX"}"#.utf8).write(to: dir.appendingPathComponent("identity.json"))
+    expect("device identity: an invalid id is replaced", DeviceIdentity.loadOrCreate(in: dir, makeID: { viewerA }).id, viewerA)
+
+    expect("support dir: PORTHOLE_HOME overrides", portholeSupportDirectory(environment: ["PORTHOLE_HOME": "/tmp/ph"]).path, "/tmp/ph")
+    check("support dir: default is Application Support/Porthole",
+          portholeSupportDirectory(environment: [:]).path.hasSuffix("Library/Application Support/Porthole"))
+    check("support dir: empty PORTHOLE_HOME is ignored",
+          portholeSupportDirectory(environment: ["PORTHOLE_HOME": ""]).path.hasSuffix("Application Support/Porthole"))
+
+    expect("device name: trimmed", cleanDeviceName("  Renée's MacBook \n"), "Renée's MacBook")
+    expect("device name: control characters dropped", cleanDeviceName("Evil\u{7}\u{1b}[31mMac"), "Evil[31mMac")
+    expect("device name: empty becomes Mac", cleanDeviceName("  "), "Mac")
+    expect("device name: nil becomes Mac", cleanDeviceName(nil), "Mac")
+    expect("device name: cut to 64 characters", cleanDeviceName(String(repeating: "x", count: 100)).count, 64)
+}
+
+private func trustStoreTests() {
+    let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    let d = PairedDevice(id: viewerA, name: "Air", secretHash: secretDigest("s3"), pairedAt: t0)
+    expect("paired list: encode then decode round trips", PairedDevices.decode(PairedDevices.encode([d])), [d])
+    check("paired list: file is versioned and stores dates as ISO 8601", {
+        let s = String(decoding: PairedDevices.encode([d]), as: UTF8.self)
+        return s.contains(#""version" : 1"#) && s.contains("2023-11-14T22:13:20Z")
+    }())
+    expect("paired list: garbage decodes to nil", PairedDevices.decode(Data("nope".utf8)), nil)
+    let mixed = #"{"version":1,"devices":[{"id":"BAD","name":"x","secretHash":"h","pairedAt":"2023-11-14T22:13:20Z"},{"id":"0123456789abcdef","name":"ok","secretHash":"h","pairedAt":"2023-11-14T22:13:20Z"},{"id":"fedcba9876543210","name":"nohash","secretHash":"","pairedAt":"2023-11-14T22:13:20Z"}]}"#
+    expect("paired list: entries with bad ids or no hash are dropped", PairedDevices.decode(Data(mixed.utf8))?.map(\.name), ["ok"])
+    let again = PairedDevice(id: viewerA, name: "Air 2", secretHash: "x", pairedAt: t0)
+    expect("paired list: pairing the same device again replaces it",
+           PairedDevices.adding(again, to: [d]).map(\.name), ["Air 2"])
+
+    expect("secret digest: SHA-256 hex", secretDigest("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    check("paired device: accepts its secret", d.accepts("s3"))
+    check("paired device: refuses another secret", !d.accepts("s4"))
+    check("paired device: refuses an empty secret", !PairedDevice(id: viewerA, name: "", secretHash: secretDigest(""), pairedAt: t0).accepts(""))
+
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = TrustStore(directory: dir, clock: { t0 })
+    expect("trust store: starts empty", store.devices(), [])
+    expect("trust store: refuses an invalid device id", store.pair(id: "nope", name: "x", secret: "s"), nil)
+    expect("trust store: pairing returns the secret", store.pair(id: viewerA, name: " Air ", secret: "secret-a"), "secret-a")
+    check("trust store: generated secrets are long and random", {
+        guard let a = store.pair(id: viewerB, name: "B"), let b = store.pair(id: viewerB, name: "B") else { return false }
+        return a.count >= 32 && a != b
+    }())
+    expect("trust store: file is 0600", mode(store.url), 0o600)
+    check("trust store: the file never holds a plain secret",
+          !String(decoding: (try? Data(contentsOf: store.url)) ?? Data(), as: UTF8.self).contains("secret-a"))
+    expect("trust store: verify with the right secret", store.verify(id: viewerA, secret: "secret-a")?.name, "Air")
+    expect("trust store: verify with the wrong secret", store.verify(id: viewerA, secret: "secret-b"), nil)
+    expect("trust store: verify with another device's id", store.verify(id: viewerB, secret: "secret-a"), nil)
+    check("trust store: a second store on the same folder sees the pairing",
+          TrustStore(directory: dir).verify(id: viewerA, secret: "secret-a") != nil)
+    expect("trust store: re-pairing the same device keeps one entry", store.devices().filter { $0.id == viewerB }.count, 1)
+    expect("trust store: unpair by name", store.unpair("air"), .found(PairedDevice(id: viewerA, name: "Air", secretHash: secretDigest("secret-a"), pairedAt: t0)))
+    expect("trust store: unpaired device is refused at once", store.verify(id: viewerA, secret: "secret-a"), nil)
+    check("trust store: unpaired device is gone from the file", !TrustStore(directory: dir).isPaired(viewerA))
+    expect("trust store: unpairing again finds nothing", store.unpair(viewerA), .none)
+    check("trust store: the other device stays", store.isPaired(viewerB))
+
+    let a = PairedDevice(id: viewerA, name: "Mac", secretHash: "h", pairedAt: t0)
+    let b = PairedDevice(id: viewerB, name: "Mac", secretHash: "h", pairedAt: t0)
+    let c = PairedDevice(id: "0123000000000000", name: "Studio", secretHash: "h", pairedAt: t0)
+    expect("find paired: by exact id", findPaired(viewerB, in: [a, b, c]), .found(b))
+    expect("find paired: id match ignores case", findPaired(viewerB.uppercased(), in: [a, b, c]), .found(b))
+    expect("find paired: by name, case and curly quotes ignored", findPaired("studio", in: [a, b, c]), .found(c))
+    expect("find paired: two Macs with one name is ambiguous", findPaired("mac", in: [a, b, c]), .ambiguous([a, b]))
+    expect("find paired: unique id prefix of 4+", findPaired("fedc", in: [a, b, c]), .found(b))
+    expect("find paired: shared id prefix is ambiguous", findPaired("0123", in: [a, b, c]), .ambiguous([a, c]))
+    expect("find paired: prefix under 4 characters is not used", findPaired("fed", in: [a, b, c]), .none)
+    expect("find paired: blank finds nothing", findPaired("  ", in: [a, b, c]), .none)
+}
+
+private func tokenAuthTests() {
+    let t0 = Date(timeIntervalSince1970: 0)
+    let dev = PairedDevice(id: viewerA, name: "Air", secretHash: secretDigest("s"), pairedAt: t0)
+    let verify: (String, String) -> PairedDevice? = { id, secret in id == viewerA && secret == "s" ? dev : nil }
+    expect("token auth: right password", authorizeToken(query: ["pw": "pw"], password: "pw", verify: verify), .password)
+    expect("token auth: wrong password", authorizeToken(query: ["pw": "x"], password: "pw", verify: verify), .refused)
+    expect("token auth: nothing given", authorizeToken(query: [:], password: "pw", verify: verify), .refused)
+    expect("token auth: paired device with its secret", authorizeToken(query: ["device": viewerA, "secret": "s"], password: "pw", verify: verify), .device(dev))
+    expect("token auth: paired device with a wrong secret is unpaired",
+           authorizeToken(query: ["device": viewerA, "secret": "x"], password: "pw", verify: verify), .unpaired)
+    expect("token auth: unknown device is unpaired", authorizeToken(query: ["device": viewerB, "secret": "s"], password: "pw", verify: verify), .unpaired)
+    expect("token auth: device without a secret is unpaired", authorizeToken(query: ["device": viewerA], password: "pw", verify: verify), .unpaired)
+    expect("token auth: a failed device still accepts the right password",
+           authorizeToken(query: ["device": viewerB, "secret": "s", "pw": "pw"], password: "pw", verify: verify), .password)
+    expect("token auth: empty device falls back to the password rule",
+           authorizeToken(query: ["device": "", "pw": "x"], password: "pw", verify: verify), .refused)
+
+    let ident = pairedIdentity(name: "Renée's Air", suffix: "a-_b", device: viewerA)
+    expect("paired identity: viewer identity plus .device", ident, "view-RenéesAir-a-_b.\(viewerA)")
+    expect("paired identity: device id parses back", deviceID(fromIdentity: ident), viewerA)
+    expect("paired identity: password viewers have no device", deviceID(fromIdentity: "view-browser-abcd"), nil)
+    expect("paired identity: the host has no device", deviceID(fromIdentity: "host"), nil)
+    expect("paired identity: a name cannot smuggle a device in",
+           deviceID(fromIdentity: WebRoutes.viewerIdentity(name: "x.\(viewerA)", suffix: "s")), nil)
+    let ids = ["host", "view-a-s", "view-b-s.\(viewerA)", "view-c-t.\(viewerA)", "view-d-s.\(viewerB)"]
+    expect("revoked: only identities of devices no longer paired", revokedIdentities(ids, isPaired: { $0 == viewerB }),
+           ["view-b-s.\(viewerA)", "view-c-t.\(viewerA)"])
+    expect("identities of a device: every connection of that device", identities(ids, of: viewerB), ["view-d-s.\(viewerB)"])
+
+    let keys = AccessToken(apiKey: "k", apiSecret: "s")
+    let admin = claims(keys.make(identity: "host-admin", room: "porthole", canPublish: false, ttl: 60, roomAdmin: true))
+    check("admin token: grants roomAdmin for the room", (admin?["video"] as? [String: Any])?["roomAdmin"] as? Bool == true
+          && (admin?["video"] as? [String: Any])?["room"] as? String == "porthole")
+    check("viewer token: has no roomAdmin", (claims(keys.make(identity: "v", room: "porthole", canPublish: false))?["video"] as? [String: Any])?["roomAdmin"] == nil)
+    let req = removeParticipantRequest(livekitPort: 7880, token: "tok", room: "porthole", identity: "view-a.\(viewerA)")
+    check("remove participant: POSTs to the LiveKit RoomService on localhost",
+          req?.httpMethod == "POST" && req?.url?.absoluteString == "http://127.0.0.1:7880/twirp/livekit.RoomService/RemoveParticipant"
+          && req?.value(forHTTPHeaderField: "Authorization") == "Bearer tok"
+          && req?.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    expect("remove participant: body names the room and identity",
+           req?.httpBody.map { String(decoding: $0, as: UTF8.self) }, #"{"identity":"view-a.0123456789abcdef","room":"porthole"}"#)
+}
+
+private func requestStateTests() {
+    let t0 = Date(timeIntervalSince1970: 90_000)
+    let a = PairRequester(id: viewerA, name: "Air")
+    let b = PairRequester(id: viewerB, name: "Studio")
+    var codes = PairingCodes()
+    expect("request: first request issues a code", codes.request(from: a, now: t0, random: { 111_111 }), .issued("111111"))
+    expect("request: code is bound to the requester", codes.requester, a)
+    expect("request: the same Mac asking again gets the same code",
+           codes.request(from: a, now: t0.addingTimeInterval(5), random: { 222_222 }), .same("111111"))
+    expect("request: asking again does not extend the code", codes.state(now: t0.addingTimeInterval(60)),
+           .active(code: "111111", secondsLeft: 60))
+    expect("request: another Mac's code does not redeem from here", codes.redeem("111111", device: viewerB, now: t0), .wrong(left: 4))
+    expect("request: no device id does not redeem a bound code", codes.redeem("111111", now: t0), .wrong(left: 3))
+    expect("request: the requester redeems its code", codes.redeem("111111", device: viewerA, now: t0), .accepted)
+    expect("request: requester is kept after use for the host's message", codes.requester, a)
+
+    var menu = PairingCodes()
+    _ = menu.issue(now: t0, random: { 333_333 })
+    expect("menu code: not bound to any Mac", menu.requester, nil)
+    expect("menu code: any device may redeem it", menu.redeem("333333", device: viewerB, now: t0), .accepted)
+
+    var swap = PairingCodes()
+    _ = swap.request(from: a, now: t0, random: { 444_444 })
+    expect("request: another Mac asking replaces the code", swap.request(from: b, now: t0.addingTimeInterval(1), random: { 555_555 }), .issued("555555"))
+    expect("request: the replaced code no longer works", swap.redeem("444444", device: viewerA, now: t0.addingTimeInterval(2)), .wrong(left: 4))
+    expect("request: a new request resets wrong tries", { () -> PairingCodes.Outcome in
+        var c = swap
+        _ = c.request(from: a, now: t0.addingTimeInterval(3), random: { 666_666 })
+        return c.redeem("000000", device: viewerA, now: t0.addingTimeInterval(3))
+    }(), .wrong(left: 4))
+
+    var flood = PairingCodes()
+    var outcomes: [PairingCodes.RequestOutcome] = []
+    for i in 0..<7 {
+        outcomes.append(flood.request(from: i % 2 == 0 ? a : b, now: t0.addingTimeInterval(Double(i)), random: { UInt32(i) }))
+    }
+    expect("request: at most 6 new codes per 10 minutes", outcomes.last, .throttled)
+    expect("request: the first 6 were issued", outcomes.prefix(6).allSatisfy { if case .issued = $0 { return true }; return false }, true)
+    expect("request: the active code survives a throttled request", flood.state(now: t0.addingTimeInterval(7)),
+           .active(code: "000005", secondsLeft: 118))
+    expect("request: the same Mac's active code is still returned when throttled",
+           flood.request(from: b, now: t0.addingTimeInterval(8)), .same("000005"))
+    expect("request: allowed again once the window has passed",
+           flood.request(from: a, now: t0.addingTimeInterval(PairingCodes.requestWindow + 1), random: { 7 }), .issued("000007"))
+
+    var expire = PairingCodes()
+    _ = expire.request(from: a, now: t0, random: { 1 })
+    expect("request: after expiry the same Mac gets a fresh code",
+           expire.request(from: a, now: t0.addingTimeInterval(PairingCodes.lifetime), random: { 2 }), .issued("000002"))
+
+    var current = PairingCodes()
+    expect("paircode: with nothing active a fresh code is issued", current.currentOrIssue(now: t0, random: { 777_777 }), "777777")
+    expect("paircode: that code is unbound", current.requester, nil)
+    _ = current.request(from: a, now: t0.addingTimeInterval(1), random: { 888_888 })
+    expect("paircode: returns the code a Mac is waiting for", current.currentOrIssue(now: t0.addingTimeInterval(2), random: { 9 }), "888888")
+    expect("paircode: does not unbind it", current.requester, a)
+
+    var now = t0
+    let desk = PairingDesk(clock: { now }, random: { 121_212 })
+    _ = desk.request(from: a)
+    now = t0.addingTimeInterval(30)
+    let cur = desk.currentOrIssue()
+    check("desk paircode: code, requester and seconds left", cur.code == "121212" && cur.requester == a && cur.secondsLeft == 90)
+    _ = desk.reissue()
+    expect("desk new code: stays bound to the requester", desk.requester, a)
+    desk.cancel()
+    expect("desk cancel: forgets the requester", desk.requester, nil)
+}
+
+private func trustRouteTests() {
+    let keys = AccessToken(apiKey: "key", apiSecret: "secret")
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = TrustStore(directory: dir)
+    var clock = Date(timeIntervalSince1970: 100_000)
+    let desk = PairingDesk(clock: { clock }, random: { 135_790 })
+    var routes = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: keys, webRoot: nil, suffix: { "sfx" },
+                           pairing: desk, hostName: "Mini", trust: store, hostID: hostID)
+    let asked = NSLock()
+    var requests: [(PairRequester, String)] = []
+    routes.onPairRequest = { who, code in asked.lock(); requests.append((who, code)); asked.unlock() }
+
+    let hello = routes.respond(to: get("/hello"))
+    check("hello route: carries this Mac's device id", body(hello)?["id"] as? String == hostID)
+    expect("hello route: id parses back", HostHello.parse(hello.body)?.id, hostID)
+    expect("hello: invalid id is dropped", HostHello.parse(Data(#"{"app":"porthole","name":"m","version":1,"id":"x"}"#.utf8))?.id, nil)
+
+    let req = routes.respond(to: get("/pair/request?device=\(viewerA)&name=Ren%C3%A9e%27s%20Air"))
+    check("pair request: 200 says it was shown and names the host",
+          req.status == "200 OK" && body(req)?["requested"] as? Bool == true && body(req)?["host"] as? String == "Mini")
+    check("pair request: never reveals the code or the password", {
+        let s = String(decoding: req.body, as: UTF8.self)
+        return !s.contains("135790") && !s.contains("pw-123")
+    }())
+    check("pair request: the host is told who asked, with the code to show",
+          requests.count == 1 && requests[0].0 == PairRequester(id: viewerA, name: "Renée's Air") && requests[0].1 == "135790")
+    expect("pair request: the code is now active", desk.state(), .active(code: "135790", secondsLeft: 120))
+    expect("pair request: a bad device id is 400", routes.respond(to: get("/pair/request?device=../x&name=a")).status, "400 Bad Request")
+    expect("pair request: a missing device id is 400", routes.respond(to: get("/pair/request?name=a")).status, "400 Bad Request")
+    expect("pair request: HEAD is refused", routes.respond(to: get("/pair/request?device=\(viewerA)", method: "HEAD")).status, "405 Method Not Allowed")
+    expect("pair request: POST is refused like every other route", routes.respond(to: get("/pair/request?device=\(viewerA)", method: "POST")).status,
+           "405 Method Not Allowed")
+    let noTrust = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: keys, webRoot: nil, pairing: desk)
+    expect("pair request: without a trust store it does not exist",
+           noTrust.respond(to: get("/pair/request?device=\(viewerA)")).status, "404 Not Found")
+
+    let other = routes.respond(to: get("/pair?code=135790&device=\(viewerB)&name=Thief"))
+    check("pair: the right code from another Mac is refused", other.status == "403 Forbidden" && body(other)?["secret"] == nil)
+    expect("pair: a bad device id is 400 and burns no try", routes.respond(to: get("/pair?code=135790&device=XYZ")).status, "400 Bad Request")
+    let ok = routes.respond(to: get("/pair?code=135%20790&device=\(viewerA)&name=Air"))
+    let secret = body(ok)?["secret"] as? String ?? ""
+    check("pair: the requester gets a device secret, the host's id and name",
+          ok.status == "200 OK" && secret.count >= 32 && body(ok)?["host_id"] as? String == hostID && body(ok)?["host"] as? String == "Mini")
+    check("pair: a device pairing never hands out the password",
+          body(ok)?["password"] == nil && !String(decoding: ok.body, as: UTF8.self).contains("pw-123"))
+    expect("pair: the host stored the device under its name", store.devices().map(\.name), ["Air"])
+    expect("pair: the parsed reply", parsePairReply(status: 200, body: ok.body), .paired(secret: secret, hostID: hostID, hostName: "Mini"))
+
+    let tok = routes.respond(to: get("/token?device=\(viewerA)&secret=\(secret)&name=air"))
+    let tokClaims = (body(tok)?["token"] as? String).flatMap(claims)
+    check("token: a paired device needs no password", tok.status == "200 OK")
+    expect("token: identity carries the device id", tokClaims?["sub"] as? String, "view-air-sfx.\(viewerA)")
+    let bad = routes.respond(to: get("/token?device=\(viewerA)&secret=nope"))
+    check("token: a wrong device secret is 403 marked unpaired",
+          bad.status == "403 Forbidden" && body(bad)?["unpaired"] as? Bool == true)
+    expect("token reply: unpaired is recognised", parseTokenReply(status: 403, body: bad.body),
+           .unpaired("This Mac isn't paired with Mini any more. Pair it again."))
+    expect("token: the shared password still works", routes.respond(to: get("/token?pw=pw-123")).status, "200 OK")
+    expect("token: the browser's wrong password reply is unchanged", String(decoding: routes.respond(to: get("/token?pw=x")).body, as: UTF8.self),
+           #"{"error":"wrong password"}"#)
+    _ = store.unpair(viewerA)
+    let after = routes.respond(to: get("/token?device=\(viewerA)&secret=\(secret)"))
+    check("token: after unpairing the device is refused at once", after.status == "403 Forbidden" && body(after)?["unpaired"] as? Bool == true)
+
+    _ = desk.issue()
+    let legacy = routes.respond(to: get("/pair?code=135790"))
+    expect("pair: an old viewer without a device id still gets the password", body(legacy)?["password"] as? String, "pw-123")
+
+    clock = clock.addingTimeInterval(1000)
+    var statuses: [String] = []
+    for i in 0..<7 { statuses.append(routes.respond(to: get("/pair/request?device=\(i % 2 == 0 ? viewerA : viewerB)")).status) }
+    expect("pair request: flooding is answered with 429", statuses.last, "429 Too Many Requests")
+}
+
+private func localRouteTests() {
+    let keys = AccessToken(apiKey: "key", apiSecret: "secret")
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = TrustStore(directory: dir)
+    _ = store.pair(id: viewerA, name: "Air", secret: "s")
+    _ = store.pair(id: viewerB, name: "Studio", secret: "t")
+    let desk = PairingDesk(random: { 246_802 })
+    var routes = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: keys, webRoot: nil, pairing: desk, hostName: "Mini",
+                           trust: store, hostID: hostID)
+    var gone: [PairedDevice] = []
+    routes.onUnpair = { gone.append($0) }
+    let header = "\(localRouteHeader): 1"
+
+    let okCode = routes.respond(to: get("/local/paircode", host: "127.0.0.1:7878", extra: [header]), fromLoopback: true)
+    check("local paircode: loopback with the header gets a fresh code",
+          okCode.status == "200 OK" && body(okCode)?["code"] as? String == "246802" && body(okCode)?["seconds"] as? Int == 120)
+    expect("local paircode: that code is live", desk.state(), .active(code: "246802", secondsLeft: 120))
+    _ = desk.request(from: PairRequester(id: viewerB, name: "Studio"))
+    let waiting = routes.respond(to: get("/local/paircode", host: "localhost:7878", extra: [header]), fromLoopback: true)
+    check("local paircode: names the Mac that is waiting", body(waiting)?["for"] as? String == "Studio" && body(waiting)?["device"] as? String == viewerB)
+    let denied: [(String, String, [String], Bool)] = [
+        ("from the network", "127.0.0.1:7878", [header], false),
+        ("without the header", "127.0.0.1:7878", [], true),
+        ("with another Host (DNS rebinding)", "evil.example:7878", [header], true),
+        ("to the Tailscale address", "100.101.102.103:7878", [header], true),
+    ]
+    for (why, host, extra, loop) in denied {
+        let r = routes.respond(to: get("/local/paircode", host: host, extra: extra), fromLoopback: loop)
+        check("local paircode: \(why) is a plain 404", r.status == "404 Not Found" && !String(decoding: r.body, as: UTF8.self).contains("code"))
+    }
+    expect("local paircode: HEAD is refused", routes.respond(to: get("/local/paircode", method: "HEAD", host: "127.0.0.1", extra: [header]),
+                                                             fromLoopback: true).status, "405 Method Not Allowed")
+    check("pair window: shown by default", showsPairingWindow(environment: [:]))
+    check("pair window: PORTHOLE_PAIR_HEADLESS=1 only prints the code", !showsPairingWindow(environment: ["PORTHOLE_PAIR_HEADLESS": "1"]))
+    check("pair window: other values still show it", showsPairingWindow(environment: ["PORTHOLE_PAIR_HEADLESS": "0"]))
+    expect("local host header: [::1] counts", isLocalHostHeader("[::1]:7878"), true)
+    expect("local host header: a LAN name does not", isLocalHostHeader("mini.local"), false)
+
+    let un = routes.respond(to: get("/local/unpair?who=air", host: "127.0.0.1:7878", extra: [header]), fromLoopback: true)
+    check("local unpair: by name removes it and reports it",
+          un.status == "200 OK" && body(un)?["id"] as? String == viewerA && body(un)?["name"] as? String == "Air")
+    expect("local unpair: the host is told so it can disconnect the viewer", gone.map(\.id), [viewerA])
+    check("local unpair: the device is gone", !store.isPaired(viewerA) && store.isPaired(viewerB))
+    let miss = routes.respond(to: get("/local/unpair?who=nobody", host: "127.0.0.1", extra: [header]), fromLoopback: true)
+    check("local unpair: no match is 404 with a message", miss.status == "404 Not Found" && (body(miss)?["error"] as? String)?.contains("nobody") == true)
+    let remote = routes.respond(to: get("/local/unpair?who=studio", host: "127.0.0.1", extra: [header]), fromLoopback: false)
+    check("local unpair: refused from the network", remote.status == "404 Not Found" && store.isPaired(viewerB))
+    _ = store.pair(id: "0123000000000000", name: "Studio", secret: "u")
+    let amb = routes.respond(to: get("/local/unpair?who=Studio", host: "127.0.0.1", extra: [header]), fromLoopback: true)
+    check("local unpair: two Macs with the name is 409 listing both",
+          amb.status == "409 Conflict" && (body(amb)?["matches"] as? [[String: String]])?.count == 2 && store.devices().count == 2)
+    expect("local URL: always 127.0.0.1 with the port", localURL(port: 7999, path: "/local/unpair", ["who": "Renée's Air"])?.absoluteString,
+           "http://127.0.0.1:7999/local/unpair?who=Ren%C3%A9e's%20Air")
+}
+
+private func viewerSideTests() {
+    expect("token URL: device credential", tokenURL(hostAddress: "mini:9000", credential: .device(id: viewerA, secret: "a+b/c"), name: "air")?.absoluteString,
+           "http://mini:9000/token?device=0123456789abcdef&secret=a%2Bb/c&name=air")
+    expect("token URL: password credential is the old URL", tokenURL(hostAddress: "mini", credential: .password("p w"), name: "air"),
+           tokenURL(hostAddress: "mini", password: "p w", name: "air"))
+    expect("pair request URL", pairRequestURL(hostAddress: "100.101.102.103", device: viewerA, name: "Air")?.absoluteString,
+           "http://100.101.102.103:7878/pair/request?device=0123456789abcdef&name=Air")
+    expect("pair URL: with this Mac's device", pairURL(hostAddress: "mini", code: "123 456", device: viewerA, name: "Air")?.absoluteString,
+           "http://mini:7878/pair?code=123456&device=0123456789abcdef&name=Air")
+    expect("pair request URL: bad address", pairRequestURL(hostAddress: "mini:x", device: viewerA, name: "a"), nil)
+
+    expect("pair reply: secret without a host id", parsePairReply(status: 200, body: Data(#"{"secret":"s"}"#.utf8)), .paired(secret: "s", hostID: nil, hostName: nil))
+    expect("pair reply: invalid host id is dropped", parsePairReply(status: 200, body: Data(#"{"secret":"s","host_id":"../x","host":"M"}"#.utf8)),
+           .paired(secret: "s", hostID: nil, hostName: "M"))
+    expect("pair reply: an old host's password still parses", parsePairReply(status: 200, body: Data(#"{"password":"p"}"#.utf8)), .password("p"))
+
+    expect("pair request reply: shown", parsePairRequestReply(status: 200, body: Data(#"{"requested":true,"host":"Mini"}"#.utf8)), .shown(host: "Mini"))
+    expect("pair request reply: 404 is an older host", parsePairRequestReply(status: 404, body: Data("not found".utf8)), .older)
+    expect("pair request reply: 429 passes the message", parsePairRequestReply(status: 429, body: Data(#"{"error":"Too many"}"#.utf8)), .refused("Too many"))
+    expect("pair request reply: anything else", parsePairRequestReply(status: 500, body: Data()), .refused("The host didn't take the pairing request (HTTP 500)."))
+
+    expect("token reply: ok", parseTokenReply(status: 200, body: Data(#"{"url":"ws://m:7880","token":"t"}"#.utf8)), .ok(url: "ws://m:7880", token: "t"))
+    expect("token reply: wrong password", parseTokenReply(status: 403, body: Data(#"{"error":"wrong password"}"#.utf8)),
+           .refused("The host refused the password, or isn't running."))
+    expect("token reply: not JSON", parseTokenReply(status: 502, body: Data("x".utf8)), .refused("The host refused the password, or isn't running."))
+
+    var t = ViewerTrust()
+    t.remember(id: hostID, name: "Mini", address: "100.101.102.103")
+    expect("viewer trust: found by address", t.host(forAddress: "100.101.102.103:7878")?.id, hostID)
+    expect("viewer trust: address match ignores case and default port", ViewerTrust(hosts: [PairedHost(id: "x", name: "m", addresses: ["Mini.local"])])
+           .host(forAddress: "mini.local:7878")?.id, "x")
+    t.remember(id: hostID, name: "Mini", address: "mini.local")
+    expect("viewer trust: a second address is added, newest first", t.hosts.first?.addresses, ["mini.local", "100.101.102.103"])
+    t.remember(id: hostID, name: "Mini", address: "mini.local")
+    expect("viewer trust: the same address is not duplicated", t.hosts.first?.addresses, ["mini.local", "100.101.102.103"])
+    t.remember(id: "1111222233334444", name: "New", address: "mini.local")
+    expect("viewer trust: an address moves to the Mac that now answers there", t.host(forAddress: "mini.local")?.id, "1111222233334444")
+    expect("viewer trust: the old Mac keeps its other address", t.host(forAddress: "100.101.102.103")?.id, hostID)
+    let byID = DiscoveredHost(name: "Mini", lanHost: "other.local", status: .online, hostID: hostID)
+    expect("viewer trust: a discovered host matches by its id", t.host(for: byID)?.id, hostID)
+    let byAddr = DiscoveredHost(name: "x", tailscaleIP: "100.101.102.103", status: .online)
+    expect("viewer trust: or by any of its addresses", t.host(for: byAddr)?.id, hostID)
+    expect("viewer trust: unknown host", t.host(for: DiscoveredHost(name: "y", lanHost: "y.local", status: .online)), nil)
+    expect("viewer trust: encodes and decodes", ViewerTrust.decode(t.encoded), t)
+    expect("viewer trust: nothing stored is empty", ViewerTrust.decode(nil), ViewerTrust())
+    t.forget(id: hostID)
+    expect("viewer trust: forget", t.host(forAddress: "100.101.102.103"), nil)
+    expect("trust key: host id when known", hostKeyForTrust(hostID: hostID, address: "m"), hostID)
+    expect("trust key: address otherwise", hostKeyForTrust(hostID: nil, address: "Mini.local"), "addr:mini.local:7878")
+
+    let txt = BonjourTXT.make(name: "m", tailscaleIP: nil, localHost: "m.local", id: hostID)
+    expect("bonjour TXT: carries the device id", txt["id"], hostID)
+    expect("bonjour TXT: invalid id is left out", BonjourTXT.make(name: "m", tailscaleIP: nil, localHost: "m.local", id: "x")["id"], nil)
+    expect("bonjour host: id is read back", BonjourTXT.host(serviceName: "s", txt: txt)?.hostID, hostID)
+    let merged = mergeHosts([DiscoveredHost(name: "Mini", lanHost: "mini.local", status: .online, viaBonjour: true, hostID: hostID),
+                             DiscoveredHost(name: "mini-ts", tailscaleIP: "100.1.2.3", status: .online, viaTailscale: true, hostID: hostID)])
+    check("merge: two sightings with one device id are one host", merged.count == 1 && merged[0].viaBonjour && merged[0].viaTailscale)
+    let split = mergeHosts([DiscoveredHost(name: "Mac", tailscaleIP: "100.1.2.3", status: .online, hostID: hostID),
+                            DiscoveredHost(name: "Mac", tailscaleIP: "100.1.2.3", status: .online, hostID: "1111222233334444")])
+    expect("merge: different device ids stay apart", split.count, 2)
+}
+
+private func commandTests() {
+    let host: [([String], HostCommand)] = [
+        ([], .app), (["-psn_0_12345"], .app), (["-NSDocumentRevisionsDebugMode", "YES"], .app),
+        (["paircode"], .paircode), (["devices"], .devices), (["unpair", "Renée's", "Air"], .unpair("Renée's Air")),
+        (["unpair", viewerA], .unpair(viewerA)), (["unpair"], .usage(error: "unpair needs a name or device ID")),
+        (["unpair", "  "], .usage(error: "unpair needs a name or device ID")),
+        (["paircode", "x"], .usage(error: "paircode takes no arguments")), (["devices", "x"], .usage(error: "devices takes no arguments")),
+        (["--help"], .usage(error: nil)), (["help"], .usage(error: nil)),
+    ]
+    for (args, want) in host { expect("host command: \(args)", hostPairCommand(args), want) }
+    check("host usage: names every command", ["paircode", "devices", "unpair"].allSatisfy { hostUsage.contains($0) })
+
+    let viewer: [([String], ViewerCommand)] = [
+        ([], .app), (["mini"], .app), (["mini", "secret-pw"], .app), (["-psn_0_1"], .app),
+        (["request", "mini"], .request(host: "mini")), (["request"], .usage(error: "request needs a host")),
+        (["pair", "mini", "123 456"], .pair(host: "mini", code: "123456")), (["pair", "mini", "123-456"], .pair(host: "mini", code: "123456")),
+        (["pair", "mini"], .usage(error: "pair needs a host and a code")),
+        (["pair", "mini", "hunter2"], .usage(error: "\"hunter2\" isn't a 6-digit pairing code")),
+        (["--help"], .usage(error: nil)),
+    ]
+    for (args, want) in viewer { expect("viewer command: \(args)", viewerCommand(args), want) }
+    expect("viewer command: pair with extra words is left to the app", viewerCommand(["pair", "a", "123456", "x"]), .app)
+}
