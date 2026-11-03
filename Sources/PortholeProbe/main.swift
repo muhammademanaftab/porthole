@@ -115,8 +115,10 @@ click.kind = .up; try await probe.send(click)
 try await Task.sleep(nanoseconds: 400_000_000)
 var text = Message(.text); text.win = target.id; text.s = typed
 try await probe.send(text)
-for (code, down) in [(UInt16(49), true), (49, false), (7, true), (7, false)] {
-    var k = Message(.key); k.win = target.id; k.code = code; k.down = down; k.mods = 0
+let cmd = Modifiers.command.rawValue
+for (code, down, mods) in [(UInt16(49), true, UInt32(0)), (49, false, 0), (7, true, 0), (7, false, 0),
+                           (55, true, cmd), (1, true, cmd), (1, false, cmd), (55, false, 0)] {
+    var k = Message(.key); k.win = target.id; k.code = code; k.down = down; k.mods = mods
     try await probe.send(k)
 }
 try await Task.sleep(nanoseconds: 2_500_000_000)
