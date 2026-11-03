@@ -30,4 +30,10 @@ func stageTests() {
     expect("best mode is the largest HiDPI one",
            StageLayout.bestMode([(8192, 4608, 8192, 4608), (2048, 1152, 4096, 2304), (4096, 2304, 8192, 4608), (1920, 1080, 1920, 1080)]), 2)
     expect("no HiDPI mode gives nil", StageLayout.bestMode([(1920, 1080, 1920, 1080)]), nil)
+
+    let listed = [(1920, 1080, 1920, 1080), (4096, 2304, 8192, 4608), (1920, 1080, 3840, 2160), (2048, 1152, 4096, 2304)]
+    expect("headless stage picks 1920x1080 at 2x so Screen Sharing looks normal", StageLayout.headlessMode(listed), 2)
+    expect("headless stage never picks the 1x 1920x1080 mode", StageLayout.headlessMode([(1920, 1080, 1920, 1080), (2048, 1152, 4096, 2304)]), 1)
+    expect("headless stage falls back to the largest 2x mode", StageLayout.headlessMode([(4096, 2304, 8192, 4608), (2048, 1152, 4096, 2304)]), 0)
+    expect("headless stage with no 2x mode gives nil", StageLayout.headlessMode([(1920, 1080, 1920, 1080)]), nil)
 }

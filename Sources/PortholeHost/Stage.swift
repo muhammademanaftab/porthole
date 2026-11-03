@@ -5,6 +5,7 @@ import VirtualDisplayBridge
 @MainActor
 final class Stage {
     private var display: CGVirtualDisplay?
+    private var desktop: CGVirtualDisplay?
     private(set) var displayID: CGDirectDisplayID?
     private var parked: [UInt32: (pid: pid_t, home: CGPoint)] = [:]
     private var nextSlot = 0
@@ -22,34 +23,58 @@ final class Stage {
         }
     }
 
-    private func createOnce() async {
-        let others = onlineDisplays().map { CGDisplayBounds($0) }
+    private func makeDisplay(name: String, serial: UInt32, pixels: CGSize, modes: [CGSize]) async -> (CGVirtualDisplay, CGDirectDisplayID)? {
         let d = CGVirtualDisplayDescriptor()
         d.queue = .main
-        d.name = "Porthole Stage"
-        d.maxPixelsWide = UInt32(StageLayout.pixels.width)
-        d.maxPixelsHigh = UInt32(StageLayout.pixels.height)
-        d.sizeInMillimeters = StageLayout.sizeInMillimeters
+        d.name = name
+        d.maxPixelsWide = UInt32(pixels.width)
+        d.maxPixelsHigh = UInt32(pixels.height)
+        d.sizeInMillimeters = CGSize(width: (pixels.width / StageLayout.pixelsPerInch * 25.4).rounded(),
+                                     height: (pixels.height / StageLayout.pixelsPerInch * 25.4).rounded())
         d.vendorID = 0x504F
         d.productID = 0x5448
-        d.serialNum = 1
-        d.terminationHandler = { _, _ in Log.info("stage display was terminated") }
-        guard let v = CGVirtualDisplay(descriptor: d) else { Log.info("stage: could not create the virtual display"); return }
+        d.serialNum = serial
+        d.terminationHandler = { _, _ in Log.info("\(name) display was terminated") }
+        guard let v = CGVirtualDisplay(descriptor: d) else { Log.info("\(name): could not create the virtual display"); return nil }
         let s = CGVirtualDisplaySettings()
         s.hiDPI = 1
-        s.modes = [
-            CGVirtualDisplayMode(width: UInt(StageLayout.pixels.width), height: UInt(StageLayout.pixels.height), refreshRate: 60),
-            CGVirtualDisplayMode(width: UInt(StageLayout.points.width), height: UInt(StageLayout.points.height), refreshRate: 60),
-        ]
-        guard v.apply(s) else { Log.info("stage: applySettings failed, sharing windows in place"); return }
+        s.modes = modes.map { CGVirtualDisplayMode(width: UInt($0.width), height: UInt($0.height), refreshRate: 60) }
+        guard v.apply(s) else { Log.info("\(name): applySettings failed"); return nil }
         let id = v.displayID
         for _ in 0..<30 where !onlineDisplays().contains(id) { try? await Task.sleep(nanoseconds: 100_000_000) }
-        guard onlineDisplays().contains(id) else { Log.info("stage: display \(id) never came online"); return }
+        guard onlineDisplays().contains(id) else { Log.info("\(name): display \(id) never came online"); return nil }
+        return (v, id)
+    }
+
+    private func createOnce() async {
+        let others = onlineDisplays().map { CGDisplayBounds($0) }
+        guard let (v, id) = await makeDisplay(name: "Porthole Stage", serial: 1, pixels: StageLayout.pixels,
+                                              modes: [StageLayout.pixels, StageLayout.points]) else { return }
         display = v
         displayID = id
         configure(id, besides: others)
+        if CGDisplayIsMain(id) != 0 { await addDesktop(beside: id) }
         for _ in 0..<20 where !isHiDPI(id) { try? await Task.sleep(nanoseconds: 100_000_000) }
         Log.info("stage ready: display \(id) at \(CGDisplayBounds(id)), \(CGDisplayPixelsWide(id))x\(CGDisplayPixelsHigh(id)) px, scale \(scale(of: id))")
+    }
+
+    private func addDesktop(beside stage: CGDirectDisplayID) async {
+        let pts = StageLayout.headlessPoints
+        let px = CGSize(width: pts.width * 2, height: pts.height * 2)
+        guard let (v, id) = await makeDisplay(name: "Porthole Desktop", serial: 2, pixels: px, modes: [px, pts]) else { return }
+        desktop = v
+        let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
+        let modes = (CGDisplayCopyAllDisplayModes(id, opts) as? [CGDisplayMode]) ?? []
+        let mode = StageLayout.headlessMode(modes.map { ($0.width, $0.height, $0.pixelWidth, $0.pixelHeight) }).map { modes[$0] }
+        var cfg: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&cfg) == .success else { return }
+        if let mode { CGConfigureDisplayWithDisplayMode(cfg, id, mode, nil) }
+        CGConfigureDisplayOrigin(cfg, id, 0, 0)
+        let origin = StageLayout.origin(besides: [CGRect(origin: .zero, size: pts)])
+        CGConfigureDisplayOrigin(cfg, stage, Int32(origin.x), Int32(origin.y))
+        CGConfigureDisplayMirrorOfDisplay(cfg, id, kCGNullDirectDisplay)
+        let ok = CGCompleteDisplayConfiguration(cfg, .forSession) == .success
+        Log.info("no monitor attached: added a \(Int(pts.width))x\(Int(pts.height)) Retina desktop as the main screen (\(ok ? "ok" : "failed")); desktop main \(CGDisplayIsMain(id) != 0), stage at \(CGDisplayBounds(stage))")
     }
 
     private func onlineDisplays() -> [CGDirectDisplayID] {

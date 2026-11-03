@@ -7,6 +7,7 @@ public enum StageLayout {
     public static let topMargin: CGFloat = 64
     public static let cascadeStep: CGFloat = 48
     public static let cascadeSlots = 8
+    public static let headlessPoints = CGSize(width: 1920, height: 1080)
 
     public static var sizeInMillimeters: CGSize {
         CGSize(width: (pixels.width / pixelsPerInch * 25.4).rounded(), height: (pixels.height / pixelsPerInch * 25.4).rounded())
@@ -27,6 +28,13 @@ public enum StageLayout {
 
     public static func isHiDPIStageMode(width: Int, height: Int, pixelWidth: Int, pixelHeight: Int) -> Bool {
         width > 0 && height > 0 && pixelWidth == width * 2 && pixelHeight == height * 2
+    }
+
+    public static func headlessMode(_ modes: [(width: Int, height: Int, pixelWidth: Int, pixelHeight: Int)]) -> Int? {
+        modes.indices.first {
+            modes[$0].width == Int(headlessPoints.width) && modes[$0].height == Int(headlessPoints.height)
+                && isHiDPIStageMode(width: modes[$0].width, height: modes[$0].height, pixelWidth: modes[$0].pixelWidth, pixelHeight: modes[$0].pixelHeight)
+        } ?? bestMode(modes)
     }
 
     public static func bestMode(_ modes: [(width: Int, height: Int, pixelWidth: Int, pixelHeight: Int)]) -> Int? {
