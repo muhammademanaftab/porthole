@@ -15,6 +15,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     private let appName: String
     var onClose: (() -> Void)?
     var onRetry: (() -> Void)?
+    var onUnlock: (() -> Void)?
     private var throttle = LiveResizeThrottle()
     private var limits = PortalSizing.Limits()
     private var resizeEndedAt: Double?
@@ -56,6 +57,8 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             self?.show(.opening(app))
             self?.onRetry?()
         }
+        overlay.onUnlock = { [weak self] in self?.onUnlock?() }
+        overlay.onDismiss = { [weak self] in self?.show(nil) }
         for v in [videoView, inputView, overlay] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
@@ -125,6 +128,15 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         if case .opening = next, track?.dimensions != nil || isCompanion { phase = nil } else if isCompanion, next == .reconnecting { phase = nil } else { phase = next }
         if isCompanion, phase != nil { alphaValue = 1 }
         overlay.show(phase)
+    }
+
+    func hostLocked() {
+        guard !isCompanion, phase == nil || phase == .locked || isOpening else { return }
+        show(.locked)
+    }
+
+    func hostUnlocked() {
+        if phase == .locked { show(track?.dimensions == nil ? .opening(appName) : nil) }
     }
 
     var isOpening: Bool {
@@ -399,8 +411,12 @@ final class PortalOverlay: NSView {
     private let detail = NSTextField(wrappingLabelWithString: "")
     private let retry = NSButton(title: "Try Again", target: nil, action: nil)
     private let closeButton = NSButton(title: "Close Window", target: nil, action: nil)
+    private let unlockButton = NSButton(title: "Unlock\u{2026}", target: nil, action: nil)
+    private var current: PortalPhase?
     var onClose: (() -> Void)?
     var onRetry: (() -> Void)?
+    var onUnlock: (() -> Void)?
+    var onDismiss: (() -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -430,7 +446,11 @@ final class PortalOverlay: NSView {
         closeButton.bezelStyle = .rounded
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        let buttons = NSStackView(views: [closeButton, retry])
+        unlockButton.bezelStyle = .rounded
+        unlockButton.keyEquivalent = "\r"
+        unlockButton.target = self
+        unlockButton.action = #selector(unlockClicked)
+        let buttons = NSStackView(views: [closeButton, retry, unlockButton])
         buttons.spacing = 8
         let stack = NSStackView(views: [spinner, icon, heading, detail, buttons])
         stack.orientation = .vertical
@@ -459,6 +479,7 @@ final class PortalOverlay: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func show(_ phase: PortalPhase?) {
+        current = phase
         guard let phase else {
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.2; animator().alphaValue = 0 }, completionHandler: { [weak self] in
                 guard let self, self.alphaValue == 0 else { return }
@@ -475,6 +496,8 @@ final class PortalOverlay: NSView {
         heading.stringValue = phase.title
         detail.stringValue = phase.detail
         retry.isHidden = !phase.canRetry
+        unlockButton.isHidden = !phase.canUnlock
+        closeButton.title = phase.closeTitle
         closeButton.isHidden = phase.busy
     }
 
@@ -487,7 +510,8 @@ final class PortalOverlay: NSView {
     override func scrollWheel(with event: NSEvent) {}
 
     @objc func retryClicked() { onRetry?() }
-    @objc private func closeClicked() { onClose?() }
+    @objc private func closeClicked() { if current?.canUnlock == true { onDismiss?() } else { onClose?() } }
+    @objc private func unlockClicked() { onUnlock?() }
 }
 
 @MainActor

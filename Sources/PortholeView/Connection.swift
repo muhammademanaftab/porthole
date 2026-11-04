@@ -19,6 +19,8 @@ final class Connection: NSObject, RoomDelegate {
     var onSized: ((Message) -> Void)?
     var onCompanion: ((Message) -> Void)?
     var onLink: ((LinkState) -> Void)?
+    var onUnlock: ((Message) -> Void)?
+    private(set) var hostLocked = false
     var streamSettings: () -> ViewerSettings = { ViewerSettings() }
 
     enum LinkState { case connected, reconnecting, disconnected(String) }
@@ -163,6 +165,13 @@ final class Connection: NSObject, RoomDelegate {
         outbox.yield((m.encoded(), reliable))
     }
 
+    func unlock(password: String) {
+        var m = Message(.unlock)
+        m.s = password
+        VLog.info("unlock: asking \(hostAddress) to type the password into its lock screen")
+        send(m)
+    }
+
     func sendClipboard(_ text: String) {
         let opts = StreamTextOptions(topic: clipboardTopic, destinationIdentities: [Participant.Identity(from: "host")])
         Task { _ = try? await room.localParticipant.sendText(text, options: opts) }
@@ -265,6 +274,7 @@ final class Connection: NSObject, RoomDelegate {
             switch m.t {
             case .windows:
                 self.listAnswered = true
+                if !(m.list ?? []).isEmpty { self.hostLocked = false }
                 self.onWindows?(m.list ?? [])
             case .opened:
                 guard let id = m.win else { return }
@@ -273,7 +283,12 @@ final class Connection: NSObject, RoomDelegate {
             case .closed: if let id = m.win { self.onClosed?(id) }
             case .sized: self.onSized?(m)
             case .companion: self.onCompanion?(m)
+            case .unlock:
+                VLog.info("unlock: \(m.on == true ? "unlocked" : "not unlocked"): \(m.msg ?? "")")
+                if m.on == true { self.hostLocked = false }
+                self.onUnlock?(m)
             case .error:
+                if UnlockPrompt.isLockNotice(m.msg) { self.hostLocked = true }
                 if let id = m.win, self.isCompanion(id) {
                     self.pending[id] = nil
                     self.onOpenError?(id, m.msg ?? "Unknown error")

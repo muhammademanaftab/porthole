@@ -220,6 +220,15 @@ public enum UnlockEnv {
         public init(delay: Int, password: String) { self.delay = delay; self.password = password }
     }
 
+    public static func cliTimeout(_ request: Request?) -> TimeInterval {
+        guard let request else { return 25 }
+        return 25 + Double(request.delay) + LockScreenUnlock.wakeDelay + LockScreenUnlock.pollFor + 10
+    }
+
+    public static func shouldAsk(lockedSeen: Bool, listEmpty: Bool, tried: Bool) -> Bool {
+        lockedSeen && listEmpty && !tried
+    }
+
     public static func parse(_ value: String?) -> Request? {
         guard let value, let colon = value.firstIndex(of: ":") else { return nil }
         guard let secs = Int(value[..<colon]), (0...maxDelay).contains(secs) else { return nil }
@@ -237,6 +246,10 @@ public enum UnlockPrompt {
     }
 
     public static let working = "Typing the password into the lock screen…"
+
+    public static let answerTimeout: TimeInterval = 25
+
+    public static let noAnswer = "The host didn't answer. It may run a Porthole Host that can't unlock its screen yet."
 
     public static func isLockNotice(_ msg: String?) -> Bool {
         msg == LockNotice.list || msg == LockNotice.control

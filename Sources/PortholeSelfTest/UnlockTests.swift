@@ -173,6 +173,15 @@ private func unlockEnvTests() {
     expect("env: negative", UnlockEnv.parse("-1:hunter2"), nil)
     expect("env: empty password", UnlockEnv.parse("3:"), nil)
     expect("env: too long a wait", UnlockEnv.parse("601:pw"), nil)
+    expect("env: the CLI waits the usual 25 s without it", UnlockEnv.cliTimeout(nil), 25)
+    expect("env: the CLI waits for the delay and the unlock too", UnlockEnv.cliTimeout(UnlockEnv.Request(delay: 5, password: "x")), 49.5)
+    check("env: ask once, only when the host said locked and listed nothing",
+          UnlockEnv.shouldAsk(lockedSeen: true, listEmpty: true, tried: false)
+          && !UnlockEnv.shouldAsk(lockedSeen: true, listEmpty: true, tried: true)
+          && !UnlockEnv.shouldAsk(lockedSeen: false, listEmpty: true, tried: false)
+          && !UnlockEnv.shouldAsk(lockedSeen: true, listEmpty: false, tried: false))
+    check("env: the viewer waits longer for an answer than the host's run takes",
+          UnlockPrompt.answerTimeout > LockScreenUnlock.wakeDelay + LockScreenUnlock.pollFor + 5)
     let flag = EnvFlags.all.first { $0.name == UnlockEnv.name }
     check("env: PORTHOLE_OPEN_UNLOCK is listed for the viewer", flag?.scope == "viewer")
     check("env: PORTHOLE_OPEN_UNLOCK is masked", flag?.secret == true)

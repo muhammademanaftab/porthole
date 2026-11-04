@@ -19,8 +19,12 @@ func labelTests() {
     check("portal phase: a picture doesn't hide reconnecting or disconnected", !PortalPhase.reconnecting.clearsOnPicture && !PortalPhase.disconnected("x").clearsOnPicture)
     check("portal phase: only a failed open offers Try Again", PortalPhase.failed("x").canRetry && !PortalPhase.disconnected("x").canRetry
           && !PortalPhase.reconnecting.canRetry && !PortalPhase.opening("a").canRetry)
-    check("portal phase: every phase has a symbol and title", [PortalPhase.opening("a"), .reconnecting, .disconnected("b"), .failed("c")]
+    check("portal phase: every phase has a symbol and title", [PortalPhase.opening("a"), .reconnecting, .disconnected("b"), .failed("c"), .locked]
           .allSatisfy { !$0.symbol.isEmpty && !$0.title.isEmpty && !$0.detail.isEmpty })
+    check("portal phase: locked offers Unlock and Not Now, no spinner, no Try Again",
+          PortalPhase.locked.canUnlock && PortalPhase.locked.closeTitle == "Not Now" && !PortalPhase.locked.busy && !PortalPhase.locked.canRetry)
+    check("portal phase: a picture doesn't hide the locked notice", !PortalPhase.locked.clearsOnPicture)
+    check("portal phase: only locked offers Unlock", !PortalPhase.failed("x").canUnlock && PortalPhase.failed("x").closeTitle == "Close Window")
 
     expect("menu title: nothing open", hostMenuTitle(state: "Sharing", openWindows: 0), "Porthole: Sharing")
     expect("menu title: one window is singular", hostMenuTitle(state: "Sharing", openWindows: 1), "Porthole: Sharing · 1 window open")

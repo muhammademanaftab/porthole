@@ -67,24 +67,46 @@ enum ViewerTools {
         }
     }
 
-    static func withWindows(_ host: String, _ then: @escaping @MainActor (String, [WindowInfo]) -> Void) -> Never {
+    static func withWindows(_ host: String, unlock: UnlockEnv.Request? = nil, _ then: @escaping @MainActor (String, [WindowInfo]) -> Void) -> Never {
         let address = resolve(host)
         guard let (cred, _) = PasswordStore.credential(for: address) else {
             fail("no saved pairing or password for \(address). Pair first: porthole-view request \(address)")
             finish(1)
         }
-        runLoop(timeout: 25, "waiting for \(address)'s window list") {
+        runLoop(timeout: UnlockEnv.cliTimeout(unlock), "waiting for \(address)'s window list") {
             let c = Connection(hostAddress: address, credential: cred)
             var done = false
+            var lockedSeen = false
+            var unlockTried = false
             c.onWindows = { list in
                 guard !done else { return }
+                if let unlock, UnlockEnv.shouldAsk(lockedSeen: lockedSeen, listEmpty: list.isEmpty, tried: unlockTried) {
+                    unlockTried = true
+                    print("\(address) is locked; asking it to type the password into its lock screen in \(unlock.delay) s")
+                    VLog.info("cli open: \(address) is locked; \(UnlockEnv.name) asks to unlock it in \(unlock.delay) s")
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: UInt64(unlock.delay) * 1_000_000_000)
+                        c.unlock(password: unlock.password)
+                    }
+                    return
+                }
                 done = true
                 Task { @MainActor in
                     then(address, WindowFilter.sortedForPicker(list))
                     await c.disconnect()
                 }
             }
-            c.onError = { msg in fail(msg) }
+            c.onUnlock = { m in
+                let line = "unlock: \(m.on == true ? "unlocked" : "not unlocked"): \(m.msg ?? "")"
+                VLog.info("cli open: \(line)")
+                guard m.on == true else { fail(line); finish(1) }
+                print(line)
+                c.requestList()
+            }
+            c.onError = { msg in
+                if unlock != nil, UnlockPrompt.isLockNotice(msg) { lockedSeen = true; return }
+                fail(msg)
+            }
             Task { @MainActor in
                 do {
                     try await c.connect()
@@ -117,7 +139,11 @@ enum ViewerTools {
     }
 
     static func open(_ host: String, target: String) -> Never {
-        withWindows(host) { address, list in
+        let unlock = UnlockEnv.parse(ProcessInfo.processInfo.environment[UnlockEnv.name])
+        if ProcessInfo.processInfo.environment[UnlockEnv.name] != nil, unlock == nil {
+            fail("\(UnlockEnv.name) must be secs:password (secs 0 to \(UnlockEnv.maxDelay)); ignoring it")
+        }
+        withWindows(host, unlock: unlock) { address, list in
             switch pickWindow(target, in: list) {
             case .found(let w):
                 launch(address, w)
