@@ -8,10 +8,10 @@ final class HostRoom: NSObject, RoomDelegate {
     let input = InputInjector()
     let stage = Stage()
     let audio = AppAudio()
-    private var sessions: [UInt32: WindowSession] = [:]
-    private let starting = StartGate<UInt32>()
-    private var registry = SessionRegistry()
-    private var viewerPrefs: [UInt32: [String: StreamPrefs]] = [:]
+    var sessions: [UInt32: WindowSession] = [:]
+    let starting = StartGate<UInt32>()
+    var registry = SessionRegistry()
+    var viewerPrefs: [UInt32: [String: StreamPrefs]] = [:]
     private var url = ""
     private var makeToken: (() -> String)?
     private var reconnecting = false
@@ -21,11 +21,12 @@ final class HostRoom: NSObject, RoomDelegate {
     private var thumbTasks: [String: Task<Void, Never>] = [:]
     private var thumbAskedAt: [String: Date] = [:]
     private var thumbTaskIDs: [String: UUID] = [:]
-    private var shared: [UInt32: WindowInfo] = [:]
+    var shared: [UInt32: WindowInfo] = [:]
     private var tracker = CompanionTracker()
     private var baselines: [UInt32: Set<UInt32>] = [:]
     private var companionTimer: Timer?
     private var resizes = LatestWins<UInt32, ResizeJob>()
+    let wholeMac = WholeMacState()
 
     struct ResizeJob: Sendable {
         var message: Message
@@ -105,6 +106,8 @@ final class HostRoom: NSObject, RoomDelegate {
         stage.unparkAll()
         stage.becameEmpty()
         input.releaseAllButtons()
+        wholeMacReset()
+        onChange?()
         var delay: UInt64 = 1
         while true {
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
@@ -141,6 +144,7 @@ final class HostRoom: NSObject, RoomDelegate {
             self.thumbAskedAt[who] = nil
             self.thumbTaskIDs[who] = nil
             self.input.releaseAllButtons()
+            self.wholeMacViewerLeft(who)
             for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
             for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
             self.applyPrefs()
@@ -163,8 +167,9 @@ final class HostRoom: NSObject, RoomDelegate {
             var reply = Message(.windows)
             Power.wakeDisplay()
             do {
-                reply.list = try await WindowCatalog.list()
-                if reply.list?.isEmpty == true, Session.isScreenLocked {
+                let windows = try await WindowCatalog.list()
+                reply.list = screenEntries(for: who) + windows
+                if windows.isEmpty, Session.isScreenLocked {
                     Log.info("screen is locked; no windows to list")
                     var warn = Message(.error); warn.msg = Session.lockedListMessage
                     await send(warn, to: who)
@@ -177,6 +182,7 @@ final class HostRoom: NSObject, RoomDelegate {
         case .open:
             guard let id = m.win else { return }
             let screen = (m.sw ?? 0) >= 1 && (m.sh ?? 0) >= 1 ? CGSize(width: m.sw!, height: m.sh!) : nil
+            if WholeMac.isScreen(id) { await openScreen(id, by: who, screen: screen, prefs: StreamPrefs(open: m)); return }
             await open(id, by: who, screen: screen, prefs: StreamPrefs(open: m))
         case .close:
             guard let id = m.win else { return }
@@ -188,6 +194,7 @@ final class HostRoom: NSObject, RoomDelegate {
             sendThumbnails(to: who)
         case .key, .text, .mouse, .scroll, .resize:
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
+            if WholeMac.isScreen(id) { screenInput(m, id); return }
             await warnIfLocked(who)
             input.handle(m)
             sessions[id]?.noteInput()
@@ -309,14 +316,14 @@ final class HostRoom: NSObject, RoomDelegate {
         applyPrefs()
     }
 
-    private func sharedPrefs(_ id: UInt32, adding extra: UInt32? = nil) -> StreamPrefs {
+    func sharedPrefs(_ id: UInt32, adding extra: UInt32? = nil) -> StreamPrefs {
         var live = Set(sessions.keys).union(starting.keys).filter { tracker.parent(of: $0) == nil || $0 == id }
         if let extra { live.insert(extra) }
         let viewers = (viewerPrefs[id] ?? [:]).sorted { $0.key < $1.key }.map(\.value)
         return StreamPrefs.combined(viewers, onlySharedWindow: live == [id])
     }
 
-    private func applyPrefs() {
+    func applyPrefs() {
         for (id, session) in sessions { session.update(prefs: sharedPrefs(id)) }
     }
 
@@ -334,7 +341,7 @@ final class HostRoom: NSObject, RoomDelegate {
         onChange?()
     }
 
-    private func windowClosed(_ id: UInt32) async {
+    func windowClosed(_ id: UInt32) async {
         guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
         viewerPrefs[id] = nil
         input.forget(id)
@@ -420,8 +427,9 @@ final class HostRoom: NSObject, RoomDelegate {
         thumbTasks[who]?.cancel()
         let token = UUID()
         thumbTaskIDs[who] = token
+        let screens = screenThumbTargets(for: who)
         thumbTasks[who] = Task { [weak self] in
-            await Thumbnails.each { id, jpeg in
+            let deliver: (UInt32, Data) async -> Void = { [weak self] id, jpeg in
                 guard let self, !Task.isCancelled else { return }
                 let opts = StreamByteOptions(topic: thumbTopic, attributes: AppIcon.attributes(win: id),
                                              destinationIdentities: [Participant.Identity(from: who)],
@@ -430,6 +438,8 @@ final class HostRoom: NSObject, RoomDelegate {
                     Log.info("thumbnail send to \(who) failed: \(error.localizedDescription)")
                 }
             }
+            await Thumbnails.screens(screens, deliver)
+            await Thumbnails.each(deliver)
             guard let self, self.thumbTaskIDs[who] == token else { return }
             self.thumbTasks[who] = nil
             self.thumbTaskIDs[who] = nil
@@ -455,7 +465,7 @@ final class HostRoom: NSObject, RoomDelegate {
         await send(m, to: who)
     }
 
-    private func send(_ m: Message, to who: String) async {
+    func send(_ m: Message, to who: String) async {
         let opts = DataPublishOptions(destinationIdentities: [Participant.Identity(from: who)], topic: portholeTopic, reliable: true)
         do { try await room.localParticipant.publish(data: m.encoded(), options: opts) } catch {
             Log.info("send to \(who) failed: \(error.localizedDescription)")

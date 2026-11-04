@@ -25,6 +25,9 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_PAIR_HEADLESS", "host", "1: print pairing codes to standard output without opening the pairing window", "0"),
         EnvFlag("PORTHOLE_WEB_ROOT", "host", "folder served as the browser viewer instead of the bundled web files", "Contents/Resources/web"),
         EnvFlag("PORTHOLE_LIVEKIT_SERVER", "host", "path of the livekit-server binary to run", "the bundled one, then Homebrew's"),
+        EnvFlag("PORTHOLE_WHOLE_MAC", "host", "off, ask or always: whether viewers may open the whole Mac, for this run only", "the saved setting (ask)"),
+        EnvFlag("PORTHOLE_CURTAIN", "host", "0 or 1: whether the privacy curtain covers this Mac while the whole Mac is shared, for this run only", "the saved switch (off)"),
+        EnvFlag("PORTHOLE_SCREEN_MATCH", "host", "0 or 1: force the viewer-sized Stage as the whole Mac's screen (on by itself on a Mac with only a headless stub display)", "detected"),
         EnvFlag("PORTHOLE_OPEN", "viewer", "open the first window whose app and title contain this text (or id:<windowID>) once the list arrives", "unset"),
         EnvFlag("PORTHOLE_COMMAND", "internal", "watchdog: run the watchdog loop (set by the launch agent); app: run the host", "app"),
         EnvFlag("PORTHOLE_WATCHDOG_RELAUNCH", "internal", "why the watchdog launched this host (login, crash, hang, remote, migrate, missingAfterQuit)", "unset"),
@@ -39,6 +42,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_STREAM", "probe", "stream prefs to ask for, as key=value pairs separated by commas", "unset"),
         EnvFlag("PORTHOLE_CLIP_SEND", "probe", "text to send to the host clipboard", "unset"),
         EnvFlag("PORTHOLE_CLIP_EXPECT", "probe", "text expected back from the host clipboard", "unset"),
+        EnvFlag("PORTHOLE_SCREEN", "probe", "set: open the first Whole Mac card instead of a window, and send no input", "unset"),
         EnvFlag("PORTHOLE_HOLD", "probe", "seconds to keep watching the picture", "unset"),
     ]
 

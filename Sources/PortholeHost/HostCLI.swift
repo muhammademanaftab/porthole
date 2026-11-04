@@ -1,8 +1,9 @@
-import Foundation
+import AppKit
 import PortholeCore
 
 enum HostCLI {
     static func run(_ args: [String]) -> Int32? {
+        if args.first == "curtain-preview" { return curtainPreview(args.dropFirst().first) }
         switch hostPairCommand(args) {
         case .app: return nil
         case .usage(let error):
@@ -13,6 +14,16 @@ enum HostCLI {
         case .devices: return devices()
         case .unpair(let who): return unpair(who)
         }
+    }
+
+    private static func curtainPreview(_ path: String?) -> Int32 {
+        guard let path else { fail("curtain-preview needs an output .png path"); return 2 }
+        let png = MainActor.assumeIsolated {
+            CurtainView.png(size: CGSize(width: 1512, height: 982), notice: CurtainNotice(viewer: "Sam's MacBook Pro", blocking: true))
+        }
+        guard let png, (try? png.write(to: URL(fileURLWithPath: path))) != nil else { fail("could not render the curtain"); return 1 }
+        print(path)
+        return 0
     }
 
     private static func fail(_ s: String) {

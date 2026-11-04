@@ -6,6 +6,7 @@ import ScreenCaptureKit
 
 final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDelegate, @unchecked Sendable {
     let windowID: UInt32
+    let display: CGDirectDisplayID?
     private(set) var prefs: StreamPrefs
     private(set) var track: LocalVideoTrack!
     private(set) var publication: LocalTrackPublication?
@@ -30,8 +31,9 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
 
     private var capturer: BufferCapturer { track.capturer as! BufferCapturer }
 
-    init(windowID: UInt32, prefs: StreamPrefs = .standard) {
+    init(windowID: UInt32, display: CGDirectDisplayID? = nil, prefs: StreamPrefs = .standard) {
         self.windowID = windowID
+        self.display = display
         self.prefs = prefs
         var pc = FramePacer.Config()
         pc.padHz = Double(prefs.fps)
@@ -46,23 +48,44 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         capturePixelSize(points: points, scale: scale)
     }
 
-    func start(in room: Room) async throws {
+    private func live() -> (bounds: CGRect, scale: CGFloat)? {
+        if let display {
+            guard ScreenCatalog.isActive(display) else { return nil }
+            return (CGDisplayBounds(display), CGFloat(ScreenCatalog.scale(display)))
+        }
+        return LiveWindow.lookup(windowID).map { ($0.bounds, $0.scale) }
+    }
+
+    private func makeFilter() async throws -> (SCContentFilter, CGSize) {
+        if let display {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let d = content.displays.first(where: { $0.displayID == display }) else {
+                throw NSError(domain: "Porthole", code: 2, userInfo: [NSLocalizedDescriptionKey: "Display \(display) is gone"])
+            }
+            let me = ProcessInfo.processInfo.processIdentifier
+            let mine = content.applications.filter { $0.processID == me }
+            return (SCContentFilter(display: d, excludingApplications: mine, exceptingWindows: []), CGDisplayBounds(display).size)
+        }
         guard let window = try await WindowCatalog.window(id: windowID) else {
             throw NSError(domain: "Porthole", code: 2, userInfo: [NSLocalizedDescriptionKey: "Window \(windowID) is gone"])
         }
         pid = window.owningApplication?.processID
-        let scale = LiveWindow.lookup(windowID)?.scale ?? 2
+        return (SCContentFilter(desktopIndependentWindow: window), window.frame.size)
+    }
+
+    func start(in room: Room) async throws {
+        let (filter, points) = try await makeFilter()
+        let scale = live()?.scale ?? 2
         var lc = ScaleLadder.Config()
         if let ms = ProcessInfo.processInfo.environment["PORTHOLE_ENCODE_BUDGET_MS"].flatMap(Double.init), ms > 0 { lc.budgetMs = ms; lc.upBudgetMs = ms * 0.7 }
         ladder = ScaleLadder(top: prefs.level, native: Double(scale), config: lc)
-        pixelSize = Self.pixelSize(points: window.frame.size, scale: min(scale, CGFloat(ladder.level)))
+        pixelSize = Self.pixelSize(points: points, scale: min(scale, CGFloat(ladder.level)))
         track = await LocalVideoTrack.createBufferTrack(
             name: Message.trackName(for: windowID), source: .screenShareVideo,
             options: BufferCaptureOptions(dimensions: Dimensions(width: Int32(pixelSize.width), height: Int32(pixelSize.height)), fps: prefs.fps),
             reportStatistics: true)
         track.add(delegate: self)
 
-        let filter = SCContentFilter(desktopIndependentWindow: window)
         let s = SCStream(filter: filter, configuration: makeConfig(), delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await s.startCapture()
@@ -141,7 +164,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     private func followSize() {
-        guard !stopped, let live = LiveWindow.lookup(windowID) else { return }
+        guard !stopped, let live = live() else { return }
         let want = Self.pixelSize(points: live.bounds.size, scale: min(live.scale, CGFloat(ladder.level)))
         guard want != pixelSize else { return }
         pixelSize = want
@@ -152,7 +175,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
 
     private func tick() {
         guard !stopped else { return }
-        guard LiveWindow.lookup(windowID) != nil else {
+        guard live() != nil else {
             DispatchQueue.main.async { self.onClosed?() }
             return
         }
