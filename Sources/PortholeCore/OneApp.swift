@@ -4,8 +4,8 @@ public enum HostingSwitch {
     public static let settingKey = "hosting"
     public static let envKey = "PORTHOLE_HOSTING"
 
-    public static func firstRunDefault(hasHostConfig: Bool, oldHostInstalled: Bool, watchdogStamp: Bool) -> Bool {
-        hasHostConfig && (oldHostInstalled || watchdogStamp)
+    public static func firstRunDefault(hasHostConfig: Bool, oldHostInstalled: Bool, watchdogLoaded: Bool, watchdogRunning: Bool) -> Bool {
+        hasHostConfig && (oldHostInstalled || watchdogLoaded || watchdogRunning)
     }
 
     public static func saved(stored: Any?, firstRun: () -> Bool) -> (on: Bool, decided: Bool) {
@@ -32,6 +32,8 @@ public enum OneApp {
     public static let appName = "Porthole"
     public static let oldHostAppName = "Porthole Host"
     public static let migratedKey = "migratedViewerDefaults"
+    public static let quitOldAppsKey = "migratedOldApps"
+    public static let keychainMigratedKey = "migratedKeychainItems"
 
     public static var viewerKeys: [String] {
         [ViewerSettings.bitrateKey, ViewerSettings.fpsKey, ViewerSettings.levelKey, ViewerSettings.hideTitleBarKey,
@@ -56,6 +58,44 @@ public enum OneApp {
         guard path != URL(fileURLWithPath: ownBundlePath).standardizedFileURL.path else { return false }
         if bundleID == oldViewerBundleID { return true }
         return bundleID == self.bundleID && URL(fileURLWithPath: path).lastPathComponent == "\(oldHostAppName).app"
+    }
+
+    public static func isOldWatchdog(executable: String?) -> Bool {
+        executable?.contains("/\(oldHostAppName).app/") == true
+    }
+
+    public static func isInstalledOneApp(_ url: URL) -> Bool {
+        url.standardizedFileURL.lastPathComponent == "\(appName).app"
+    }
+
+    public static func isInside(_ path: String, app: String) -> Bool {
+        let a = URL(fileURLWithPath: app).standardizedFileURL.path
+        return URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(a + "/")
+    }
+}
+
+public enum LaunchOrigin: Equatable, Sendable {
+    case run(mayHost: Bool)
+    case handOff
+
+    public static func decide(bundled: Bool, parentIsLaunchd: Bool, watchdogLaunched: Bool, arguments: [String], environment: [String: String]) -> LaunchOrigin {
+        if parentIsLaunchd || watchdogLaunched { return .run(mayHost: true) }
+        if bundled { return arguments.contains { !$0.hasPrefix("-") } ? .run(mayHost: false) : .handOff }
+        return .run(mayHost: environment[HostingSwitch.envKey] == "1")
+    }
+}
+
+public extension ExitMarker {
+    static func onTerminate(sessionEnding: Bool) -> ExitMarker { sessionEnding ? .session : .quit }
+}
+
+public enum LaunchctlPrint {
+    public static func pid(_ text: String) -> Int32? {
+        for line in text.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            if parts.count == 3, parts[0].trimmingCharacters(in: .whitespaces) == "pid", parts[1] == "=", let n = Int32(parts[2]), n > 0 { return n }
+        }
+        return nil
     }
 }
 

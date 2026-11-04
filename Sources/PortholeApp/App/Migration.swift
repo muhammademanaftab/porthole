@@ -5,7 +5,7 @@ import PortholeCore
 enum OneAppMigration {
     static func run() {
         copyViewerDefaults()
-        quitOldApps()
+        quitOldAppsOnce()
     }
 
     static func copyViewerDefaults() {
@@ -18,15 +18,21 @@ enum OneAppMigration {
         if !copies.isEmpty { VLog.info("migration: copied \(copies.count) viewer setting(s) from \(OneApp.oldViewerBundleID)") }
     }
 
+    static func quitOldAppsOnce() {
+        let d = UserDefaults.standard
+        guard !d.bool(forKey: OneApp.quitOldAppsKey) else { return }
+        quitOldApps()
+        d.set(true, forKey: OneApp.quitOldAppsKey)
+    }
+
     static func quitOldApps() {
         let own = Bundle.main.bundlePath
         let old = NSWorkspace.shared.runningApplications.filter {
             $0.processIdentifier != getpid() && OneApp.isOldApp(bundleID: $0.bundleIdentifier, bundlePath: $0.bundleURL?.path, ownBundlePath: own)
         }
-        let ownExe = Bundle.main.executableURL?.resolvingSymlinksInPath().path
-        let dogs = Processes.running(named: CLITool.host.rawValue, argument: "watchdog").filter { Processes.path($0) != ownExe }
+        let dogs = Processes.running(named: CLITool.host.rawValue, argument: "watchdog").filter { OneApp.isOldWatchdog(executable: Processes.path($0)) }
         if !dogs.isEmpty {
-            Log.info("migration: stopping the old app's watchdog \(dogs)", .watchdog)
+            Log.info("migration: stopping the old Porthole Host.app watchdog \(dogs)", .watchdog)
             LegacyAgent.launchctl(["bootout", "gui/\(getuid())/\(LaunchAgent.label)"])
             Processes.stop(dogs)
         }
@@ -39,10 +45,9 @@ enum OneAppMigration {
             Processes.stop(hosts.map(\.processIdentifier), timeout: 5)
         }
         for app in viewers { app.terminate() }
+        let pids = viewers.map(\.processIdentifier)
         let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline, viewers.contains(where: { !$0.isTerminated }) {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        for app in viewers where !app.isTerminated { app.forceTerminate() }
+        while Date() < deadline, pids.contains(where: { kill($0, 0) == 0 }) { usleep(100_000) }
+        for app in viewers where kill(app.processIdentifier, 0) == 0 { app.forceTerminate() }
     }
 }

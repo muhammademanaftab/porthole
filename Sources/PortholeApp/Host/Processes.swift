@@ -53,7 +53,7 @@ enum Processes {
 
     static func hosts(executable path: String) -> [pid_t] {
         let watchdog = HostFiles.readWatchdogPid()
-        return running(executable: path).filter { $0 != watchdog && !isWatchdog($0) }
+        return running(executable: path).filter { $0 != watchdog && arguments($0).isHostApp }
     }
 
     static func stop(_ pids: [pid_t], timeout: TimeInterval = 3) {

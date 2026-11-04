@@ -2,15 +2,19 @@ import Foundation
 import PortholeCore
 
 func oneAppTests() {
-    expect("hosting: an upgrade from Porthole Host shares by default", HostingSwitch.firstRunDefault(hasHostConfig: true, oldHostInstalled: true, watchdogStamp: false), true)
-    expect("hosting: a host whose watchdog was registered shares by default", HostingSwitch.firstRunDefault(hasHostConfig: true, oldHostInstalled: false, watchdogStamp: true), true)
-    expect("hosting: a leftover config.json from a development run alone doesn't share", HostingSwitch.firstRunDefault(hasHostConfig: true, oldHostInstalled: false, watchdogStamp: false), false)
-    expect("hosting: a fresh install doesn't share", HostingSwitch.firstRunDefault(hasHostConfig: false, oldHostInstalled: true, watchdogStamp: true), false)
+    let first = { (config: Bool, old: Bool, loaded: Bool, running: Bool) in
+        HostingSwitch.firstRunDefault(hasHostConfig: config, oldHostInstalled: old, watchdogLoaded: loaded, watchdogRunning: running)
+    }
+    expect("hosting: an upgrade from Porthole Host shares by default", first(true, true, false, false), true)
+    expect("hosting: a host whose watchdog agent is loaded shares by default", first(true, false, true, false), true)
+    expect("hosting: a host whose watchdog is running shares by default", first(true, false, false, true), true)
+    expect("hosting: a leftover config.json and stamp from a development run alone don't share", first(true, false, false, false), false)
+    expect("hosting: a fresh install doesn't share", first(false, true, true, true), false)
     var asked = 0
     let saved = HostingSwitch.saved(stored: false) { asked += 1; return true }
     check("hosting: a saved switch wins and the first-run rule isn't asked", saved == (false, false) && asked == 0)
-    let first = HostingSwitch.saved(stored: nil) { true }
-    check("hosting: with nothing saved the first-run rule decides and is saved", first == (true, true))
+    let firstRun = HostingSwitch.saved(stored: nil) { true }
+    check("hosting: with nothing saved the first-run rule decides and is saved", firstRun == (true, true))
     check("hosting: a junk stored value counts as nothing saved", HostingSwitch.saved(stored: "yes") { false } == (false, true))
     expect("hosting: PORTHOLE_HOSTING=1 shares this run", HostingSwitch.thisRun(saved: false, environment: ["PORTHOLE_HOSTING": "1"]), true)
     expect("hosting: PORTHOLE_HOSTING=0 doesn't", HostingSwitch.thisRun(saved: true, environment: ["PORTHOLE_HOSTING": "0"]), false)
@@ -65,7 +69,43 @@ func oneAppTests() {
     let mini = DiscoveredHost(name: "Mac mini", lanHost: "mini.local", status: .online, viaBonjour: true, hostID: "cccc-dddd")
     let old = DiscoveredHost(name: "Old host", lanHost: "old.local", status: .online, viaBonjour: true)
     expect("discovery: a Mac sharing itself isn't offered to its own viewer", otherMacs([me, mini, old], thisMac: "aaaa-bbbb").map(\.name), ["Mac mini", "Old host"])
+    let tsMe = DiscoveredHost(name: "This Mac", tailscaleIP: "100.64.0.1", status: .online, viaTailscale: true, hostID: "aaaa-bbbb")
+    expect("discovery: a Tailscale scan doesn't offer this Mac either", otherMacs([tsMe, mini], thisMac: "aaaa-bbbb").map(\.name), ["Mac mini"])
     expect("discovery: without an identity nothing is dropped", otherMacs([me, mini], thisMac: nil).count, 2)
+
+    check("migration: the old app's watchdog is recognised by its path", OneApp.isOldWatchdog(executable: "/Applications/Porthole Host.app/Contents/MacOS/porthole-host"))
+    check("migration: this app's watchdog is not the old one", !OneApp.isOldWatchdog(executable: "/Applications/Porthole.app/Contents/MacOS/porthole-host"))
+    check("migration: a development build's watchdog is not the old one", !OneApp.isOldWatchdog(executable: "/tmp/dist/Porthole.app/Contents/MacOS/porthole-host") && !OneApp.isOldWatchdog(executable: nil))
+    check("doctor: Porthole.app is the one app", OneApp.isInstalledOneApp(URL(fileURLWithPath: "/Applications/Porthole.app/")))
+    check("doctor: Porthole Host.app is not the one app", !OneApp.isInstalledOneApp(URL(fileURLWithPath: "/Applications/Porthole Host.app")))
+    check("doctor: a program inside the app", OneApp.isInside("/Applications/Porthole.app/Contents/MacOS/porthole-host", app: "/Applications/Porthole.app"))
+    check("doctor: a program in Porthole Host.app is not inside Porthole.app", !OneApp.isInside("/Applications/Porthole Host.app/Contents/MacOS/porthole-host", app: "/Applications/Porthole.app"))
+    check("doctor: a program in Porthole.app.old is not inside Porthole.app", !OneApp.isInside("/Applications/Porthole.app.old/Contents/MacOS/porthole-host", app: "/Applications/Porthole.app"))
+
+    let printed = "gui/501/io.github.muhammademanaftab.porthole.watchdog = {\n\tactive count = 1\n\tpath = (submitted by smd.328)\n\tstate = running\n\tprogram identifier = Contents/MacOS/porthole-host (mode: 2)\n\truns = 3\n\tpid = 19322\n\tlast exit code = 0\n}\n"
+    expect("launchctl print: the running agent's pid", LaunchctlPrint.pid(printed), 19322)
+    expect("launchctl print: a stopped agent has no pid", LaunchctlPrint.pid("gui/501/x = {\n\tstate = not running\n\truns = 0\n}\n"), nil)
+
+    expect("launch: Launch Services may share this Mac", LaunchOrigin.decide(bundled: true, parentIsLaunchd: true, watchdogLaunched: false, arguments: [], environment: [:]), .run(mayHost: true))
+    expect("launch: the watchdog may share this Mac", LaunchOrigin.decide(bundled: true, parentIsLaunchd: false, watchdogLaunched: true, arguments: [], environment: [:]), .run(mayHost: true))
+    expect("launch: the app run from a shell hands over", LaunchOrigin.decide(bundled: true, parentIsLaunchd: false, watchdogLaunched: false, arguments: [], environment: [:]), .handOff)
+    expect("launch: a -psn style argument still hands over", LaunchOrigin.decide(bundled: true, parentIsLaunchd: false, watchdogLaunched: false, arguments: ["-psn_0_1"], environment: [:]), .handOff)
+    expect("launch: a viewer run with a host from a shell only views", LaunchOrigin.decide(bundled: true, parentIsLaunchd: false, watchdogLaunched: false, arguments: ["mini.local", "pw"], environment: ["PORTHOLE_HOSTING": "1"]), .run(mayHost: false))
+    expect("launch: a bare development binary only views", LaunchOrigin.decide(bundled: false, parentIsLaunchd: false, watchdogLaunched: false, arguments: [], environment: [:]), .run(mayHost: false))
+    expect("launch: a bare development binary shares with PORTHOLE_HOSTING=1", LaunchOrigin.decide(bundled: false, parentIsLaunchd: false, watchdogLaunched: false, arguments: [], environment: ["PORTHOLE_HOSTING": "1"]), .run(mayHost: true))
+
+    let app = "/Applications/Porthole.app/Contents/MacOS/porthole-host"
+    check("hosts: the app launched by Launch Services is a host", ProcessArguments(arguments: [app], environment: [:]).isHostApp)
+    check("hosts: the app launched by the watchdog is a host", ProcessArguments(arguments: [app], environment: ["PORTHOLE_COMMAND": "app"]).isHostApp)
+    check("hosts: an old -psn argument still is", ProcessArguments(arguments: [app, "-psn_0_42"], environment: [:]).isHostApp)
+    check("hosts: the watchdog is not", !ProcessArguments(arguments: ["Contents/MacOS/porthole-host", "watchdog"], environment: ["PORTHOLE_COMMAND": "watchdog"]).isHostApp)
+    check("hosts: porthole-view is not", !ProcessArguments(arguments: ["/Applications/Porthole.app/Contents/MacOS/porthole-view"], environment: [:]).isHostApp)
+    check("hosts: a CLI subcommand is not", !ProcessArguments(arguments: [app, "paircode"], environment: [:]).isHostApp)
+    check("hosts: a viewer run with a host is not", !ProcessArguments(arguments: [app, "mini.local", "pw"], environment: [:]).isHostApp)
+    check("hosts: unreadable arguments count as a host", ProcessArguments(arguments: [], environment: [:]).isHostApp)
+
+    expect("quit: a user quit while sharing tells the watchdog not to relaunch", ExitMarker.onTerminate(sessionEnding: false), .quit)
+    expect("quit: log out or power off marks the session end", ExitMarker.onTerminate(sessionEnding: true), .session)
 
     expect("dock: a viewer-only Mac always has its Dock icon", Presence.dockIcon(hosting: false, viewerWindows: 0), true)
     expect("dock: a Mac that only shares stays in the menu bar", Presence.dockIcon(hosting: true, viewerWindows: 0), false)

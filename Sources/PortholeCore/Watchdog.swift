@@ -245,4 +245,11 @@ public struct ProcessArguments: Equatable, Sendable {
     public var isWatchdog: Bool {
         HostCommand.parse(arguments: Array(arguments.dropFirst()), environment: environment) == .watchdog
     }
+
+    public var isHostApp: Bool {
+        if isWatchdog { return false }
+        guard let first = arguments.first else { return true }
+        if URL(fileURLWithPath: first).lastPathComponent == CLITool.viewer.rawValue { return false }
+        return arguments.dropFirst().allSatisfy { $0.hasPrefix("-") }
+    }
 }

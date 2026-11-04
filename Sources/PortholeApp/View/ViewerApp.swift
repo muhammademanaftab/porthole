@@ -30,6 +30,9 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var pendingRecent: RecentPortal?
     weak var unlockFrom: NSWindow?
     var unlockStartedAt: Date?
+    var mayHost = true
+    var sessionEnding = false
+    var dockActivated = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
@@ -548,6 +551,21 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         if portal.isMiniaturized { portal.deminiaturize(nil) }
         portal.makeKeyAndOrderFront(nil)
         NSApp.activate()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let h = hosting, h.started, !h.isGallery {
+            let marker = ExitMarker.onTerminate(sessionEnding: sessionEnding || Self.systemQuitEvent)
+            HostFiles.writeMarker(marker, unlessPresent: true)
+            Log.info("asked to quit (\(HostFiles.readMarker()?.rawValue ?? marker.rawValue))", .host)
+        }
+        return .terminateNow
+    }
+
+    static var systemQuitEvent: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == AEEventID(kAEQuitApplication),
+              let reason = event.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.typeCodeValue else { return false }
+        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAEShowShutdownDialog, kAERestart, kAEShutDown].map { OSType($0) }.contains(reason)
     }
 
     func applicationWillTerminate(_ note: Notification) {

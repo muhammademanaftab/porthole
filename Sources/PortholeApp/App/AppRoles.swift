@@ -3,17 +3,31 @@ import PortholeCore
 
 extension ViewerApp {
     func startRoles() -> Bool {
-        OneAppMigration.run()
         let saved = Self.savedHosting()
-        let on = HostingSwitch.thisRun(saved: saved, environment: environment)
+        var on = HostingSwitch.thisRun(saved: saved, environment: environment)
         if HostingSwitch.overridden(environment) {
             VLog.info("\(HostingSwitch.envKey)=\(environment[HostingSwitch.envKey] ?? "") for this run: \(on ? "sharing" : "not sharing") this Mac; the saved switch (\(saved ? "on" : "off")) is unchanged")
         }
+        if on && !mayHost {
+            VLog.info("started from a shell with arguments, not by Launch Services: viewing only; this run doesn't share this Mac")
+            on = false
+        }
         menuBar = MenuBar(app: self)
         watchPresence()
-        if on { startHosting() } else { idle() }
+        watchSessionEnd()
+        KeychainCache.warm()
+        if on { startHosting() } else if mayHost { idle() }
         updatePresence()
         return on
+    }
+
+    func watchSessionEnd() {
+        presenceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.sessionEnding = true
+                VLog.info("the session is ending (log out, restart or shut down)")
+            }
+        })
     }
 
     static func savedHosting() -> Bool {
@@ -22,7 +36,8 @@ extension ViewerApp {
             HostingSwitch.firstRunDefault(
                 hasHostConfig: HostConfig.saved() != nil,
                 oldHostInstalled: OneApp.oldHostApps().contains { FileManager.default.fileExists(atPath: $0.path) },
-                watchdogStamp: FileManager.default.fileExists(atPath: KeepRunning.stampURL.path))
+                watchdogLoaded: LegacyAgent.launchctl(["print", "gui/\(getuid())/\(LaunchAgent.label)"]) == 0,
+                watchdogRunning: !Processes.running(named: CLITool.host.rawValue, argument: "watchdog").isEmpty)
         }
         if decided {
             d.set(on, forKey: HostingSwitch.settingKey)
@@ -70,6 +85,11 @@ extension ViewerApp {
 
     func startHosting() {
         guard hosting == nil else { return }
+        guard mayHost else {
+            VLog.info("not sharing this Mac from a run started in a shell; open Porthole from Finder or the Dock to share it")
+            return
+        }
+        KeychainCache.mainMayPrompt = false
         let h = HostApp()
         hosting = h
         h.onRefresh = { [weak self] in self?.menuBar?.refresh() }
@@ -101,14 +121,26 @@ extension ViewerApp {
         NSApp.windows.filter { ($0 is PickerWindow || $0 is ConnectWindow || $0 is PortalWindow) && ($0.isVisible || $0.isMiniaturized) }.count
     }
 
+    var dockWindowCount: Int {
+        let shown = NSApp.windows.filter {
+            ($0 is PickerWindow || $0 is ConnectWindow || $0 is PortalWindow || $0 is SettingsWindow || $0 is PairingWindow
+                || $0 is PairedMacsWindow || $0 is CodeSheet || $0.sheetParent != nil) && ($0.isVisible || $0.isMiniaturized)
+        }.count
+        return shown + (NSApp.modalWindow == nil ? 0 : 1)
+    }
+
     func updatePresence(adding window: NSWindow? = nil) {
         let sharing = hosting.map { !$0.isGallery } ?? false
-        let dock = Presence.dockIcon(hosting: sharing, viewerWindows: viewerWindowCount + (window == nil ? 0 : 1))
+        let dock = Presence.dockIcon(hosting: sharing, viewerWindows: dockWindowCount + (window == nil ? 0 : 1))
         let wanted: NSApplication.ActivationPolicy = dock ? .regular : .accessory
         guard NSApp.activationPolicy() != wanted else { return }
         NSApp.setActivationPolicy(wanted)
-        VLog.info("dock icon \(dock ? "shown: a viewer window is open" : "hidden: only sharing this Mac")")
-        if dock { NSApp.activate() }
+        VLog.info("dock icon \(dock ? "shown: a window is open" : "hidden: only sharing this Mac")")
+        guard dock else { return }
+        if dockActivated { NSApp.activate() } else {
+            dockActivated = true
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func watchPresence() {

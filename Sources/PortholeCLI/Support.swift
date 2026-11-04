@@ -102,11 +102,17 @@ enum Procs {
     }
 
     static func hosts() -> [Int32] {
-        named("porthole-host").map(\.pid).filter { !arguments($0).isWatchdog }
+        named("porthole-host").map(\.pid).filter { arguments($0).isHostApp }
     }
 
     static func watchdogs() -> [Int32] {
         named("porthole-host").map(\.pid).filter { arguments($0).isWatchdog }
+    }
+
+    static func path(_ pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path
     }
 
     static func alive(_ pid: Int32) -> Bool { kill(pid, 0) == 0 || errno == EPERM }
@@ -136,7 +142,7 @@ enum Tools {
     static let hostBundleID = "io.github.muhammademanaftab.porthole"
     static let viewerBundleID = "io.github.muhammademanaftab.porthole.view"
 
-    static func app(bundleID: String, name: String) -> URL? {
+    static func app(bundleID: String, name: String, accept: (URL) -> Bool = { _ in true }) -> URL? {
         var candidates: [URL] = []
         if let here = Paths.containingApp {
             candidates.append(here)
@@ -144,10 +150,10 @@ enum Tools {
         }
         candidates.append(URL(fileURLWithPath: "/Applications/\(name).app"))
         if let ls = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { candidates.append(ls) }
-        return candidates.first { Bundle(url: $0)?.bundleIdentifier == bundleID }
+        return candidates.first { accept($0) && Bundle(url: $0)?.bundleIdentifier == bundleID }
     }
 
-    static var oneApp: URL? { app(bundleID: hostBundleID, name: OneApp.appName) }
+    static var oneApp: URL? { app(bundleID: hostBundleID, name: OneApp.appName, accept: OneApp.isInstalledOneApp) }
 
     static var oldHostApp: URL? {
         OneApp.oldHostApps().first { Bundle(url: $0)?.bundleIdentifier == hostBundleID }

@@ -101,7 +101,7 @@ enum KeepRunning {
     }
 
     static func registerAgain(attempt: Int = 1) {
-        let wait = attempt == 1 ? 8 : attempt * 10
+        let wait = attempt == 1 ? 8 : attempt <= 4 ? attempt * 10 : 300
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(wait)) {
             MainActor.assumeIsolated {
                 try? service.unregister()
@@ -112,11 +112,16 @@ enum KeepRunning {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(5)) {
                     MainActor.assumeIsolated {
-                        if watchdogRunning {
+                        if status == .requiresApproval {
+                            warnApproval()
+                        } else if watchdogRunning {
                             rememberBundle()
                             Log.info("keep running: watchdog agent registered again and running, status \(describe(status))", .watchdog)
                         } else if attempt < 4 {
                             Log.info("keep running: the watchdog did not start after registering (attempt \(attempt)); trying again", .watchdog)
+                            registerAgain(attempt: attempt + 1)
+                        } else if attempt < 12 {
+                            Log.error("keep running: the watchdog did not start after \(attempt) registrations; trying again in 5 minutes (or turn Keep Porthole running off and on in Settings › Sharing)", .watchdog)
                             registerAgain(attempt: attempt + 1)
                         } else {
                             Log.error("keep running: the watchdog did not start after \(attempt) registrations; turn Keep Porthole running off and on in Settings › Sharing", .watchdog)
@@ -127,14 +132,21 @@ enum KeepRunning {
         }
     }
 
-    static func checkStarted() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(8)) {
+    static let launchGrace = 6
+
+    static func checkStarted(after seconds: Int = 8, why: String = "after registering") {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
             MainActor.assumeIsolated {
+                if status == .requiresApproval { warnApproval(); return }
                 guard isEnabled, !watchdogRunning else { return }
-                Log.info("keep running: the watchdog is not running after registering; registering it again", .watchdog)
+                Log.info("keep running: the watchdog agent is enabled but its process is not running \(why); registering it again", .watchdog)
                 registerAgain(attempt: 2)
             }
         }
+    }
+
+    static func warnApproval() {
+        Log.error("keep running: macOS needs approval for the watchdog: System Settings › General › Login Items & Extensions › Allow in the Background › Porthole; until then nothing restarts Porthole if it crashes or hangs", .watchdog)
     }
 
     @discardableResult
@@ -142,21 +154,34 @@ enum KeepRunning {
         let before = status
         do {
             if on {
+                if before == .requiresApproval {
+                    warnApproval()
+                    return nil
+                }
                 if before == .enabled, bundleChanged {
                     Log.info("keep running: Porthole was updated, replaced or moved since the watchdog agent was registered; registering it again", .watchdog)
                     registerAgain()
                     return nil
                 }
-                guard before != .enabled && before != .requiresApproval else { return nil }
+                if before == .enabled {
+                    checkStarted(after: launchGrace, why: "at launch")
+                    return nil
+                }
                 try service.register()
                 rememberBundle()
+                if status == .requiresApproval { warnApproval() }
                 checkStarted()
             } else {
                 guard before == .enabled || before == .requiresApproval else { return nil }
                 try service.unregister()
             }
         } catch {
-            Log.info("keep running: \(on ? "register" : "unregister") failed (\(describe(before))): \(error.localizedDescription)", .watchdog)
+            if on {
+                Log.error("keep running: registering the watchdog agent failed (\(describe(before))): \(error.localizedDescription); trying again", .watchdog)
+                registerAgain(attempt: 2)
+            } else {
+                Log.info("keep running: unregister failed (\(describe(before))): \(error.localizedDescription)", .watchdog)
+            }
             return error.localizedDescription
         }
         Log.info("keep running: watchdog agent \(on ? "registered" : "unregistered"), status \(describe(status))", .watchdog)

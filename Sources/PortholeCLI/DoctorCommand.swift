@@ -104,15 +104,21 @@ enum DoctorCommand {
 
     static func watchdogCheck(status: [String: Any]?) -> DoctorCheck {
         let label = "gui/\(getuid())/\(LaunchAgent.label)"
-        let loaded = Shell.run("/bin/launchctl", ["print", label], timeout: 4)?.status == 0
+        let printed = Shell.run("/bin/launchctl", ["print", label], timeout: 4)
+        let loaded = printed?.status == 0
         let dogs = Procs.watchdogs()
+        let program = loaded ? printed.flatMap { LaunchctlPrint.pid($0.out) }.flatMap(Procs.path) : nil
         var parts: [String] = []
         if let s = status?["watchdog"] as? String { parts.append("agent \(s) (ServiceManagement)") }
         parts.append(loaded ? "loaded in launchd" : "not loaded in launchd")
         parts.append(dogs.isEmpty ? "no watchdog process" : "watchdog pid \(dogs.map(String.init).joined(separator: ", "))")
         if let watched = status?["watched"] as? Bool { parts.append(watched ? "watching this run" : "not watching this run (Keep running off or PORTHOLE_WATCHDOG=0)") }
+        let app = Tools.oneApp
+        if let program { parts.append("program \(program)") }
+        let misplaced = program.map { p in app.map { !OneApp.isInside(p, app: $0.path) } ?? true } ?? false
+        if misplaced { parts.append("warning: the loaded watchdog doesn't run from \(app?.path ?? "an installed Porthole.app"); turn Keep Porthole running off and on in Settings › Sharing") }
         let enabled = (status?["watchdog"] as? String) == "enabled" || loaded
-        let st: CheckStatus = enabled && !dogs.isEmpty ? .ok : (status?["watched"] as? Bool == false ? .info : .warn)
+        let st: CheckStatus = misplaced ? .warn : enabled && !dogs.isEmpty ? .ok : (status?["watched"] as? Bool == false ? .info : .warn)
         return DoctorCheck("Host", "watchdog", st, parts.joined(separator: ", "))
     }
 
