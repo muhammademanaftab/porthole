@@ -54,12 +54,12 @@ public enum CompanionRules {
     }
 
     public static func candidates(of parent: WindowSnapshot, among windows: [WindowSnapshot], baseline: Set<UInt32>,
-                                  excluded: Set<UInt32>, appActive: Bool) -> [WindowSnapshot] {
+                                  excluded: Set<UInt32>, appActive: Bool, isDialog: (WindowSnapshot) -> Bool = { _ in false }) -> [WindowSnapshot] {
         guard !isBlocked(parent.bundle) else { return [] }
         return windows.filter { c in
             guard c.id != parent.id, !baseline.contains(c.id), !excluded.contains(c.id), layers.contains(c.layer),
                   c.bounds.width >= minSize.width, c.bounds.height >= minSize.height, !isBlocked(c.bundle) else { return false }
-            if c.pid == parent.pid { return isNear(c.bounds, parent.bounds) || c.layer > 0 }
+            if c.pid == parent.pid { return isNear(c.bounds, parent.bounds) || c.layer > 0 || (appActive && isDialog(c)) }
             return appActive && isPanelService(c.owner)
         }
     }
@@ -167,6 +167,7 @@ public struct CompanionTracker: Sendable {
     }
 
     public mutating func update(parents: [UInt32: Parent], windows: [WindowSnapshot],
+                                isDialog: (WindowSnapshot) -> Bool = { _ in false },
                                 attachedTo: (UInt32, [UInt32]) -> Set<UInt32>) -> [Action] {
         var actions: [Action] = []
         let byID = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -178,7 +179,7 @@ public struct CompanionTracker: Sendable {
         for pid in parents.keys.sorted() {
             guard let p = parents[pid], let pw = p.window else { continue }
             let excluded = parentIDs.union(attached).union(claimed.keys)
-            var found = CompanionRules.candidates(of: pw, among: windows, baseline: p.baseline, excluded: excluded, appActive: p.appActive)
+            var found = CompanionRules.candidates(of: pw, among: windows, baseline: p.baseline, excluded: excluded, appActive: p.appActive, isDialog: isDialog)
             let unknown = found.map(\.id).filter { records[$0] == nil }
             if !unknown.isEmpty {
                 let stuck = attachedTo(pid, unknown)

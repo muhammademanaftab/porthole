@@ -33,6 +33,10 @@ func companionTests() {
     let found = CompanionRules.candidates(of: parent, among: all, baseline: [9, 10], excluded: [], appActive: true).map(\.id)
     expect("companions: same-app window over it, modal alert anywhere, and the Save panel service", found, [11, 12, 15])
     check("companions: a new document window far away is not one", !found.contains(13))
+    expect("companions: a far same-app window the app calls a dialog is one",
+           CompanionRules.candidates(of: parent, among: [parent, farDoc], baseline: [10], excluded: [], appActive: true, isDialog: { $0.id == 13 }).map(\.id), [13])
+    expect("companions: a far dialog only counts while the app is in front",
+           CompanionRules.candidates(of: parent, among: [parent, farDoc], baseline: [10], excluded: [], appActive: false, isDialog: { $0.id == 13 }).map(\.id), [])
     check("companions: menus are left to the picture", !found.contains(14))
     check("companions: another app's window is never one", !found.contains(16))
     check("companions: a window open before sharing is not one", !found.contains(9))

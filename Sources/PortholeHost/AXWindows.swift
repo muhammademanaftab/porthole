@@ -49,6 +49,18 @@ enum AXWindows {
         AXUIElementSetAttributeValue(w, "AXFullScreen" as CFString, (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef) == .success
     }
 
+    static func isDialog(id: UInt32, pid: pid_t) -> Bool {
+        guard let w = window(id: id, pid: pid) else { return false }
+        if boolValue(w, kAXModalAttribute as String) == true { return true }
+        return ["AXDialog", "AXSystemDialog"].contains(string(w, kAXSubroleAttribute as String) ?? "")
+    }
+
+    static func boolValue(_ e: AXUIElement, _ attribute: String) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attribute as CFString, &value) == .success else { return nil }
+        return value as? Bool
+    }
+
     static func string(_ e: AXUIElement, _ attribute: String) -> String? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(e, attribute as CFString, &value) == .success else { return nil }

@@ -443,7 +443,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 input[p] = CompanionTracker.Parent(window: byID[p], baseline: baselines[p] ?? [], viewers: registry.viewers[p] ?? [],
                                                    appActive: byID[p].map { $0.pid == front } ?? false)
             }
-            actions = tracker.update(parents: input, windows: windows) { parent, ids in
+            actions = tracker.update(parents: input, windows: windows, isDialog: { AXWindows.isDialog(id: $0.id, pid: $0.pid) }) { parent, ids in
                 guard let pid = byID[parent]?.pid else { return [] }
                 return AXWindows.attachedWindowIDs(parent: parent, pid: pid).intersection(ids)
             }
