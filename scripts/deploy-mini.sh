@@ -53,7 +53,19 @@ watched=0
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then watched=1; fi
 echo "watchdog agent loaded: $watched"
 port=$(plutil -extract httpPort raw -o - "$HOME/Library/Application Support/Porthole/config.json" 2>/dev/null || echo 7878)
+livekits() { pgrep -f "livekit-server --config $HOME/Library/Application Support/Porthole/livekit.yaml" || true; }
+stop_livekit() {
+  [ -n "$(livekits)" ] || return 0
+  echo "stopping leftover livekit-server ($(livekits | tr '\n' ' '))"
+  for pid in $(livekits); do kill -TERM "$pid" 2>/dev/null || true; done
+  for _ in $(seq 1 20); do [ -z "$(livekits)" ] && return 0; sleep 0.25; done
+  for pid in $(livekits); do kill -KILL "$pid" 2>/dev/null || true; done
+}
 stop_host() {
+  stop_host_only
+  stop_livekit
+}
+stop_host_only() {
   [ -n "$(hosts)" ] || return 0
   echo "quitting the running Porthole Host ($(hosts | tr '\n' ' '))"
   osascript -e 'tell application id "io.github.muhammademanaftab.porthole" to quit' >/dev/null 2>&1 || true

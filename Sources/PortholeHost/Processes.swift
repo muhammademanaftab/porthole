@@ -17,6 +17,20 @@ enum Processes {
         }
     }
 
+    static func running(named name: String, argument: String) -> [pid_t] {
+        let own = ProcessInfo.processInfo.processIdentifier
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 32)
+        let n = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        var buf = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+        return pids.prefix(Int(max(n, 0))).filter { pid in
+            guard pid > 0, pid != own, proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
+                  URL(fileURLWithPath: String(cString: buf)).lastPathComponent == name else { return false }
+            return arguments(pid).arguments.contains(argument)
+        }
+    }
+
     static func arguments(_ pid: pid_t) -> ProcessArguments {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0

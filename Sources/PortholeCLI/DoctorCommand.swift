@@ -72,6 +72,10 @@ enum DoctorCommand {
             let st: CheckStatus = up == !pids.isEmpty ? (up ? .ok : .fail) : (up ? .warn : .fail)
             let detail = up ? (pids.isEmpty ? "\(port) is taken by something other than Porthole Host" : "\(port) listening")
                 : "\(port) not listening" + (pids.isEmpty ? " (the host isn't running)" : "")
+            if up, !pids.isEmpty, port == lk, let owner = listenerParent(port), !pids.contains(owner) {
+                out.append(DoctorCheck("Host", name, .fail, "\(port) is held by a livekit-server the running host didn't start (parent \(owner)); quit Porthole Host, kill it and start again"))
+                continue
+            }
             out.append(DoctorCheck("Host", name, st, detail))
         }
         out.append(bonjourCheck(status: status, quick: quick))
@@ -81,6 +85,13 @@ enum DoctorCommand {
             out.append(DoctorCheck("Host", "shared windows", .info, lines.isEmpty ? "none" : lines.joined(separator: "\n")))
         }
         return out
+    }
+
+    static func listenerParent(_ port: Int) -> Int32? {
+        guard let r = Shell.run("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"], timeout: 4), r.status == 0,
+              let pid = r.out.split(whereSeparator: \.isNewline).first.map(String.init),
+              let ps = Shell.run("/bin/ps", ["-o", "ppid=", "-p", pid], timeout: 4) else { return nil }
+        return Int32(ps.out.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     static func watchdogCheck(status: [String: Any]?) -> DoctorCheck {

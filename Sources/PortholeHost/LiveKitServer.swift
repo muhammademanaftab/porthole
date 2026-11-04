@@ -22,9 +22,9 @@ final class LiveKitServer {
             throw NSError(domain: "Porthole", code: 1, userInfo: [NSLocalizedDescriptionKey:
                 "livekit-server not found. Install it with `brew install livekit` or bundle it in the app."])
         }
-        Self.stopLeftovers(of: bin)
-        let yaml = liveKitConfigYAML(port: config.livekitPort, apiKey: config.apiKey, apiSecret: config.apiSecret)
         let url = HostConfig.directory.appendingPathComponent("livekit.yaml")
+        Self.stopLeftovers(of: bin, config: url.path)
+        let yaml = liveKitConfigYAML(port: config.livekitPort, apiKey: config.apiKey, apiSecret: config.apiSecret)
         guard writePrivately(Data(yaml.utf8), to: url) else {
             throw NSError(domain: "Porthole", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't write \(url.path)"])
         }
@@ -49,8 +49,8 @@ final class LiveKitServer {
         LiveKitServer.shared = self
     }
 
-    static func stopLeftovers(of bin: String) {
-        let stale = Processes.running(executable: bin)
+    static func stopLeftovers(of bin: String, config: String) {
+        let stale = Array(Set(Processes.running(executable: bin) + Processes.running(named: "livekit-server", argument: config)))
         guard !stale.isEmpty else { return }
         for pid in stale { Log.info("stopping leftover livekit-server \(pid)", .net) }
         Processes.stop(stale)
