@@ -1,6 +1,8 @@
+import Foundation
 import PortholeCore
 
 func sessionTests() {
+    startGateTests()
     var r = SessionRegistry()
     expect("sessions: first viewer starts the capture", r.beginOpen(1, by: "A"), .start)
     expect("sessions: second viewer during start waits for it", r.beginOpen(1, by: "B"), .waitForStart)
@@ -62,4 +64,52 @@ func sessionTests() {
     for id: UInt32 in [8, 3] { _ = z.beginOpen(id, by: "A"); _ = z.startSucceeded(id) }
     expect("room rejoin: every live session is stopped", z.reset(), [3, 8])
     check("room rejoin: no viewers or input remain", z.openCount == 0 && z.viewers.isEmpty && !z.acceptsInput(3, from: "A"))
+}
+
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: [String] = []
+    func add(_ s: String) { lock.lock(); value.append(s); lock.unlock() }
+    var events: [String] { lock.lock(); defer { lock.unlock() }; return value }
+}
+
+private struct Boom: Error, Equatable {}
+
+private func startGateTests() {
+    let done = DispatchSemaphore(value: 0)
+    var results: [(String, Bool)] = []
+    Task.detached {
+        let gate = StartGate<UInt32>()
+        var out: [(String, Bool)] = []
+        do { try await gate.wait(1); out.append(("start gate: waiting with nothing started says still starting", false)) } catch {
+            out.append(("start gate: waiting with nothing started says still starting", error is StillStarting))
+        }
+        let log = Flag()
+        let task = gate.begin(1) {
+            log.add("work began")
+            try await Task.sleep(nanoseconds: 50_000_000)
+            log.add("work done")
+        }
+        out.append(("start gate: the task is registered before its work runs any await", gate.keys == [1]))
+        let waiter = Task { try await gate.wait(1); log.add("waiter done") }
+        _ = try? await waiter.value
+        _ = try? await task.value
+        out.append(("start gate: a waiter that arrives at once gets the result only after the start finishes",
+                    log.events == ["work began", "work done", "waiter done"]))
+        let failing = gate.begin(2) { try await Task.sleep(nanoseconds: 10_000_000); throw Boom() }
+        var waiterError: Error?
+        do { try await gate.wait(2) } catch { waiterError = error }
+        _ = try? await failing.value
+        out.append(("start gate: a failed start fails its waiters too", waiterError is Boom))
+        gate.finish(1)
+        out.append(("start gate: finish forgets the start", gate.keys == [2]))
+        do { try await gate.wait(1); out.append(("start gate: after finish a waiter is told it is still starting", false)) } catch {
+            out.append(("start gate: after finish a waiter is told it is still starting", error is StillStarting))
+        }
+        out.append(("start gate: the still-starting message", StillStarting().localizedDescription == "The window is still starting. Try again in a moment."))
+        results = out
+        done.signal()
+    }
+    done.wait()
+    for (name, ok) in results { check(name, ok) }
 }

@@ -6,7 +6,7 @@ import ScreenCaptureKit
 
 final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDelegate, @unchecked Sendable {
     let windowID: UInt32
-    let prefs: StreamPrefs
+    private(set) var prefs: StreamPrefs
     private(set) var track: LocalVideoTrack!
     private(set) var publication: LocalTrackPublication?
     private var stream: SCStream?
@@ -22,6 +22,8 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     private var lastCounters: EncoderCounters?
     private var loggedEncoder = false
     private var pixelSize = CGSize.zero
+    private var stopped = false
+    private var droppingLoggedAt: Double?
     private(set) var pid: Int32?
     var onClosed: (() -> Void)?
 
@@ -63,11 +65,19 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         let s = SCStream(filter: filter, configuration: makeConfig(), delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await s.startCapture()
-        stream = s
+        let late = queue.sync { () -> Bool in
+            guard !stopped else { return true }
+            stream = s
+            return false
+        }
+        if late {
+            try? await s.stopCapture()
+            throw NSError(domain: "Porthole", code: 3, userInfo: [NSLocalizedDescriptionKey: "Sharing window \(windowID) was stopped while it started"])
+        }
 
         let opts = VideoPublishOptions(
             name: Message.trackName(for: windowID),
-            screenShareEncoding: VideoEncoding(maxBitrate: prefs.bitrate, maxFps: prefs.fps),
+            screenShareEncoding: VideoEncoding(maxBitrate: prefs.bitrate, maxFps: StreamPrefs.allowedFps.max() ?? prefs.fps),
             simulcast: false,
             preferredCodec: .h265,
             preferredBackupCodec: .h264,
@@ -104,8 +114,27 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         }
     }
 
+    func update(prefs next: StreamPrefs) {
+        queue.async { [weak self] in
+            guard let self, !stopped, next != prefs else { return }
+            let old = prefs
+            prefs = next
+            pacer.retime(padHz: Double(next.fps))
+            if next.level != old.level { ladder = ladder.retopped(next.level) }
+            Log.info("window \(windowID): stream now \(next.fps) fps, level \(next.level), \(next.bitrate / 1000) kbps cap (was \(old.fps) fps, level \(old.level))")
+            if next.fps != old.fps {
+                padTimer?.cancel(); padTimer = nil
+                ensurePadTimer()
+                stream?.updateConfiguration(makeConfig()) { err in
+                    if let err { Log.info("frame rate change failed: \(err.localizedDescription)") }
+                }
+            }
+            followSize()
+        }
+    }
+
     private func followSize() {
-        guard let live = LiveWindow.lookup(windowID) else { return }
+        guard !stopped, let live = LiveWindow.lookup(windowID) else { return }
         let want = Self.pixelSize(points: live.bounds.size, scale: min(live.scale, CGFloat(ladder.level)))
         guard want != pixelSize else { return }
         pixelSize = want
@@ -115,6 +144,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     private func tick() {
+        guard !stopped else { return }
         guard LiveWindow.lookup(windowID) != nil else {
             DispatchQueue.main.async { self.onClosed?() }
             return
@@ -124,14 +154,14 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     private func resubmit() {
-        guard let buf = lastBuffer else { return }
+        guard !stopped, let buf = lastBuffer else { return }
         submitted += 1
         capturer.capture(buf)
     }
 
     func noteInput() {
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, !stopped else { return }
             let now = Self.now
             lastInputAt = now
             pacer.input(at: now)
@@ -140,7 +170,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     private func ensurePadTimer() {
-        guard padTimer == nil, pacer.isPadding(at: Self.now) else { return }
+        guard !stopped, padTimer == nil, pacer.isPadding(at: Self.now) else { return }
         let t = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
         let interval = pacer.interval
         t.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(1))
@@ -156,19 +186,22 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     func track(_ track: Track, didUpdateStatistics statistics: TrackStatistics, simulcastStatistics: [VideoCodec: TrackStatistics]) {
-        let outbound = ([statistics] + simulcastStatistics.values).flatMap(\.outboundRtpStream)
-        let frames = outbound.compactMap(\.framesEncoded).reduce(0) { $0 + Int($1) }
-        let seconds = outbound.compactMap(\.totalEncodeTime).reduce(0, +)
-        let codecs = ([statistics] + simulcastStatistics.values).flatMap(\.codec).compactMap(\.mimeType)
-        let encoders = Set(outbound.compactMap(\.encoderImplementation)).sorted()
-        queue.async { [weak self] in self?.encoderStats(frames: frames, seconds: seconds, codecs: codecs, encoders: encoders) }
+        let all = [statistics] + simulcastStatistics.sorted { $0.key.name < $1.key.name }.map(\.value)
+        let senders = all.map { stats in
+            SenderCount(frames: stats.outboundRtpStream.compactMap(\.framesEncoded).reduce(0) { $0 + Int($1) },
+                        seconds: stats.outboundRtpStream.compactMap(\.totalEncodeTime).reduce(0, +))
+        }
+        let codecs = all.flatMap(\.codec).compactMap(\.mimeType)
+        let encoders = Set(all.flatMap(\.outboundRtpStream).compactMap(\.encoderImplementation)).sorted()
+        queue.async { [weak self] in self?.encoderStats(senders: senders, codecs: codecs, encoders: encoders) }
     }
 
-    private func encoderStats(frames: Int, seconds: Double, codecs: [String], encoders: [String]) {
+    private func encoderStats(senders: [SenderCount], codecs: [String], encoders: [String]) {
+        guard !stopped else { return }
         let now = Self.now
-        let counters = EncoderCounters(at: now, framesEncoded: frames, encodeSeconds: seconds, submitted: submitted, captured: captured)
+        let counters = EncoderCounters(at: now, senders: senders, submitted: submitted, captured: captured)
         defer { lastCounters = counters }
-        if !loggedEncoder, frames > 0 {
+        if !loggedEncoder, senders.contains(where: { $0.frames > 0 }) {
             loggedEncoder = true
             Log.info("window \(windowID): encoding \(Set(codecs).sorted().joined(separator: ", ")) with \(encoders.joined(separator: ", ")) at \(Int(pixelSize.width))x\(Int(pixelSize.height)), \(prefs.fps) fps, \(prefs.bitrate / 1000) kbps max")
         }
@@ -176,6 +209,11 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         if Self.logSamples {
             Log.info(String(format: "window %u: encode %.1f ms, %.0f encoded / %.0f submitted / %.0f captured fps at scale %.2f",
                             windowID, sample.encodeMs ?? 0, sample.encodedFps, sample.submittedFps, sample.capturedFps, ladder.level))
+        }
+        if ladder.looksLikeFrameDropper(sample), now - (droppingLoggedAt ?? -.infinity) >= 30 {
+            droppingLoggedAt = now
+            Log.info(String(format: "window %u: encoder drops frames at %.1f ms per frame (%.0f encoded / %.0f submitted fps); likely the %d kbps bitrate cap, not encode load",
+                            windowID, sample.encodeMs ?? 0, sample.encodedFps, sample.submittedFps, prefs.bitrate / 1000))
         }
         let before = ladder.level
         guard let level = ladder.observe(sample, now: now, lastInputAt: lastInputAt) else { return }
@@ -185,7 +223,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid,
+        guard !stopped, type == .screen, sampleBuffer.isValid,
               let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               CapturePacing.acceptsFrame(status: attachments.first?[.status] as? Int),
               let pb = sampleBuffer.imageBuffer else { return }
@@ -203,10 +241,17 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     func stop(in room: Room) async {
-        timer?.cancel(); timer = nil
-        queue.sync { padTimer?.cancel(); padTimer = nil }
-        try? await stream?.stopCapture()
-        stream = nil
+        let capture: SCStream? = queue.sync {
+            stopped = true
+            timer?.cancel(); timer = nil
+            padTimer?.cancel(); padTimer = nil
+            track?.remove(delegate: self)
+            let s = stream
+            stream = nil
+            lastBuffer = nil
+            return s
+        }
+        try? await capture?.stopCapture()
         if let publication { try? await room.localParticipant.unpublish(publication: publication) }
         publication = nil
     }

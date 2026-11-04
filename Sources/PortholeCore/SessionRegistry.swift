@@ -1,3 +1,5 @@
+import Foundation
+
 public struct SessionRegistry: Sendable {
     public enum OpenStep: Equatable, Sendable { case alreadyLive, waitForStart, start }
 
@@ -66,5 +68,43 @@ public struct SessionRegistry: Sendable {
 
     public func acceptsInput(_ id: UInt32, from who: String) -> Bool {
         live.contains(id) && viewers[id]?.contains(who) == true
+    }
+}
+
+public struct StillStarting: LocalizedError, Equatable {
+    public init() {}
+    public var errorDescription: String? { "The window is still starting. Try again in a moment." }
+}
+
+public final class StartGate<Key: Hashable & Sendable>: @unchecked Sendable {
+    private var tasks: [Key: Task<Void, Error>] = [:]
+    private let lock = NSLock()
+
+    public init() {}
+
+    public var keys: Set<Key> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(tasks.keys)
+    }
+
+    @discardableResult
+    public func begin(_ key: Key, _ work: @escaping @Sendable () async throws -> Void) -> Task<Void, Error> {
+        let task = Task { try await work() }
+        lock.lock(); tasks[key] = task; lock.unlock()
+        return task
+    }
+
+    private func task(for key: Key) -> Task<Void, Error>? {
+        lock.lock(); defer { lock.unlock() }
+        return tasks[key]
+    }
+
+    public func wait(_ key: Key) async throws {
+        guard let task = task(for: key) else { throw StillStarting() }
+        try await task.value
+    }
+
+    public func finish(_ key: Key) {
+        lock.lock(); tasks[key] = nil; lock.unlock()
     }
 }

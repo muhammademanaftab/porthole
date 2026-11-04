@@ -25,6 +25,19 @@ func streamPrefsTests() {
           wire?["bitrate"] as? Int == 40_000 && wire?["fps"] as? Int == 120 && wire?["level"] as? Double == 1.5)
     let decoded = Message.decode(Data(#"{"t":"open","win":3,"bitrate":8000,"fps":30,"level":1.25}"#.utf8))
     expect("stream prefs: a browser open message decodes", decoded.map(StreamPrefs.init(open:)), StreamPrefs(bitrate: 8_000_000, fps: 30, level: 1.25))
+
+    let browser = StreamPrefs(bitrate: 8_000_000, fps: 30, level: 1.25)
+    let mac = StreamPrefs(bitrate: 40_000_000, fps: 120, level: 2)
+    let mid = StreamPrefs(bitrate: 50_000_000, fps: 60, level: 1.5)
+    expect("shared prefs: no viewers is the standard", StreamPrefs.combined([], onlySharedWindow: true), .standard)
+    expect("shared prefs: one viewer gets its own prefs", StreamPrefs.combined([browser], onlySharedWindow: true), browser)
+    expect("shared prefs: two viewers get the most of each", StreamPrefs.combined([browser, mac, mid], onlySharedWindow: true),
+           StreamPrefs(bitrate: 50_000_000, fps: 120, level: 2))
+    expect("shared prefs: the order of viewers does not matter", StreamPrefs.combined([mid, browser, mac], onlySharedWindow: true),
+           StreamPrefs.combined([mac, mid, browser], onlySharedWindow: true))
+    expect("shared prefs: 120 fps only when it is the only shared window", StreamPrefs.combined([mac], onlySharedWindow: false).fps, 60)
+    expect("shared prefs: lower rates are kept with other windows", StreamPrefs.combined([browser], onlySharedWindow: false).fps, 30)
+    expect("shared prefs: when the 120 fps viewer leaves the rate drops back", StreamPrefs.combined([browser, mid], onlySharedWindow: true).fps, 60)
 }
 
 func encoderSampleTests() {
@@ -37,6 +50,21 @@ func encoderSampleTests() {
     check("encoder sample: too short an interval is no sample", EncoderSample(from: a, to: EncoderCounters(at: 10.1, framesEncoded: 101, encodeSeconds: 2, submitted: 121, captured: 91)) == nil)
     check("encoder sample: counters that went backwards (a new sender) are no sample",
           EncoderSample(from: b, to: EncoderCounters(at: 12, framesEncoded: 5, encodeSeconds: 0.1, submitted: 200, captured: 160)) == nil)
+
+    let both0 = EncoderCounters(at: 20, senders: [SenderCount(frames: 100, seconds: 1.0), SenderCount(frames: 100, seconds: 2.0)], submitted: 100, captured: 100)
+    let both1 = EncoderCounters(at: 21, senders: [SenderCount(frames: 164, seconds: 1.5), SenderCount(frames: 164, seconds: 3.0)], submitted: 164, captured: 164)
+    expect("encoder sample: H.265 and H.264 both encoding count 64 fps, not 128, with the primary's encode time",
+           EncoderSample(from: both0, to: both1), EncoderSample(encodeMs: 7.8125, encodedFps: 64, submittedFps: 64, capturedFps: 64))
+    let paused0 = EncoderCounters(at: 30, senders: [SenderCount(frames: 500, seconds: 5), SenderCount(frames: 50, seconds: 1)], submitted: 100, captured: 100)
+    let paused1 = EncoderCounters(at: 31, senders: [SenderCount(frames: 500, seconds: 5), SenderCount(frames: 114, seconds: 2)], submitted: 164, captured: 164)
+    expect("encoder sample: with the primary paused by dynacast the backup's frames and time are used",
+           EncoderSample(from: paused0, to: paused1), EncoderSample(encodeMs: 15.625, encodedFps: 64, submittedFps: 64, capturedFps: 64))
+    check("encoder sample: a sender appearing (a browser joined) is no sample",
+          EncoderSample(from: b, to: EncoderCounters(at: 12, senders: [SenderCount(frames: 200, seconds: 4), SenderCount(frames: 1, seconds: 0)],
+                                                     submitted: 240, captured: 210)) == nil)
+    check("encoder sample: one sender going backwards is no sample",
+          EncoderSample(from: both0, to: EncoderCounters(at: 21, senders: [SenderCount(frames: 160, seconds: 1.6), SenderCount(frames: 5, seconds: 0)],
+                                                         submitted: 160, captured: 160)) == nil)
 }
 
 func scaleLadderTests() {
@@ -73,9 +101,52 @@ func scaleLadderTests() {
 
     var held = ScaleLadder(native: 2)
     _ = held.observe(moving(40), now: 100, lastInputAt: 95)
-    expect("ladder: no step down within 10 s of input", held.observe(moving(40), now: 101, lastInputAt: 95), nil)
-    expect("ladder: held level stays at 2", held.level, 2)
-    expect("ladder: the over-budget evidence steps down once the hold ends", held.observe(moving(40), now: 105, lastInputAt: 95), 1.5)
+    expect("ladder: during input two over-budget samples are not yet enough", held.observe(moving(40), now: 101, lastInputAt: 95), nil)
+    expect("ladder: still at 2 after two samples during input", held.level, 2)
+    expect("ladder: during input a third over-budget sample steps down", held.observe(moving(40), now: 102, lastInputAt: 101), 1.5)
+    _ = held.observe(moving(40), now: 103, lastInputAt: 102)
+    _ = held.observe(moving(40), now: 104, lastInputAt: 103)
+    expect("ladder: sustained overload during typing keeps stepping down", held.observe(moving(40), now: 105, lastInputAt: 104), 1.25)
+
+    var after = ScaleLadder(native: 2)
+    _ = after.observe(moving(40), now: 100, lastInputAt: 95)
+    _ = after.observe(moving(40), now: 101, lastInputAt: 95)
+    expect("ladder: the over-budget evidence steps down once the input is 10 s old", after.observe(moving(40), now: 105, lastInputAt: 95), 1.5)
+
+    var typingUp = ScaleLadder(native: 2)
+    _ = typingUp.observe(moving(40), now: 0, lastInputAt: nil)
+    _ = typingUp.observe(moving(40), now: 1, lastInputAt: nil)
+    for t in 46...50 { _ = typingUp.observe(moving(10), now: Double(t), lastInputAt: Double(t)) }
+    expect("ladder: during input it never steps up", typingUp.level, 1.5)
+    expect("ladder: the step up waits until the input is 10 s old", typingUp.observe(moving(10), now: 61, lastInputAt: 50), 2)
+
+    var paused = ScaleLadder(native: 2)
+    let pausedLayer = moving(nil, encoded: 0, submitted: 60, captured: 60)
+    check("ladder: zero encoded with frames submitted is a paused layer", paused.isPausedLayer(pausedLayer))
+    _ = paused.observe(pausedLayer, now: 1, lastInputAt: nil)
+    expect("ladder: paused-layer samples never step down", paused.observe(pausedLayer, now: 2, lastInputAt: nil), nil)
+    _ = paused.observe(moving(40), now: 3, lastInputAt: nil)
+    _ = paused.observe(pausedLayer, now: 4, lastInputAt: nil)
+    expect("ladder: a paused-layer sample neither counts nor resets the over count", paused.observe(moving(40), now: 5, lastInputAt: nil), 1.5)
+    check("ladder: a still window with nothing submitted is not a paused layer", !paused.isPausedLayer(still))
+
+    let dropper = ScaleLadder(native: 2)
+    check("ladder: fast encodes with many frames dropped look like the bitrate frame dropper",
+          dropper.looksLikeFrameDropper(moving(10, encoded: 20, submitted: 60)))
+    check("ladder: slow encodes with frames dropped are real overload", !dropper.looksLikeFrameDropper(moving(40, encoded: 20, submitted: 60)))
+    check("ladder: an encoder keeping up is not the frame dropper", !dropper.looksLikeFrameDropper(moving(10)))
+    check("ladder: a paused layer is not the frame dropper", !dropper.looksLikeFrameDropper(pausedLayer))
+
+    var top = ScaleLadder(top: 1.25, native: 2)
+    expect("ladder retop: a viewer asking for 2 opens the top rungs", top.retopped(2).levels, [2, 1.5, 1.25, 1])
+    expect("ladder retop: the current level is kept", top.retopped(2).level, 1.25)
+    _ = top.observe(moving(40), now: 0, lastInputAt: nil)
+    _ = top.observe(moving(40), now: 1, lastInputAt: nil)
+    expect("ladder retop: a stepped-down level is kept", top.retopped(2).level, 1)
+    let low = ScaleLadder(native: 2).retopped(1.5)
+    expect("ladder retop: lowering the top moves a higher level down to it", low.level, 1.5)
+    expect("ladder retop: lowering the top drops the higher rungs", low.levels, [1.5, 1.25, 1])
+    expect("ladder retop: never above the window's own scale", ScaleLadder(native: 1).retopped(2).levels, [1])
 
     var up = ScaleLadder(native: 2)
     _ = up.observe(moving(40), now: 0, lastInputAt: nil)
@@ -126,6 +197,28 @@ func framePacerTests() {
     var blink = FramePacer()
     blink.realFrame(at: 0); blink.realFrame(at: 0.5); blink.realFrame(at: 1.0)
     check("pacer: a caret blinking every 0.5 s does not start padding", !blink.isPadding(at: 1.01))
+
+    var scroll = FramePacer()
+    for i in 0..<30 { scroll.realFrame(at: Double(i) / 60) }
+    check("pacer: a scroll pads", scroll.isPadding(at: 0.5))
+    let stop = 29.0 / 60
+    scroll.realFrame(at: stop + 0.5)
+    check("pacer: one blink after the scroll may keep padding", scroll.isPadding(at: stop + 0.51))
+    scroll.realFrame(at: stop + 1.0)
+    check("pacer: the second blink after the scroll ends padding", !scroll.isPadding(at: stop + 1.01))
+    var padsDuringBlinks = 0
+    for k in 3...20 {
+        let t = stop + Double(k) * 0.5
+        scroll.realFrame(at: t)
+        if scroll.isPadding(at: t + 0.01) { padsDuringBlinks += 1 }
+    }
+    expect("pacer: a caret blinking for 10 s after a scroll never pads", padsDuringBlinks, 0)
+    for i in 0..<5 { scroll.realFrame(at: 20 + Double(i) / 60) }
+    check("pacer: a new scroll after the blinking pads again", scroll.isPadding(at: 20.1))
+
+    var rate = FramePacer()
+    rate.retime(padHz: 120)
+    expect("pacer: retime changes the pad interval", rate.interval, 1.0 / 120)
 
     var m = FramePacer()
     m.realFrame(at: 0); m.realFrame(at: 0.016)

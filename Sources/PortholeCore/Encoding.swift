@@ -20,18 +20,39 @@ public struct StreamPrefs: Equatable, Sendable {
         if let f = m.fps, Self.allowedFps.contains(f) { fps = f }
         if let l = m.level, Self.levels.contains(l) { level = l }
     }
+
+    public static let fpsWithOtherWindows = 60
+
+    public static func combined(_ viewers: [StreamPrefs], onlySharedWindow: Bool) -> StreamPrefs {
+        guard let first = viewers.first else { return .standard }
+        let most = viewers.dropFirst().reduce(first) {
+            StreamPrefs(bitrate: max($0.bitrate, $1.bitrate), fps: max($0.fps, $1.fps), level: max($0.level, $1.level))
+        }
+        var out = most
+        if !onlySharedWindow { out.fps = min(out.fps, fpsWithOtherWindows) }
+        return out
+    }
+}
+
+public struct SenderCount: Equatable, Sendable {
+    public var frames: Int
+    public var seconds: Double
+
+    public init(frames: Int, seconds: Double) { self.frames = frames; self.seconds = seconds }
 }
 
 public struct EncoderCounters: Equatable, Sendable {
     public var at: Double
-    public var framesEncoded: Int
-    public var encodeSeconds: Double
+    public var senders: [SenderCount]
     public var submitted: Int
     public var captured: Int
 
+    public init(at: Double, senders: [SenderCount], submitted: Int, captured: Int) {
+        self.at = at; self.senders = senders; self.submitted = submitted; self.captured = captured
+    }
+
     public init(at: Double, framesEncoded: Int, encodeSeconds: Double, submitted: Int, captured: Int) {
-        self.at = at; self.framesEncoded = framesEncoded; self.encodeSeconds = encodeSeconds
-        self.submitted = submitted; self.captured = captured
+        self.init(at: at, senders: [SenderCount(frames: framesEncoded, seconds: encodeSeconds)], submitted: submitted, captured: captured)
     }
 }
 
@@ -47,9 +68,12 @@ public struct EncoderSample: Equatable, Sendable {
 
     public init?(from a: EncoderCounters, to b: EncoderCounters) {
         let dt = b.at - a.at
-        guard dt >= 0.25, b.framesEncoded >= a.framesEncoded, b.submitted >= a.submitted, b.captured >= a.captured else { return nil }
-        let frames = b.framesEncoded - a.framesEncoded
-        encodeMs = frames > 0 ? max(0, b.encodeSeconds - a.encodeSeconds) * 1000 / Double(frames) : nil
+        guard dt >= 0.25, b.submitted >= a.submitted, b.captured >= a.captured, !b.senders.isEmpty, a.senders.count == b.senders.count else { return nil }
+        let deltas = zip(a.senders, b.senders).map { SenderCount(frames: $1.frames - $0.frames, seconds: max(0, $1.seconds - $0.seconds)) }
+        guard deltas.allSatisfy({ $0.frames >= 0 }) else { return nil }
+        let busiest = deltas.indices.reduce(0) { deltas[$1].frames > deltas[$0].frames ? $1 : $0 }
+        let frames = deltas[busiest].frames
+        encodeMs = frames > 0 ? deltas[busiest].seconds * 1000 / Double(frames) : nil
         encodedFps = Double(frames) / dt
         submittedFps = Double(b.submitted - a.submitted) / dt
         capturedFps = Double(b.captured - a.captured) / dt
@@ -86,6 +110,29 @@ public struct ScaleLadder: Sendable {
         let usable = all.filter { $0 <= cap + 0.001 }.sorted(by: >)
         levels = usable.isEmpty ? [cap] : usable
         self.config = config
+        self.native = native
+        self.all = all
+    }
+
+    private let native: Double
+    private let all: [Double]
+
+    public func retopped(_ top: Double) -> ScaleLadder {
+        var next = ScaleLadder(top: top, native: native, levels: all, config: config)
+        next.index = next.levels.firstIndex { $0 <= level + 0.001 } ?? next.levels.count - 1
+        next.lastDownAt = lastDownAt
+        next.lastMotionAt = lastMotionAt
+        return next
+    }
+
+    public func isPausedLayer(_ s: EncoderSample) -> Bool {
+        s.encodedFps == 0 && s.submittedFps > 0
+    }
+
+    public func looksLikeFrameDropper(_ s: EncoderSample) -> Bool {
+        guard s.capturedFps >= config.motionFps, s.submittedFps >= config.motionFps, s.encodedFps > 0,
+              s.encodedFps < s.submittedFps * config.keepUpRatio, let ms = s.encodeMs else { return false }
+        return ms <= config.budgetMs
     }
 
     public func isOverBudget(_ s: EncoderSample) -> Bool {
@@ -100,14 +147,16 @@ public struct ScaleLadder: Sendable {
     }
 
     public mutating func observe(_ s: EncoderSample, now: Double, lastInputAt: Double?) -> Double? {
+        guard !isPausedLayer(s) else { return nil }
         if s.capturedFps >= config.motionFps { lastMotionAt = now }
         over = isOverBudget(s) ? over + 1 : 0
         under = isUnderBudget(s) ? under + 1 : 0
-        if let input = lastInputAt, now - input < config.inputHold { return nil }
-        if over >= config.overSamples, index < levels.count - 1 {
+        let duringInput = lastInputAt.map { now - $0 < config.inputHold } ?? false
+        if over >= config.overSamples + (duringInput ? 1 : 0), index < levels.count - 1 {
             index += 1; over = 0; under = 0; lastDownAt = now
             return level
         }
+        if duringInput { return nil }
         guard index > 0, now - (lastDownAt ?? -.infinity) >= config.upCooldown else { return nil }
         if now - (lastMotionAt ?? -.infinity) >= config.quietDwell {
             index = 0; under = 0
@@ -135,20 +184,30 @@ public struct FramePacer: Sendable {
 
     public enum Action: Equatable, Sendable { case pad, keepalive, sharpRefresh }
 
-    public let config: Config
+    public private(set) var config: Config
     private var lastRealAt: Double?
     private var lastInputAt: Double?
     private var lastSubmitAt: Double?
     private var lastWasReal = false
     private var burst = 0
+    private var longGaps = 0
     private var refreshPending = false
 
     public init(config: Config = Config()) { self.config = config }
 
+    public mutating func retime(padHz: Double) { config.padHz = padHz }
+
     public var interval: Double { 1 / config.padHz }
 
     public mutating func realFrame(at now: Double) {
-        if let last = lastRealAt, now - last <= config.burstGap { burst += 1 } else if let last = lastRealAt, now - last < config.padIdle, burst >= 2 { burst += 1 } else { burst = 1 }
+        let gap = lastRealAt.map { now - $0 } ?? .infinity
+        if gap <= config.burstGap {
+            burst += 1; longGaps = 0
+        } else if gap < config.padIdle, burst >= 2, longGaps == 0 {
+            burst += 1; longGaps = 1
+        } else {
+            burst = 1; longGaps = 0
+        }
         lastRealAt = now
         lastSubmitAt = now
         lastWasReal = true

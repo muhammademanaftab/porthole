@@ -9,8 +9,9 @@ final class HostRoom: NSObject, RoomDelegate {
     let stage = Stage()
     let audio = AppAudio()
     private var sessions: [UInt32: WindowSession] = [:]
-    private var starting: [UInt32: Task<Void, Error>] = [:]
+    private let starting = StartGate<UInt32>()
     private var registry = SessionRegistry()
+    private var viewerPrefs: [UInt32: [String: StreamPrefs]] = [:]
     private var url = ""
     private var makeToken: (() -> String)?
     private var reconnecting = false
@@ -75,6 +76,7 @@ final class HostRoom: NSObject, RoomDelegate {
         for id in registry.reset() {
             if let session = sessions.removeValue(forKey: id) { await session.stop(in: room) }
         }
+        viewerPrefs.removeAll()
         stage.unparkAll()
         stage.becameEmpty()
         input.releaseAllButtons()
@@ -111,7 +113,9 @@ final class HostRoom: NSObject, RoomDelegate {
         Task { @MainActor in
             Log.info("viewer left: \(who)")
             self.input.releaseAllButtons()
+            for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
             for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
+            self.applyPrefs()
         }
     }
 
@@ -175,26 +179,32 @@ final class HostRoom: NSObject, RoomDelegate {
             await send(reply, to: who)
             return
         }
+        viewerPrefs[id, default: [:]][who] = prefs
         do {
             switch registry.beginOpen(id, by: who) {
             case .alreadyLive:
-                break
+                applyPrefs()
             case .waitForStart:
-                try await starting[id]?.value
+                try await starting.wait(id)
             case .start:
-                await stage.ensure(screenPoints: screen)
-                await stage.park(id)
-                let session = WindowSession(windowID: id, prefs: prefs)
-                let task = Task { try await session.start(in: room) }
-                starting[id] = task
+                let session = WindowSession(windowID: id, prefs: sharedPrefs(id, adding: id))
+                let stage = stage, room = room
+                let task = starting.begin(id) { @MainActor in
+                    await stage.ensure(screenPoints: screen)
+                    await stage.park(id)
+                    try await session.start(in: room)
+                }
                 do { try await task.value } catch {
-                    starting[id] = nil
+                    starting.finish(id)
+                    await session.stop(in: room)
                     stage.unpark(id)
                     registry.startFailed(id)
+                    if sessions.isEmpty { stage.becameEmpty() }
                     throw error
                 }
-                starting[id] = nil
+                starting.finish(id)
                 guard registry.startSucceeded(id) else {
+                    viewerPrefs[id] = nil
                     await session.stop(in: room)
                     stage.unpark(id)
                     if sessions.isEmpty { stage.becameEmpty() }
@@ -202,6 +212,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 }
                 session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
                 sessions[id] = session
+                applyPrefs()
                 onChange?()
                 if let pid = session.pid { await audio.add(window: id, pid: pid, in: room) }
             }
@@ -216,31 +227,49 @@ final class HostRoom: NSObject, RoomDelegate {
             await warnIfLocked(who)
         } catch {
             registry.openFailed(id, by: who)
+            viewerPrefs[id]?[who] = nil
+            if viewerPrefs[id]?.isEmpty == true { viewerPrefs[id] = nil }
             var reply = Message(.error); reply.win = id; reply.msg = error.localizedDescription
             await send(reply, to: who)
         }
     }
 
     private func release(_ id: UInt32, by who: String) async {
-        guard registry.release(id, by: who) else { return }
-        await stopSession(id)
+        viewerPrefs[id]?[who] = nil
+        if registry.release(id, by: who) { await stopSession(id) }
+        applyPrefs()
+    }
+
+    private func sharedPrefs(_ id: UInt32, adding extra: UInt32? = nil) -> StreamPrefs {
+        var shared = Set(sessions.keys).union(starting.keys)
+        if let extra { shared.insert(extra) }
+        let viewers = (viewerPrefs[id] ?? [:]).sorted { $0.key < $1.key }.map(\.value)
+        return StreamPrefs.combined(viewers, onlySharedWindow: shared == [id])
+    }
+
+    private func applyPrefs() {
+        for (id, session) in sessions { session.update(prefs: sharedPrefs(id)) }
     }
 
     private func stopSession(_ id: UInt32) async {
+        viewerPrefs[id] = nil
         guard let session = sessions.removeValue(forKey: id) else { return }
         await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
         if sessions.isEmpty { stage.becameEmpty() }
+        applyPrefs()
         onChange?()
     }
 
     private func windowClosed(_ id: UInt32) async {
         guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
+        viewerPrefs[id] = nil
         await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
         if sessions.isEmpty { stage.becameEmpty() }
+        applyPrefs()
         var m = Message(.closed); m.win = id
         for v in who { await send(m, to: v) }
         onChange?()
