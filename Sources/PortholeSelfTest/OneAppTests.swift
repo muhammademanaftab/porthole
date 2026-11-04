@@ -61,6 +61,12 @@ func oneAppTests() {
     expect("gallery: bare gallery shows the first viewer screen", galleryScreen(["gallery"], screens: appGalleryScreens), galleryScreens.first)
     expect("gallery: the host menu", galleryScreen(["gallery", "menu"], screens: appGalleryScreens), "menu")
 
+    let me = DiscoveredHost(name: "This Mac", lanHost: "me.local", status: .online, viaBonjour: true, hostID: "aaaa-bbbb")
+    let mini = DiscoveredHost(name: "Mac mini", lanHost: "mini.local", status: .online, viaBonjour: true, hostID: "cccc-dddd")
+    let old = DiscoveredHost(name: "Old host", lanHost: "old.local", status: .online, viaBonjour: true)
+    expect("discovery: a Mac sharing itself isn't offered to its own viewer", otherMacs([me, mini, old], thisMac: "aaaa-bbbb").map(\.name), ["Mac mini", "Old host"])
+    expect("discovery: without an identity nothing is dropped", otherMacs([me, mini], thisMac: nil).count, 2)
+
     expect("dock: a viewer-only Mac always has its Dock icon", Presence.dockIcon(hosting: false, viewerWindows: 0), true)
     expect("dock: a Mac that only shares stays in the menu bar", Presence.dockIcon(hosting: true, viewerWindows: 0), false)
     expect("dock: it gets a Dock icon while a viewer window is open", Presence.dockIcon(hosting: true, viewerWindows: 1), true)

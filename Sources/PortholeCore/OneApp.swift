@@ -88,3 +88,8 @@ public enum WatchdogStamp {
         return installed && saved.contains("/\(OneApp.oldHostAppName).app ")
     }
 }
+
+public func otherMacs(_ hosts: [DiscoveredHost], thisMac id: String?) -> [DiscoveredHost] {
+    guard let id else { return hosts }
+    return hosts.filter { $0.hostID != id }
+}

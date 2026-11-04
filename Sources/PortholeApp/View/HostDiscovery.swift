@@ -12,7 +12,7 @@ final class HostDiscovery {
     private var tailscale: [DiscoveredHost] = []
 
     var hosts: [DiscoveredHost] {
-        mergeHosts(PasswordStore.knownHosts.compactMap(\.asDiscovered) + bonjour + tailscale)
+        mergeHosts(PasswordStore.knownHosts.compactMap(\.asDiscovered) + otherMacs(bonjour, thisMac: PasswordStore.device.id) + tailscale)
     }
 
     func start() {
