@@ -97,13 +97,49 @@ func mouseTests() {
 }
 
 func textTests() {
-    expect("text: empty string gives no chunks", utf16Chunks("").count, 0)
-    expect("text: exactly 20 units is one chunk", utf16Chunks(String(repeating: "x", count: 20)).map(\.count), [20])
-    expect("text: 45 units split 20/20/5", utf16Chunks(String(repeating: "x", count: 45)).map(\.count), [20, 20, 5])
-    expect("text: unicode is sent as UTF-16 units incl. surrogate pairs", utf16Chunks("é日👋"),
-           [[0x00E9, 0x65E5, 0xD83D, 0xDC4B]])
-    let long = String(repeating: "Renée 👋 日本 ", count: 7)
-    expect("text: chunks rejoin to the original string", String(utf16CodeUnits: utf16Chunks(long).flatMap { $0 }, count: long.utf16.count), long)
+    func units(_ p: [TextPiece]) -> [Int] { p.map { if case .text(let u) = $0 { return u.count } else { return -1 } } }
+    func joined(_ p: [TextPiece]) -> String {
+        p.map { piece -> String in
+            switch piece {
+            case .text(let u): return String(utf16CodeUnits: u, count: u.count)
+            case .newline: return "\n"
+            }
+        }.joined()
+    }
+    expect("text batch: empty string gives no key pairs", TextBatch.pieces("", maxUnits: 200).count, 0)
+    expect("text batch: 200 units is one key pair", units(TextBatch.pieces(String(repeating: "x", count: 200), maxUnits: 200)), [200])
+    expect("text batch: 450 units split 200/200/50", units(TextBatch.pieces(String(repeating: "x", count: 450), maxUnits: 200)), [200, 200, 50])
+    expect("text batch: unicode is sent as UTF-16 units incl. surrogate pairs", TextBatch.pieces("é日👋", maxUnits: 200),
+           [.text([0x00E9, 0x65E5, 0xD83D, 0xDC4B])])
+    let family = "👨‍👩‍👧‍👦"
+    let s199 = String(repeating: "a", count: 199) + family
+    let split = units(TextBatch.pieces(s199, maxUnits: 200))
+    expect("text batch: a grapheme that would cross the limit starts the next key pair", split, [199, family.utf16.count])
+    let flags = String(repeating: "🇩🇪", count: 60)
+    check("text batch: flags are never cut in half", TextBatch.pieces(flags, maxUnits: 10).allSatisfy {
+        if case .text(let u) = $0 { return u.count % 4 == 0 } else { return false }
+    })
+    expect("text batch: a grapheme longer than the limit goes alone, whole", units(TextBatch.pieces("ab" + family + "c", maxUnits: 4)),
+           [2, family.utf16.count, 1])
+    expect("text batch: 0 types one key pair per character", units(TextBatch.pieces("ab👋é", maxUnits: 0)), [1, 1, 2, 1])
+    expect("text batch: 0 keeps a combining sequence in one key pair", units(TextBatch.pieces("e\u{301}x", maxUnits: 0)), [2, 1])
+    expect("text batch: newlines become Return key pairs", TextBatch.pieces("ab\ncd\r\ne", maxUnits: 200),
+           [.text([97, 98]), .newline, .text([99, 100]), .newline, .text([101])])
+    let long = String(repeating: "Renée 👋 日本 ", count: 70)
+    expect("text batch: key pairs rejoin to the original string", joined(TextBatch.pieces(long, maxUnits: 200)), long)
+    check("text batch: no key pair carries more than the limit", TextBatch.pieces(long, maxUnits: 200).allSatisfy {
+        if case .text(let u) = $0 { return u.count <= 200 } else { return true }
+    })
+    expect("text batch: 1000 dictated characters are 5 key pairs, not 50", TextBatch.keyPairs(String(repeating: "x", count: 1000), maxUnits: 200), 5)
+    expect("text batch env: unset is 200", TextBatch.units(environment: [:]), 200)
+    expect("text batch env: 1 is 200", TextBatch.units(environment: ["PORTHOLE_TEXT_BATCH": "1"]), 200)
+    expect("text batch env: 0 is one per character", TextBatch.units(environment: ["PORTHOLE_TEXT_BATCH": "0"]), 0)
+    expect("text batch env: a number sets the size", TextBatch.units(environment: ["PORTHOLE_TEXT_BATCH": "50"]), 50)
+    expect("text batch env: capped at the measured 2000", TextBatch.units(environment: ["PORTHOLE_TEXT_BATCH": "99999"]), 2000)
+    expect("text batch env: junk keeps the default", TextBatch.units(environment: ["PORTHOLE_TEXT_BATCH": "lots"]), 200)
+    expect("text batch: a message is cut at 20000 units", TextBatch.limited(String(repeating: "x", count: 25000)).utf16.count, 20000)
+    expect("text batch: the cut never splits a grapheme", TextBatch.limited("x" + String(repeating: "👋", count: 15000)).utf16.count, 19999)
+    expect("text batch: short text is untouched", TextBatch.limited("hello"), "hello")
 }
 
 func resizeTests() {

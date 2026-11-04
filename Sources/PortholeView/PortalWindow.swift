@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import LiveKit
 import PortholeCore
 
@@ -563,14 +564,103 @@ final class InputCaptureView: NSView {
         connection.send(m)
     }
 
-    override func keyDown(with e: NSEvent) { sendKey(e, down: true) }
-    override func keyUp(with e: NSEvent) { sendKey(e, down: false) }
+    private var marked = NSMutableAttributedString()
+    private var imeEvent: NSEvent?
+    private var imePassed = false
+    private var imeSwallowedUps: Set<UInt16> = []
+
+    static var inputSourceIsInputMode: Bool {
+        guard let src = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let raw = TISGetInputSourceProperty(src, kTISPropertyInputSourceType) else { return false }
+        let type = Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue()
+        return CFEqual(type, kTISTypeKeyboardInputMode)
+    }
+
+    override func keyDown(with e: NSEvent) {
+        guard ViewerInput.routesThroughInputMethod(hasMarkedText: hasMarkedText(), inputSourceIsInputMode: Self.inputSourceIsInputMode,
+                                                   flags: e.modifierFlags), let ctx = inputContext else {
+            sendKey(e, down: true)
+            return
+        }
+        imeEvent = e
+        imePassed = false
+        _ = ctx.handleEvent(e)
+        imeEvent = nil
+        if !imePassed { imeSwallowedUps.insert(e.keyCode) }
+    }
+
+    override func keyUp(with e: NSEvent) {
+        if imeSwallowedUps.remove(e.keyCode) != nil { return }
+        sendKey(e, down: false)
+    }
+
+    override func doCommand(by selector: Selector) {
+        guard let e = imeEvent, !imePassed else { return }
+        imePassed = true
+        sendKey(e, down: true)
+    }
+
+    func sendText(_ s: String, why: String) {
+        guard !s.isEmpty else { return }
+        let messages = ViewerInput.textMessages(win: windowID, s)
+        for m in messages { connection.send(m) }
+        VLog.info("text: sent \(s.utf16.count) UTF-16 units as \(messages.count) text message(s) (\(why))")
+    }
+
+    @objc func pasteAsKeystrokes(_ sender: Any?) {
+        guard let s = NSPasteboard.general.string(forType: .string) else { NSSound.beep(); return }
+        sendText(s, why: "paste as keystrokes")
+    }
 
     override func performKeyEquivalent(with e: NSEvent) -> Bool {
         guard window?.isKeyWindow == true, window?.firstResponder === self else { return false }
+        if ViewerInput.isPasteAsKeystrokes(e.modifierFlags, characters: e.charactersIgnoringModifiers) {
+            pasteAsKeystrokes(nil)
+            return true
+        }
         if ViewerInput.keyEquivalentStaysLocal(e.modifierFlags, characters: e.charactersIgnoringModifiers) { return false }
         sendKey(e, down: true)
         sendKey(e, down: false)
         return true
     }
+}
+
+extension InputCaptureView: @preconcurrency NSTextInputClient {
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        let s = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        marked = NSMutableAttributedString()
+        if imeEvent != nil { imePassed = false }
+        sendText(s, why: imeEvent == nil ? "dictation or palette" : "input method")
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        if let a = string as? NSAttributedString { marked = NSMutableAttributedString(attributedString: a) }
+        else { marked = NSMutableAttributedString(string: string as? String ?? "") }
+    }
+
+    func unmarkText() { marked = NSMutableAttributedString() }
+
+    func selectedRange() -> NSRange { NSRange(location: marked.length, length: 0) }
+
+    func markedRange() -> NSRange { marked.length > 0 ? NSRange(location: 0, length: marked.length) : NSRange(location: NSNotFound, length: 0) }
+
+    func hasMarkedText() -> Bool { marked.length > 0 }
+
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        let whole = NSRange(location: 0, length: marked.length)
+        let r = NSIntersectionRange(range, whole)
+        guard r.length > 0 else { return nil }
+        actualRange?.pointee = r
+        return marked.attributedSubstring(from: r)
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        guard let window else { return .zero }
+        let local = NSRect(x: bounds.midX - 100, y: bounds.maxY - 40, width: 200, height: 20)
+        return window.convertToScreen(convert(local, to: nil))
+    }
+
+    func characterIndex(for point: NSPoint) -> Int { NSNotFound }
 }

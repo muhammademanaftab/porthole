@@ -75,6 +75,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let typed = edit.addItem(withTitle: "Paste as Keystrokes", action: #selector(InputCaptureView.pasteAsKeystrokes(_:)), keyEquivalent: "v")
+        typed.keyEquivalentModifierMask = [.command, .option, .shift]
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.addItem(.separator())
         edit.addItem(withTitle: "Find…", action: #selector(PickerWindow.performFindPanelAction(_:)), keyEquivalent: "f")

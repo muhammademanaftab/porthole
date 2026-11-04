@@ -101,7 +101,41 @@ public enum ViewerInput {
     }
 
     public static func keyEquivalentStaysLocal(_ f: NSEvent.ModifierFlags, characters: String?) -> Bool {
-        f.contains(.command) && characters == "q"
+        (f.contains(.command) && characters == "q") || isPasteAsKeystrokes(f, characters: characters)
+    }
+
+    public static func isPasteAsKeystrokes(_ f: NSEvent.ModifierFlags, characters: String?) -> Bool {
+        f.intersection([.command, .option, .shift, .control]) == [.command, .option, .shift] && characters?.lowercased() == "v"
+    }
+
+    public static func routesThroughInputMethod(hasMarkedText: Bool, inputSourceIsInputMode: Bool, flags: NSEvent.ModifierFlags) -> Bool {
+        if hasMarkedText { return true }
+        guard inputSourceIsInputMode else { return false }
+        return flags.intersection([.command, .control]).isEmpty
+    }
+
+    public static let textMessageUnits = 4000
+
+    public static func textMessages(win: UInt32, _ s: String, unitsPerMessage: Int = textMessageUnits) -> [Message] {
+        var out: [Message] = []
+        var run = ""
+        var n = 0
+        for ch in s {
+            let u = ch.utf16.count
+            if n > 0 && n + u > unitsPerMessage {
+                out.append(textMessage(win: win, run))
+                run = ""; n = 0
+            }
+            run.append(ch); n += u
+        }
+        if !run.isEmpty { out.append(textMessage(win: win, run)) }
+        return out
+    }
+
+    static func textMessage(win: UInt32, _ s: String) -> Message {
+        var m = Message(.text)
+        m.win = win; m.s = s
+        return m
     }
 
     static let deviceMasks: [UInt16: (mine: UInt, other: UInt)] = [
@@ -119,15 +153,69 @@ public enum ViewerInput {
     }
 }
 
-public func utf16Chunks(_ s: String, size: Int = 20) -> [[UInt16]] {
-    let units = Array(s.utf16)
-    var out: [[UInt16]] = []
-    var i = 0
-    while i < units.count {
-        out.append(Array(units[i..<min(i + size, units.count)]))
-        i += size
+public enum TextPiece: Equatable, Sendable {
+    case text([UInt16])
+    case newline
+}
+
+public enum TextBatch {
+    public static let envKey = "PORTHOLE_TEXT_BATCH"
+    public static let defaultUnits = 200
+    public static let maxUnits = 2000
+    public static let maxMessageUnits = 20000
+
+    public static func units(environment: [String: String] = ProcessInfo.processInfo.environment) -> Int {
+        guard let raw = environment[envKey]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return defaultUnits }
+        switch raw.lowercased() {
+        case "0", "off", "no", "false": return 0
+        case "1", "on", "yes", "true": return defaultUnits
+        default:
+            guard let n = Int(raw), n >= 2 else { return defaultUnits }
+            return min(n, maxUnits)
+        }
     }
-    return out
+
+    public static func pieces(_ s: String, maxUnits: Int) -> [TextPiece] {
+        var out: [TextPiece] = []
+        var run: [UInt16] = []
+        func flush() {
+            if !run.isEmpty { out.append(.text(run)); run = [] }
+        }
+        for ch in s {
+            if ch.isNewline {
+                flush()
+                out.append(.newline)
+                continue
+            }
+            let units = Array(String(ch).utf16)
+            if maxUnits <= 0 {
+                out.append(.text(units))
+                continue
+            }
+            if !run.isEmpty && run.count + units.count > maxUnits { flush() }
+            run += units
+            if run.count >= maxUnits { flush() }
+        }
+        flush()
+        return out
+    }
+
+    public static func keyPairs(_ s: String, maxUnits: Int) -> Int {
+        pieces(s, maxUnits: maxUnits).count
+    }
+
+    public static func limited(_ s: String) -> String {
+        guard s.utf16.count > maxMessageUnits else { return s }
+        var out = ""
+        var n = 0
+        for ch in s {
+            let u = ch.utf16.count
+            if n + u > maxMessageUnits { break }
+            out.append(ch)
+            n += u
+        }
+        return out
+    }
 }
 
 public func resizeTarget(w: Double?, h: Double?) -> CGSize? {

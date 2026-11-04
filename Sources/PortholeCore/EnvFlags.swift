@@ -22,6 +22,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_STAGE_IDLE_SECS", "host", "seconds the empty Stage waits before it is released (at least 5)", "600"),
         EnvFlag("PORTHOLE_ENCODE_LOG", "host", "1: log every encoder sample (cost, fps, capture scale)", "0"),
         EnvFlag("PORTHOLE_ENCODE_BUDGET_MS", "host", "encode cost per frame above which the capture scale steps down", "30"),
+        EnvFlag("PORTHOLE_TEXT_BATCH", "host", "how committed text (dictation, input methods, Paste as Keystrokes) is typed: 0 = one key pair per character; 1 or unset = key pairs carrying up to 200 UTF-16 units; a number = that many units (at most 2000)", "200"),
         EnvFlag("PORTHOLE_PAIR_HEADLESS", "host", "1: print pairing codes to standard output without opening the pairing window", "0"),
         EnvFlag("PORTHOLE_WEB_ROOT", "host", "folder served as the browser viewer instead of the bundled web files", "Contents/Resources/web"),
         EnvFlag("PORTHOLE_LIVEKIT_SERVER", "host", "path of the livekit-server binary to run", "the bundled one, then Homebrew's"),

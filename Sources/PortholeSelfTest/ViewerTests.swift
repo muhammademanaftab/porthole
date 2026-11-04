@@ -47,6 +47,28 @@ func viewerTests() {
     check("key equivalent: Cmd+W is forwarded", !ViewerInput.keyEquivalentStaysLocal(.command, characters: "w"))
     check("key equivalent: Ctrl+Q is forwarded", !ViewerInput.keyEquivalentStaysLocal(.control, characters: "q"))
     check("key equivalent: Cmd+Option+Q stays local", ViewerInput.keyEquivalentStaysLocal([.command, .option], characters: "q"))
+    check("key equivalent: Cmd+Option+Shift+V (Paste as Keystrokes) stays local",
+          ViewerInput.keyEquivalentStaysLocal([.command, .option, .shift], characters: "V"))
+    check("key equivalent: Cmd+V is forwarded", !ViewerInput.keyEquivalentStaysLocal(.command, characters: "v"))
+    check("paste as keystrokes: Cmd+Option+V alone is not it", !ViewerInput.isPasteAsKeystrokes([.command, .option], characters: "v"))
+    check("paste as keystrokes: adding Control is not it", !ViewerInput.isPasteAsKeystrokes([.command, .option, .shift, .control], characters: "v"))
+    check("input method: a plain keyboard layout sends key codes",
+          !ViewerInput.routesThroughInputMethod(hasMarkedText: false, inputSourceIsInputMode: false, flags: []))
+    check("input method: an IME (input mode) routes typing through the text system",
+          ViewerInput.routesThroughInputMethod(hasMarkedText: false, inputSourceIsInputMode: true, flags: [.shift]))
+    check("input method: Cmd shortcuts skip the IME", !ViewerInput.routesThroughInputMethod(hasMarkedText: false, inputSourceIsInputMode: true, flags: .command))
+    check("input method: Ctrl shortcuts skip the IME", !ViewerInput.routesThroughInputMethod(hasMarkedText: false, inputSourceIsInputMode: true, flags: .control))
+    check("input method: while composing every key goes to the IME",
+          ViewerInput.routesThroughInputMethod(hasMarkedText: true, inputSourceIsInputMode: false, flags: .command))
+    let typed = ViewerInput.textMessages(win: 9, "héllo 👋")
+    check("committed text: one text message, not key codes", typed.count == 1 && typed[0].t == .text && typed[0].win == 9 && typed[0].s == "héllo 👋")
+    check("committed text: empty sends nothing", ViewerInput.textMessages(win: 9, "").isEmpty)
+    let big = String(repeating: "ab👋", count: 3000)
+    let parts = ViewerInput.textMessages(win: 9, big)
+    check("committed text: a long paste is split into messages of at most 4000 units",
+          parts.count == 3 && parts.allSatisfy { ($0.s?.utf16.count ?? 0) <= 4000 } && parts.compactMap(\.s).joined() == big)
+    check("committed text: the split keeps graphemes whole", ViewerInput.textMessages(win: 1, "a" + String(repeating: "👋", count: 3), unitsPerMessage: 4)
+          .compactMap(\.s) == ["a👋", "👋👋"])
 
     let args: [(String, [String], String?, String?)] = [
         ("host then password", ["mini", "pw"], "mini", "pw"),

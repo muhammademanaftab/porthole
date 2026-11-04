@@ -8,6 +8,7 @@ final class InputInjector {
     private var focusedWindow: UInt32?
     private var buttonsDown: Set<Int> = []
     private var axWindows: [UInt32: AXUIElement] = [:]
+    let textBatch = TextBatch.units()
     static let resizeTimeout: Float = 0.25
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
@@ -107,13 +108,20 @@ final class InputInjector {
     private func text(_ m: Message, id: UInt32, live: LiveWindow) {
         guard let s = m.s, !s.isEmpty else { return }
         focus(id: id, live: live)
-        for chunk in utf16Chunks(s) {
+        let pieces = TextBatch.pieces(TextBatch.limited(s), maxUnits: textBatch)
+        for piece in pieces {
             for down in [true, false] {
-                guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else { continue }
-                chunk.withUnsafeBufferPointer { e.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: $0.baseAddress) }
-                e.post(tap: .cghidEventTap)
+                switch piece {
+                case .newline:
+                    CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: down)?.post(tap: .cghidEventTap)
+                case .text(let chunk):
+                    guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else { continue }
+                    chunk.withUnsafeBufferPointer { e.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: $0.baseAddress) }
+                    e.post(tap: .cghidEventTap)
+                }
             }
         }
+        Log.debug("text: \(s.utf16.count) UTF-16 units typed as \(pieces.count) key pair(s), batch \(textBatch)")
     }
 
     func resize(_ m: Message) -> (asked: CGSize, actual: CGSize)? {
