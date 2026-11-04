@@ -11,6 +11,10 @@ enum ViewerCLI {
             return 2
         case .request(let host): return request(host)
         case .pair(let host, let code): return pair(host, code)
+        case .machines(let json): MainActor.assumeIsolated { ViewerTools.machines(json: json) }
+        case .list(let host, let json): MainActor.assumeIsolated { ViewerTools.list(host, json: json) }
+        case .open(let host, let target): MainActor.assumeIsolated { ViewerTools.open(host, target: target) }
+        case .recent(let n): MainActor.assumeIsolated { ViewerTools.recent(n) }
         }
     }
 

@@ -8,6 +8,7 @@ let package = Package(
         .executable(name: "porthole-host", targets: ["PortholeHost"]),
         .executable(name: "porthole-view", targets: ["PortholeView"]),
         .executable(name: "porthole-tile", targets: ["PortholeTile"]),
+        .executable(name: "porthole", targets: ["PortholeCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/livekit/client-sdk-swift.git", from: "2.0.0"),
@@ -22,6 +23,7 @@ let package = Package(
             "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),
         ]),
         .executableTarget(name: "PortholeTile", dependencies: ["PortholeCore"]),
+        .executableTarget(name: "PortholeCLI", dependencies: ["PortholeCore"]),
         .executableTarget(name: "PortholeSelfTest", dependencies: ["PortholeCore"]),
         .executableTarget(name: "PortholeProbe", dependencies: [
             "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),

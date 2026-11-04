@@ -383,6 +383,10 @@ public enum ViewerCommand: Equatable, Sendable {
     case app
     case request(host: String)
     case pair(host: String, code: String)
+    case machines(json: Bool)
+    case list(host: String, json: Bool)
+    case open(host: String, target: String)
+    case recent(Int?)
     case usage(error: String?)
 }
 
@@ -392,6 +396,10 @@ usage: porthole-view [command]
   <host> [password]   open Porthole and connect to host
   request <host>      ask the host to show a pairing code for this Mac
   pair <host> <code>  pair with the host using the code it shows; this Mac may view it from then on
+  machines [--json]   Porthole hosts on the tailnet and the local network
+  ls <host> [--json]  the host's windows (uses the saved pairing or password)
+  open <host> <windowID|title>  open Porthole on one window
+  recent [n]          recent portals, or reopen entry n
   gallery [screen]    show one screen with sample data and no network, for design review
 """
 
@@ -405,6 +413,25 @@ public func viewerCommand(_ args: [String]) -> ViewerCommand {
         guard args.count == 3 else { return args.count < 3 ? .usage(error: "pair needs a host and a code") : .app }
         guard looksLikePairingCode(args[2]) else { return .usage(error: "\"\(args[2])\" isn't a 6-digit pairing code") }
         return .pair(host: args[1], code: normalizePairingCode(args[2]))
+    case "machines":
+        let rest = args.dropFirst()
+        guard rest.allSatisfy({ $0 == "--json" }) else { return .usage(error: "machines takes only --json") }
+        return .machines(json: !rest.isEmpty)
+    case "ls":
+        let rest = Array(args.dropFirst())
+        let hosts = rest.filter { $0 != "--json" }
+        guard hosts.count == 1, !hosts[0].hasPrefix("-") else { return .usage(error: "ls needs a host") }
+        return .list(host: hosts[0], json: rest.contains("--json"))
+    case "open":
+        guard args.count == 3, !args[2].trimmingCharacters(in: .whitespaces).isEmpty else {
+            return .usage(error: "open needs a host and a window ID or part of its title")
+        }
+        return .open(host: args[1], target: args[2])
+    case "recent":
+        guard args.count <= 2 else { return .usage(error: "recent takes one entry number") }
+        guard args.count == 2 else { return .recent(nil) }
+        guard let n = Int(args[1]), n >= 1 else { return .usage(error: "recent takes an entry number (1 is the newest)") }
+        return .recent(n)
     case "help", "-h", "--help": return .usage(error: nil)
     default: return .app
     }
