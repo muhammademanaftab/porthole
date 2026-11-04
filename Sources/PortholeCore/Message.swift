@@ -49,6 +49,9 @@ public struct Message: Codable, Equatable, Sendable {
     public var sw: Double?
     public var sh: Double?
     public var ss: Double?
+    public var bitrate: Int?
+    public var fps: Int?
+    public var level: Double?
 
     public init(_ t: Kind) { self.t = t }
 

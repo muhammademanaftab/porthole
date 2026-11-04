@@ -66,13 +66,7 @@ func captureTests() {
 }
 
 func pacingTests() {
-    let t0 = Date(timeIntervalSince1970: 5000)
-    check("capture resend: exactly 1 s without a frame does not resend",
-          !CapturePacing.shouldResend(now: t0.addingTimeInterval(1.0), lastFrameAt: t0, hasBuffer: true))
-    check("capture resend: just over 1 s resends the last frame",
-          CapturePacing.shouldResend(now: t0.addingTimeInterval(1.01), lastFrameAt: t0, hasBuffer: true))
-    check("capture resend: nothing to resend without a buffer",
-          !CapturePacing.shouldResend(now: t0.addingTimeInterval(10), lastFrameAt: t0, hasBuffer: false))
+    expect("capture resend: keepalive after 1 s without a frame", CapturePacing.resendAfter, 1.0)
     check("capture frames: complete frames are accepted", CapturePacing.acceptsFrame(status: SCFrameStatus.complete.rawValue))
     for s in [SCFrameStatus.idle, .blank, .suspended, .started, .stopped] {
         check("capture frames: status \(s.rawValue) is skipped", !CapturePacing.acceptsFrame(status: s.rawValue))
