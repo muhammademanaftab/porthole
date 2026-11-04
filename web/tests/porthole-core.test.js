@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'clipFits', 'countLabel', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'hostReachable', 'iconRequests', 'isAudioTrack', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'streamWindow', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'hostReachable', 'iconRequests', 'isAudioTrack', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)', 'normalize(', '.every(t']) {
     assert.equal(html.includes(copy), false, copy);
@@ -553,4 +553,30 @@ test('iconRequests asks once per app, in list order, up to a limit', () => {
 test('pickerLink goes back to the window list with the same password', () => {
   assert.equal(core.pickerLink('a b&c'), '?pw=a%20b%26c');
   assert.equal(core.windowLink('a b&c', 7), core.pickerLink('a b&c') + '&win=7');
+});
+
+test('statusLine lets a connection problem win over the window count', () => {
+  assert.deepEqual(core.statusLine(null, true, 4, 2), { text: '2 of 4 windows', state: 'ok' });
+  assert.equal(core.statusLine(null, false, 0, 0), null);
+  const lost = { text: 'Reconnecting…', state: 'bad' };
+  assert.equal(core.statusLine(lost, true, 4, 4), lost);
+  assert.equal(core.statusLine(lost, false, 0, 0), lost);
+});
+
+test('staleIds names the cached windows that are no longer listed', () => {
+  const cached = new Map([[1, 'a'], [9, 'b'], [3, 'c']]);
+  assert.deepEqual(core.staleIds(cached.keys(), sample), [9]);
+  assert.deepEqual(core.staleIds([], sample), []);
+  assert.deepEqual(core.staleIds([1, 2], []), [1, 2]);
+});
+
+test('index.html only asks for thumbnails while the room is connected and frees blob URLs of windows that left', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /const live = \(\) => room && room\.state === 'connected';/);
+  const thumbSends = html.split('\n').filter(l => l.includes("send({ t: 'thumb' })"));
+  assert.equal(thumbSends.length, 2);
+  assert.ok(html.includes("if (list.length && live()) {\n    send({ t: 'thumb' });"));
+  assert.ok(thumbSends.some(l => l.includes('live()')));
+  assert.match(html, /PC\.staleIds\(thumbs\.keys\(\), list\)\) \{ URL\.revokeObjectURL/);
+  assert.match(html, /PC\.staleIds\(icons\.keys\(\), list\)\) \{ URL\.revokeObjectURL/);
 });

@@ -15,6 +15,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let heartbeats = Heartbeats()
     let settings = HostSettings(lookup: { UserDefaults.standard.object(forKey: $0) })
     var state = "Starting…"
+    var isGallery = false
 
     var browserLink: String {
         viewerLink(host: tailscaleAddress() ?? ProcessInfo.processInfo.hostName, port: config.httpPort, password: config.password)
@@ -22,6 +23,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst()), screens: hostGalleryScreens) {
+            isGallery = true
             HostGallery.show(screen, app: self)
             return
         }
@@ -104,7 +106,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     var menuModel: HostMenuModel {
-        HostMenuModel(state: state, macName: Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
+        HostMenuModel(state: state, macName: HTTPServer.computerName,
                       address: tailscaleAddress(), shared: host.sharedWindows, screenLocked: Session.isScreenLocked,
                       screenRecording: CGPreflightScreenCaptureAccess(), accessibility: InputInjector.isTrusted,
                       paired: trust.store.devices().count)
@@ -141,6 +143,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func quit() { quitHost(marker: .quit) }
 
     func quitHost(marker: ExitMarker) {
+        guard !isGallery else { NSApp.terminate(nil); return }
         HostFiles.writeMarker(marker)
         Log.info("quitting (\(marker.rawValue))")
         host.stage.release()
@@ -149,6 +152,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ note: Notification) {
+        guard !isGallery else { return }
         HostFiles.writeMarker(.session, unlessPresent: true)
         host.stage.release()
         Log.flush()

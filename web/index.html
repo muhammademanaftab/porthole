@@ -138,7 +138,7 @@ const winId = params.get('win') ? Number(params.get('win')) : null;
 const $ = (id) => document.getElementById(id);
 const isMac = /Mac/.test(navigator.platform);
 let room, hostP, listed = false, opened = false, firstFrame = false;
-let windows = [], query = '', listError = null, loaded = false;
+let windows = [], query = '', listError = null, loaded = false, link = { text: 'Connecting…', state: '' };
 const icons = new Map(), thumbs = new Map();
 
 const PC = window.PortholeCore;
@@ -153,7 +153,7 @@ function send(msg, reliable = true) {
 let connectedAt = 0;
 function linkLost(reconnecting) {
   const text = reconnecting ? 'Lost the connection to the host. Reconnecting…' : 'Disconnected from the host. Reload to connect again.';
-  setStatus(reconnecting ? 'Reconnecting…' : 'Disconnected', 'bad');
+  setLink(reconnecting ? 'Reconnecting…' : 'Disconnected', 'bad');
   if (winId) overlay(reconnecting ? 'reconnecting' : 'disconnected');
   else { listError = text; render(); }
 }
@@ -174,6 +174,14 @@ function setStatus(text, state) {
   $('status').append(text);
 }
 
+function setLink(text, state) {
+  link = text === null ? null : { text, state };
+  setStatus(link ? link.text : 'Connected', link ? link.state : 'ok');
+  if (!link && !winId) render();
+}
+
+const live = () => room && room.state === 'connected';
+
 function imageHandler(store, type, after) {
   return async (reader, info) => {
     if (info.identity !== 'host') return;
@@ -188,7 +196,7 @@ function imageHandler(store, type, after) {
 }
 
 async function connect(pw) {
-  setStatus('Connecting…');
+  setLink('Connecting…');
   const r = await fetch(`/token?pw=${encodeURIComponent(pw)}&name=browser`);
   if (r.status === 403) { sessionStorage.removeItem('reconnects'); showPassword('That password was refused. Try again.'); return; }
   if (!r.ok) throw new Error(`the host answered HTTP ${r.status}`);
@@ -205,8 +213,8 @@ async function connect(pw) {
   room.registerByteStreamHandler(PC.THUMB_TOPIC, imageHandler(thumbs, 'image/jpeg', paintCard));
   room.registerByteStreamHandler(PC.ICON_TOPIC, imageHandler(icons, 'image/png', iconArrived));
   room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSound);
-  room.on(LK.RoomEvent.Reconnecting, () => { setStatus('Reconnecting…'); if (winId) overlay('reconnecting'); });
-  room.on(LK.RoomEvent.Reconnected, () => { setStatus('Connected', 'ok'); if (winId) overlay(firstFrame ? null : 'opening'); });
+  room.on(LK.RoomEvent.Reconnecting, () => { setLink('Reconnecting…'); if (winId) overlay('reconnecting'); });
+  room.on(LK.RoomEvent.Reconnected, () => { setLink(null); if (winId) overlay(firstFrame ? null : 'opening'); });
   room.on(LK.RoomEvent.Disconnected, (reason) => scheduleReconnect(reason, Date.now() - connectedAt));
   await room.connect(url, token, { autoSubscribe: false });
   connectedAt = Date.now();
@@ -217,7 +225,7 @@ async function connect(pw) {
     if (winId) overlay('failed', listError); else render();
     return;
   }
-  setStatus('Connected', 'ok');
+  setLink(null);
   if (winId) { openWindow(winId); send({ t: 'list' }); } else requestList();
 }
 
@@ -248,8 +256,10 @@ function gotList(list) {
   }
   loaded = true;
   if (list.length) listError = null;
+  for (const id of PC.staleIds(thumbs.keys(), list)) { URL.revokeObjectURL(thumbs.get(id)); thumbs.delete(id); }
+  for (const id of PC.staleIds(icons.keys(), list)) { URL.revokeObjectURL(icons.get(id)); icons.delete(id); }
   render();
-  if (list.length) {
+  if (list.length && live()) {
     send({ t: 'thumb' });
     for (const id of PC.iconRequests(list)) if (!icons.has(id)) send({ t: 'icon', win: id });
   }
@@ -286,7 +296,8 @@ function render() {
   }
   $('searchbox').hidden = !windows.length;
   $('refresh').hidden = !loaded && !listError;
-  if (loaded) setStatus(PC.countLabel(windows.length, shown.length), 'ok');
+  const line = PC.statusLine(link, loaded, windows.length, shown.length);
+  if (line) setStatus(line.text, line.state);
   const pw = sessionStorage.getItem('pw');
   $('list').replaceChildren(...shown.map(w => {
     const a = document.createElement('a');
@@ -324,7 +335,7 @@ function refresh() {
 }
 $('refresh').addEventListener('click', refresh);
 $('q').addEventListener('input', e => { query = e.target.value; render(); });
-setInterval(() => { if (!winId && room && windows.length && document.visibilityState === 'visible') send({ t: 'thumb' }); }, 5000);
+setInterval(() => { if (!winId && live() && windows.length && document.visibilityState === 'visible') send({ t: 'thumb' }); }, 5000);
 window.addEventListener('keydown', e => {
   if (winId || e.target.tagName === 'INPUT') return;
   if (e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) { e.preventDefault(); $('q').focus(); }
@@ -391,6 +402,10 @@ function showBar(ms = 2500) {
   barTimer = setTimeout(() => { if (!$('bar').matches(':hover')) $('bar').classList.add('hidden'); }, ms);
 }
 $('bar').addEventListener('pointerleave', () => showBar(1200));
+function toggleBar() {
+  if ($('bar').classList.contains('hidden')) showBar(4000);
+  else { clearTimeout(barTimer); $('bar').classList.add('hidden'); }
+}
 window.addEventListener('pointermove', e => { if (winId && e.clientY < 40) showBar(); });
 
 let soundMuted = false;
@@ -457,7 +472,7 @@ video.addEventListener('pointerdown', e => {
 function pointerUp(e) {
   const out = pointer.up(e, geom()); if (out) send(out.msg, out.reliable);
 }
-video.addEventListener('pointerup', pointerUp);
+video.addEventListener('pointerup', e => { pointerUp(e); if (e.pointerType === 'touch') toggleBar(); });
 video.addEventListener('pointercancel', pointerUp);
 video.addEventListener('pointermove', e => {
   const out = pointer.move(e, geom(), performance.now()); if (out) send(out.msg, out.reliable);
@@ -518,7 +533,7 @@ $('fit').addEventListener('click', e => { e.stopPropagation(); fitToTab(); video
 function showPassword(msg) {
   $('notice').hidden = true;
   if (msg) $('pwhint').textContent = msg;
-  setStatus('Not connected');
+  setLink('Not connected');
   $('pwform').hidden = false;
   $('pw').focus();
 }

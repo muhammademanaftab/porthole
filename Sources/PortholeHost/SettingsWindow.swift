@@ -183,7 +183,7 @@ final class GeneralPane: NSViewController {
         ])
         keep.setCustomSpacing(8, after: keepStatus)
 
-        let name = Form.label(Host.current().localizedName ?? ProcessInfo.processInfo.hostName)
+        let name = Form.label(HTTPServer.computerName)
         name.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         let id = Form.label(deviceID)
         id.isSelectable = true

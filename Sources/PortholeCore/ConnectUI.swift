@@ -9,11 +9,11 @@ public struct CodeEntry: Equatable, Sendable {
     public var code: String { digits.joined() }
     public var isComplete: Bool { digits.allSatisfy { !$0.isEmpty } }
 
-    public mutating func type(_ text: String, at index: Int) -> Int {
+    public mutating func type(_ text: String, at index: Int, replacing: Bool = false) -> Int {
         guard digits.indices.contains(index) else { return max(0, min(index, Self.length - 1)) }
         var typed = text.filter { $0.isASCII && $0.isNumber }.map(String.init)
         let old = digits[index]
-        if !old.isEmpty, typed.count > 1 {
+        if !replacing, !old.isEmpty, typed.count > 1 {
             if typed.first == old { typed.removeFirst() } else if typed.last == old { typed.removeLast() }
         }
         guard !typed.isEmpty else {

@@ -62,7 +62,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         track.add(delegate: self)
         if let d = track.dimensions {
             inputView.contentPixels = CGSize(width: Int(d.width), height: Int(d.height))
-            if case .opening = phase { show(nil) }
+            if phase?.clearsOnPicture == true { show(nil) }
         }
     }
 
@@ -112,8 +112,17 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         Task { @MainActor in
             guard track === self.track else { return }
             self.inputView.contentPixels = CGSize(width: Int(d.width), height: Int(d.height))
-            if case .opening = self.phase { self.show(nil) }
+            if self.phase?.clearsOnPicture == true { self.show(nil) }
         }
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if let phase, event.type == .keyDown || event.type == .keyUp, event.keyCode == 36 || event.keyCode == 76,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
+            if event.type == .keyDown, !event.isARepeat, phase.canRetry { overlay.retryClicked() }
+            return
+        }
+        super.sendEvent(event)
     }
 
     func windowDidEndLiveResize(_ notification: Notification) {
@@ -227,7 +236,7 @@ final class PortalOverlay: NSView {
     override func mouseDown(with event: NSEvent) {}
     override func scrollWheel(with event: NSEvent) {}
 
-    @objc private func retryClicked() { onRetry?() }
+    @objc func retryClicked() { onRetry?() }
     @objc private func closeClicked() { onClose?() }
 }
 

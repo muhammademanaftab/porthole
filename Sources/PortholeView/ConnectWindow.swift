@@ -366,6 +366,8 @@ final class CodeSheet: NSWindow, NSTextFieldDelegate {
     private let pairButton = NSButton(title: "Pair", target: nil, action: nil)
     private let digitsRow = NSStackView()
     private var usingPassword = false
+    private var busy = false
+    private let digitEditor = DigitFieldEditor()
 
     init(hostName: String, prompt text: String) {
         super.init(contentRect: CGRect(x: 0, y: 0, width: 440, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
@@ -453,13 +455,22 @@ final class CodeSheet: NSWindow, NSTextFieldDelegate {
     }
 
     func setBusy(_ busy: Bool) {
-        pairButton.isEnabled = !busy && ready
+        self.busy = busy
+        for b in boxes { b.isEnabled = !busy }
+        password.isEnabled = !busy
         pairButton.title = busy ? "Pairing…" : "Pair"
+        refreshPairButton()
     }
 
     private var ready: Bool { usingPassword ? !password.stringValue.isEmpty : entry.isComplete }
 
-    private func refreshPairButton() { pairButton.isEnabled = ready }
+    private func refreshPairButton() { pairButton.isEnabled = ready && !busy }
+
+    override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
+        guard object is DigitBox else { return super.fieldEditor(createFlag, for: object) }
+        digitEditor.isFieldEditor = true
+        return digitEditor
+    }
 
     private func syncBoxes() {
         for (i, b) in boxes.enumerated() where b.stringValue != entry.digits[i] { b.stringValue = entry.digits[i] }
@@ -468,7 +479,8 @@ final class CodeSheet: NSWindow, NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         if (obj.object as? NSTextField) === password { refreshPairButton(); return }
         guard let box = obj.object as? DigitBox else { return }
-        let next = entry.type(box.stringValue, at: box.tag)
+        let next = entry.type(box.stringValue, at: box.tag, replacing: digitEditor.replacedAll)
+        digitEditor.replacedAll = false
         syncBoxes()
         error.isHidden = true
         refreshPairButton()
@@ -510,7 +522,7 @@ final class CodeSheet: NSWindow, NSTextFieldDelegate {
     }
 
     @objc private func pair() {
-        guard ready else { return }
+        guard ready, !busy else { return }
         onSubmit?(usingPassword ? password.stringValue : entry.code)
     }
 
@@ -527,6 +539,16 @@ final class CodeSheet: NSWindow, NSTextFieldDelegate {
         anim.duration = 0.3
         animations = ["frameOrigin": anim]
         animator().setFrameOrigin(f.origin)
+    }
+}
+
+final class DigitFieldEditor: NSTextView {
+    var replacedAll = false
+
+    override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        let length = (string as NSString).length
+        replacedAll = length > 0 && affectedCharRange.location == 0 && affectedCharRange.length == length
+        return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
     }
 }
 

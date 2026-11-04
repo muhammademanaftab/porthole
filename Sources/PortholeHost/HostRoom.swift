@@ -19,6 +19,8 @@ final class HostRoom: NSObject, RoomDelegate {
     private var clipTimer: Timer?
     private var lockWarnedAt: [String: Date] = [:]
     private var thumbTasks: [String: Task<Void, Never>] = [:]
+    private var thumbAskedAt: [String: Date] = [:]
+    private var thumbTaskIDs: [String: UUID] = [:]
     private var shared: [UInt32: WindowInfo] = [:]
     var onChange: (() -> Void)?
     var accepts: ((String) -> Bool)?
@@ -119,6 +121,8 @@ final class HostRoom: NSObject, RoomDelegate {
         Task { @MainActor in
             Log.info("viewer left: \(who)")
             self.thumbTasks.removeValue(forKey: who)?.cancel()
+            self.thumbAskedAt[who] = nil
+            self.thumbTaskIDs[who] = nil
             self.input.releaseAllButtons()
             for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
             for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
@@ -289,7 +293,12 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func sendThumbnails(to who: String) {
+        let now = Date()
+        guard WindowThumbnail.shouldServe(lastAsked: thumbAskedAt[who], now: now) else { return }
+        thumbAskedAt[who] = now
         thumbTasks[who]?.cancel()
+        let token = UUID()
+        thumbTaskIDs[who] = token
         thumbTasks[who] = Task { [weak self] in
             await Thumbnails.each { id, jpeg in
                 guard let self, !Task.isCancelled else { return }
@@ -300,7 +309,9 @@ final class HostRoom: NSObject, RoomDelegate {
                     Log.info("thumbnail send to \(who) failed: \(error.localizedDescription)")
                 }
             }
-            self?.thumbTasks[who] = nil
+            guard let self, self.thumbTaskIDs[who] == token else { return }
+            self.thumbTasks[who] = nil
+            self.thumbTaskIDs[who] = nil
         }
     }
 

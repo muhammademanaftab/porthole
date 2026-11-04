@@ -7,7 +7,6 @@ import UniformTypeIdentifiers
 @MainActor
 enum Thumbnails {
     private static var cache: [UInt32: (at: Date, jpeg: Data)] = [:]
-    private static let fresh: TimeInterval = 3
 
     static func each(_ send: @escaping (UInt32, Data) async -> Void) async {
         guard let windows = try? await WindowCatalog.shareable(onScreenOnly: true) else { return }
@@ -25,7 +24,7 @@ enum Thumbnails {
     }
 
     private static func jpeg(for w: SCWindow) async -> Data? {
-        if let hit = cache[w.windowID], Date().timeIntervalSince(hit.at) < fresh { return hit.jpeg }
+        if let hit = cache[w.windowID], Date().timeIntervalSince(hit.at) < WindowThumbnail.cacheFresh { return hit.jpeg }
         guard let px = WindowThumbnail.pixelSize(window: w.frame.size) else { return nil }
         let config = SCStreamConfiguration()
         config.width = Int(px.width)
@@ -35,12 +34,13 @@ enum Thumbnails {
         config.ignoreShadowsSingleWindow = true
         guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: w),
                                                                       configuration: config),
-              let jpeg = encode(image), WindowThumbnail.isAcceptable(jpeg) else { return nil }
+              let jpeg = await Task.detached(priority: .utility, operation: { encode(image) }).value,
+              WindowThumbnail.isAcceptable(jpeg) else { return nil }
         cache[w.windowID] = (Date(), jpeg)
         return jpeg
     }
 
-    private static func encode(_ image: CGImage) -> Data? {
+    nonisolated private static func encode(_ image: CGImage) -> Data? {
         let data = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: WindowThumbnail.quality] as CFDictionary)

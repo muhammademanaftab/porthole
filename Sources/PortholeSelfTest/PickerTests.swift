@@ -54,6 +54,12 @@ func pickerTests() {
     expect("thumb size: empty window has none", WindowThumbnail.pixelSize(window: CGSize(width: 0, height: 100)), nil)
     expect("thumb size: custom limit", WindowThumbnail.pixelSize(window: CGSize(width: 1000, height: 1000), limit: CGSize(width: 64, height: 64)),
            CGSize(width: 64, height: 64))
+    check("thumb: cached pictures stay fresh for at least 6 s", WindowThumbnail.cacheFresh >= 6)
+    let asked = Date(timeIntervalSinceReferenceDate: 1000)
+    check("thumb: a first request is served", WindowThumbnail.shouldServe(lastAsked: nil, now: asked))
+    check("thumb: a repeat within 2 s is ignored", !WindowThumbnail.shouldServe(lastAsked: asked, now: asked.addingTimeInterval(1.9)))
+    check("thumb: a request 2 s later is served", WindowThumbnail.shouldServe(lastAsked: asked, now: asked.addingTimeInterval(2)))
+    check("thumb: a clock that went backwards doesn't block requests", WindowThumbnail.shouldServe(lastAsked: asked, now: asked.addingTimeInterval(-5)))
     check("thumb: JPEG accepted", WindowThumbnail.isAcceptable(Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00])))
     check("thumb: PNG refused", !WindowThumbnail.isAcceptable(Data([0x89, 0x50, 0x4E, 0x47, 0x0D])))
     check("thumb: bare signature refused", !WindowThumbnail.isAcceptable(Data([0xFF, 0xD8, 0xFF])))

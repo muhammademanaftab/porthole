@@ -197,6 +197,17 @@
     return shown === total ? all : `${shown} of ${all}`;
   }
 
+  function statusLine(link, loaded, total, shown) {
+    if (link) return link;
+    if (loaded) return { text: countLabel(total, shown), state: 'ok' };
+    return null;
+  }
+
+  function staleIds(ids, list) {
+    const listed = new Set(list.map(w => w.id));
+    return [...ids].filter(id => !listed.has(id));
+  }
+
   const portalTitle = (w) => w.title ? `${w.app} \u2014 ${w.title}` : w.app;
 
   function streamWindow(attributes) {
@@ -216,6 +227,6 @@
     return out;
   }
 
-  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, portalTitle, streamWindow, iconRequests, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });

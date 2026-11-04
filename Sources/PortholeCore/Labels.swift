@@ -23,6 +23,13 @@ public enum PortalPhase: Equatable, Sendable {
         }
     }
 
+    public var clearsOnPicture: Bool {
+        switch self {
+        case .opening, .failed: return true
+        case .reconnecting, .disconnected: return false
+        }
+    }
+
     public var title: String {
         switch self {
         case .opening(let app): return app.isEmpty ? "Opening window…" : "Opening \(app)…"

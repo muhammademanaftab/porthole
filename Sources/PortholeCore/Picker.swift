@@ -89,6 +89,14 @@ public enum WindowThumbnail {
     public static let maxBytes = 200_000
     public static let quality = 0.6
     public static let maxPerList = 40
+    public static let cacheFresh: TimeInterval = 6
+    public static let minRequestGap: TimeInterval = 2
+
+    public static func shouldServe(lastAsked: Date?, now: Date) -> Bool {
+        guard let lastAsked else { return true }
+        let gap = now.timeIntervalSince(lastAsked)
+        return gap >= minRequestGap || gap < 0
+    }
     private static let jpegSignature: [UInt8] = [0xFF, 0xD8, 0xFF]
 
     public static func pixelSize(window: CGSize, limit: CGSize = maxPixels) -> CGSize? {
