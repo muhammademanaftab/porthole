@@ -78,9 +78,11 @@ enum KeepRunning {
     static var stampURL: URL { HostConfig.directory.appendingPathComponent("watchdog-bundle") }
 
     static var bundleStamp: String? {
-        guard let bundle = try? FileManager.default.attributesOfItem(atPath: Bundle.main.bundlePath),
-              let inode = bundle[.systemFileNumber] as? NSNumber else { return nil }
-        return "\(Bundle.main.bundlePath) \(inode)"
+        guard let exe = Bundle.main.executableURL,
+              let bundle = try? FileManager.default.attributesOfItem(atPath: Bundle.main.bundlePath),
+              let binary = try? FileManager.default.attributesOfItem(atPath: exe.path),
+              let inode = bundle[.systemFileNumber] as? NSNumber, let date = binary[.modificationDate] as? Date else { return nil }
+        return "\(Bundle.main.bundlePath) \(inode) \(Int(date.timeIntervalSince1970))"
     }
 
     static func rememberBundle() {
@@ -96,16 +98,34 @@ enum KeepRunning {
         return saved != stamp && saved.hasPrefix(Bundle.main.bundlePath + " ")
     }
 
+    static var watchdogRunning: Bool {
+        guard let exe = Bundle.main.executableURL?.path else { return false }
+        return Processes.running(executable: exe).contains { Processes.isWatchdog($0) }
+    }
+
     static func registerAgain(attempt: Int = 1) {
-        do {
-            try service.register()
-            rememberBundle()
-            Log.info("keep running: watchdog agent registered again, status \(describe(status))", .watchdog)
-        } catch {
-            Log.error("keep running: registering the watchdog agent again failed (attempt \(attempt)): \(error.localizedDescription)", .watchdog)
-            guard attempt < 4 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(attempt * 2)) {
-                MainActor.assumeIsolated { registerAgain(attempt: attempt + 1) }
+        let wait = attempt == 1 ? 8 : attempt * 10
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(wait)) {
+            MainActor.assumeIsolated {
+                try? service.unregister()
+                do {
+                    try service.register()
+                } catch {
+                    Log.error("keep running: registering the watchdog agent again failed (attempt \(attempt)): \(error.localizedDescription)", .watchdog)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(5)) {
+                    MainActor.assumeIsolated {
+                        if watchdogRunning {
+                            rememberBundle()
+                            Log.info("keep running: watchdog agent registered again and running, status \(describe(status))", .watchdog)
+                        } else if attempt < 4 {
+                            Log.info("keep running: the watchdog did not start after registering (attempt \(attempt)); trying again", .watchdog)
+                            registerAgain(attempt: attempt + 1)
+                        } else {
+                            Log.error("keep running: the watchdog did not start after \(attempt) registrations; turn Keep Porthole Host running off and on in Settings", .watchdog)
+                        }
+                    }
+                }
             }
         }
     }
@@ -116,8 +136,7 @@ enum KeepRunning {
         do {
             if on {
                 if before == .enabled, bundleChanged {
-                    Log.info("keep running: Porthole Host was replaced since the watchdog agent was registered; registering it again", .watchdog)
-                    try? service.unregister()
+                    Log.info("keep running: Porthole Host was updated or replaced since the watchdog agent was registered; registering it again", .watchdog)
                     registerAgain()
                     return nil
                 }
