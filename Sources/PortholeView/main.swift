@@ -209,6 +209,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             w.setBusy(false)
             switch reply {
             case .paired(let deviceSecret, let id, let hostName):
+                Sounds.play(.paired)
                 let key = hostKeyForTrust(hostID: id, address: address)
                 guard PasswordStore.savePairing(hostID: key, name: hostName ?? name ?? address, address: address, secret: deviceSecret) else {
                     w.showError("Paired, but the Keychain refused to keep the pairing. Try again.")
@@ -217,7 +218,9 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 startConnection(address: address, name: name ?? hostName, credential: .device(id: device.id, secret: deviceSecret),
                                 saved: true, hostID: key)
             case .password(let pw): startConnection(address: address, name: name, credential: .password(pw), saved: false)
-            case .refused(let why): w.showError(why)
+            case .refused(let why):
+                Sounds.play(.pairingFailed)
+                w.showError(why)
             }
         }
     }
@@ -351,6 +354,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let portal = PortalWindow(windowID: info.id, title: info.portalTitle, subtitle: hostName, app: info.app,
                                   size: CGSize(width: info.w, height: info.h), connection: c)
         portal.onClose = { [weak self] in
+            Sounds.play(.portalClosed)
             self?.connection?.close(info.id)
             self?.portals[info.id] = nil
             self?.tiles.remove(info.id)
@@ -421,6 +425,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             guard let portal else { return }
             if fit, let w = reply.w, let h = reply.h { portal.fit(remote: CGSize(width: w, height: h)) }
             portal.attach(track)
+            if fit { Sounds.play(.portalOpened) }
         }
         let host = hostName
         let attempt = portal.beginRequest()

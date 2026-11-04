@@ -30,6 +30,10 @@ Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Acc
 2. Copy the browser link or password from its menu-bar icon.
 3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). A host this Mac hasn't paired with shows a padlock; picking it asks that host to show a 6-digit code on its screen (valid 2 minutes, single use, 5 tries). Type the code once and this Mac may view that host from then on, with no password. Pairing is one way. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
 
+## Sound effects
+
+Porthole (the viewer) plays a quiet system sound when a shared window opens (Pop) or closes (Bottle), and when pairing works (Glass) or a code is refused (Basso). Settings › General › Sound Effects, on by default; `PORTHOLE_SOUNDS=0` silences every cue for one run and `PORTHOLE_SOUNDS=1` plays them with the setting off. macOS's own "Play user interface sound effects", when off, silences them too.
+
 ## Pairing
 
 Trust is per Mac. Each Mac has a device ID in `~/Library/Application Support/Porthole/identity.json`. The host keeps the Macs paired with it in `paired.json` (0600, secrets stored as SHA-256); the viewer keeps each host's secret in the Keychain. The host menu has Pair a New Viewer… (a code for whoever types it first) and Paired Macs… (Unpair removes a Mac and disconnects it at once). The viewer only sends a host's secret to the address it paired at. A request never replaces another Mac's pending code, and every 10 wrong codes pause pairing (1 minute, doubling up to a day; kept in `pairing-budget.json` across restarts). Viewer tokens last 10 minutes; messages from an unpaired Mac are ignored and it is disconnected. Pairing needs this version of the viewer: `/pair` no longer hands out the password. The CLI talks to the running host on 127.0.0.1 with the per-launch secret in `local-secret` (0600).

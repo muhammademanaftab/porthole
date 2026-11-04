@@ -25,6 +25,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_PAIR_HEADLESS", "host", "1: print pairing codes to standard output without opening the pairing window", "0"),
         EnvFlag("PORTHOLE_WEB_ROOT", "host", "folder served as the browser viewer instead of the bundled web files", "Contents/Resources/web"),
         EnvFlag("PORTHOLE_LIVEKIT_SERVER", "host", "path of the livekit-server binary to run", "the bundled one, then Homebrew's"),
+        EnvFlag("PORTHOLE_SOUNDS", "viewer", "0: every sound cue is silent for this run; 1: cues play even with Settings › General › Sound Effects off", "the setting (on)"),
         EnvFlag("PORTHOLE_OPEN", "viewer", "open the first window whose app and title contain this text (or id:<windowID>) once the list arrives", "unset"),
         EnvFlag("PORTHOLE_COMMAND", "internal", "watchdog: run the watchdog loop (set by the launch agent); app: run the host", "app"),
         EnvFlag("PORTHOLE_WATCHDOG_RELAUNCH", "internal", "why the watchdog launched this host (login, crash, hang, remote, migrate, missingAfterQuit)", "unset"),

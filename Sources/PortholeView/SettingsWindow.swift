@@ -137,23 +137,30 @@ class ViewerPane: NSViewController {
 @MainActor
 final class ViewerGeneralPane: ViewerPane {
     private let sound = NSButton(checkboxWithTitle: "Play sound from shared windows", target: nil, action: nil)
+    private let effects = NSButton(checkboxWithTitle: "Play sound effects", target: nil, action: nil)
 
     override func loadView() {
         title = "General"
         sound.target = self
         sound.action = #selector(toggleSound)
         sound.state = ViewerSettingsWindow.current.playSound ? .on : .off
+        effects.target = self
+        effects.action = #selector(toggleEffects)
+        effects.state = ViewerSettingsWindow.current.soundEffects ? .on : .off
         let grid = ViewerForm.grid([
             [NSTextField(labelWithString: "Sound:"),
              ViewerForm.column([sound, ViewerForm.note("Same as Mute Host Sound in the Porthole menu. The host only sends sound while one of its windows is open here.")])],
+            [NSTextField(labelWithString: "Sound Effects:"),
+             ViewerForm.column([effects, ViewerForm.note("A quiet sound when a shared window opens or closes, and when pairing works or fails. macOS's \"Play user interface sound effects\" being off silences them too.")])],
         ])
         view = ViewerForm.pane(grid)
     }
 
     @objc private func toggleSound() { update { $0.playSound = sound.state == .on } }
+    @objc private func toggleEffects() { update { $0.soundEffects = effects.state == .on } }
 
     func reflect(_ s: ViewerSettings) {
-        if isViewLoaded { sound.state = s.playSound ? .on : .off }
+        if isViewLoaded { sound.state = s.playSound ? .on : .off; effects.state = s.soundEffects ? .on : .off }
     }
 }
 
