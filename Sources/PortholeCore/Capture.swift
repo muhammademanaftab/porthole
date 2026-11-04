@@ -11,6 +11,11 @@ public func capturePixelSize(points: CGSize, scale: CGFloat, max limit: CGSize =
     return CGSize(width: max(2, Int(w) & ~1), height: max(2, Int(h) & ~1))
 }
 
+public func captureScaleLimit(points: CGSize, max limit: CGSize = maxCapturePixels) -> Double {
+    guard points.width > 0, points.height > 0 else { return .infinity }
+    return Double(min(limit.width / points.width, limit.height / points.height))
+}
+
 public struct WindowOwner: Sendable {
     public var pid: Int32
     public var bundle: String

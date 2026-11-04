@@ -107,20 +107,27 @@ public struct ScaleLadder: Sendable {
 
     public var level: Double { levels[index] }
 
-    public init(top: Double = StreamPrefs.levels[0], native: Double, levels all: [Double] = StreamPrefs.levels, config: Config = Config()) {
+    public init(top: Double = StreamPrefs.levels[0], native: Double, limit: Double = .infinity, levels all: [Double] = StreamPrefs.levels, config: Config = Config()) {
         let cap = min(top, native)
-        let usable = all.filter { $0 <= cap + 0.001 }.sorted(by: >)
-        levels = usable.isEmpty ? [cap] : usable
+        if limit < cap - 0.001 {
+            let top = all.max() ?? 1
+            levels = all.sorted(by: >).map { $0 / top * limit }
+        } else {
+            let usable = all.filter { $0 <= cap + 0.001 }.sorted(by: >)
+            levels = usable.isEmpty ? [cap] : usable
+        }
         self.config = config
         self.native = native
+        self.limit = limit
         self.all = all
     }
 
     private let native: Double
+    private let limit: Double
     private let all: [Double]
 
     public func retopped(_ top: Double) -> ScaleLadder {
-        var next = ScaleLadder(top: top, native: native, levels: all, config: config)
+        var next = ScaleLadder(top: top, native: native, limit: limit, levels: all, config: config)
         next.index = next.levels.firstIndex { $0 <= level + 0.001 } ?? next.levels.count - 1
         next.lastDownAt = lastDownAt
         next.lastMotionAt = lastMotionAt

@@ -78,7 +78,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         let scale = live()?.scale ?? 2
         var lc = ScaleLadder.Config()
         if let ms = ProcessInfo.processInfo.environment["PORTHOLE_ENCODE_BUDGET_MS"].flatMap(Double.init), ms > 0 { lc.budgetMs = ms; lc.upBudgetMs = ms * 0.7 }
-        ladder = ScaleLadder(top: prefs.level, native: Double(scale), config: lc)
+        ladder = ScaleLadder(top: prefs.level, native: Double(scale), limit: captureScaleLimit(points: points), config: lc)
         pixelSize = Self.pixelSize(points: points, scale: min(scale, CGFloat(ladder.level)))
         track = await LocalVideoTrack.createBufferTrack(
             name: Message.trackName(for: windowID), source: .screenShareVideo,

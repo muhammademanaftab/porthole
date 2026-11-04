@@ -71,6 +71,10 @@ func scaleLadderTests() {
     expect("ladder: a Retina window uses 2, 1.5, 1.25, 1", ScaleLadder(native: 2).levels, [2, 1.5, 1.25, 1])
     expect("ladder: a 1x window has only 1", ScaleLadder(native: 1).levels, [1])
     expect("ladder: the viewer's level caps the top", ScaleLadder(top: 1.5, native: 2).levels, [1.5, 1.25, 1])
+    expect("ladder: a capture capped below its scale steps down from the cap", ScaleLadder(native: 2, limit: 0.9375).levels, [0.9375, 0.703125, 0.5859375, 0.46875])
+    expect("ladder: a cap above the scale changes nothing", ScaleLadder(native: 2, limit: 3).levels, [2, 1.5, 1.25, 1])
+    expect("ladder: the cap survives a new top", ScaleLadder(native: 2, limit: 0.9375).retopped(1.5).levels.first, 0.9375)
+    expect("capture: a 4096-point screen is limited to 0.9375", captureScaleLimit(points: CGSize(width: 4096, height: 2304), max: CGSize(width: 3840, height: 2160)), 0.9375)
     expect("ladder: starts at the top", ScaleLadder(native: 2).level, 2)
 
     var l = ScaleLadder(native: 2)
