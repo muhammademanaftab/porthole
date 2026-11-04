@@ -9,9 +9,9 @@ final class SettingsWindow: NSWindow, NSWindowDelegate {
     private let sharing: SharingPane
     private let help = HelpPane()
 
-    init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust) {
+    init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust, guests: HostGuests) {
         general = GeneralPane(deviceID: trust.identity.id)
-        sharing = SharingPane(link: link, password: password, trust: trust)
+        sharing = SharingPane(link: link, password: password, trust: trust, guests: guests)
         super.init(contentRect: CGRect(x: 0, y: 0, width: 560, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         isReleasedWhenClosed = false
         delegate = self
@@ -237,6 +237,9 @@ final class SharingPane: NSViewController {
     private let link: () -> String
     private let password: () -> String
     private unowned let trust: HostTrust
+    private unowned let guests: HostGuests
+    private let allowControl = NSButton(checkboxWithTitle: "Allow Remote Control", target: nil, action: nil)
+    private let linksLabel = NSTextField(labelWithString: "")
     private let linkLabel = NSTextField(labelWithString: "")
     private let passwordLabel = NSTextField(labelWithString: "")
     private let reveal = NSButton()
@@ -246,10 +249,11 @@ final class SharingPane: NSViewController {
     private let dialogs = NSButton(checkboxWithTitle: "Show Dialogs as Their Own Windows", target: nil, action: nil)
     private var revealed = false
 
-    init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust) {
+    init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust, guests: HostGuests) {
         self.link = link
         self.password = password
         self.trust = trust
+        self.guests = guests
         super.init(nibName: nil, bundle: nil)
         title = "Sharing This Mac"
     }
@@ -287,8 +291,16 @@ final class SharingPane: NSViewController {
         dialogs.action = #selector(toggleDialogs)
         let windows = Form.column([dialogs, Form.note("A sheet, alert, Save or Print panel that opens over a shared window gets its own window on the viewer, next to that window. Off: sheets and menus are drawn into the window's picture.")])
 
+        allowControl.target = self
+        allowControl.action = #selector(toggleAllowControl)
+        linksLabel.textColor = .secondaryLabelColor
+        linksLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let shareButtons = Form.row([Form.button("Share Window…", self, #selector(shareWindow)), Form.button("Shared Links…", self, #selector(showLinks))])
+        let guestsColumn = Form.column([shareButtons, linksLabel, allowControl,
+                                        Form.note("One switch for every share link. On: control links may type and click, and a view-only guest who asks is let in at once. Off: every link watches, and a guest who asks waits for you to allow it. PORTHOLE_SHARE_ALLOW_CONTROL=0|1 sets it for one run.")], spacing: 6)
         let grid = Form.grid([
             [Form.label("Viewers:"), viewers],
+            [Form.label("Guests:"), guestsColumn],
             [Form.label("Browser link:"), Form.column([Form.row([linkLabel, copyLink]),
                                                         Form.note("Opens this Mac's windows in any browser with the password.")])],
             [Form.label("Password:"), Form.row([passwordLabel, reveal, copyPassword], spacing: 4)],
@@ -297,8 +309,9 @@ final class SharingPane: NSViewController {
             [Form.label("Accessibility:"), accessRow],
         ])
         grid.row(at: 1).topPadding = 10
-        grid.row(at: 3).topPadding = 10
+        grid.row(at: 2).topPadding = 10
         grid.row(at: 4).topPadding = 10
+        grid.row(at: 5).topPadding = 10
         view = Form.pane(grid)
     }
 
@@ -315,6 +328,10 @@ final class SharingPane: NSViewController {
         reveal.image = NSImage(systemSymbolName: revealed ? "eye.slash" : "eye", accessibilityDescription: revealed ? "Hide" : "Show")
         let n = trust.store.devices().count
         pairedLabel.stringValue = n == 0 ? "No Macs are paired yet." : "\(n) Mac\(n == 1 ? " is" : "s are") paired with this one."
+        allowControl.state = guests.allowControl ? .on : .off
+        allowControl.isEnabled = !guests.switchOverridden
+        let live = guests.links.count
+        linksLabel.stringValue = live == 0 ? "No share links right now." : "\(live) share link\(live == 1 ? " is" : "s are") live."
         dialogs.state = CompanionRules.enabled(stored: UserDefaults.standard.object(forKey: CompanionRules.settingKey), environment: [:]) ? .on : .off
         fill(screenRow, ok: CGPreflightScreenCaptureAccess(), action: #selector(openScreenSettings))
         fill(accessRow, ok: InputInjector.isTrusted, action: #selector(openAXSettings))
@@ -336,6 +353,9 @@ final class SharingPane: NSViewController {
         Log.info("settings: show dialogs as their own windows \(on ? "on" : "off")")
     }
 
+    @objc private func toggleAllowControl() { guests.setAllowControl(allowControl.state == .on) }
+    @objc private func shareWindow() { guests.showShareWindow(picker: false) }
+    @objc private func showLinks() { guests.showLinks() }
     @objc private func pairNew() { trust.presentNewCode() }
     @objc private func showPaired() { trust.showPaired() }
     @objc private func toggleReveal() { revealed.toggle(); refresh() }

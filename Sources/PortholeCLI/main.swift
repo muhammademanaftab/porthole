@@ -22,6 +22,7 @@ case .log(let o): code = LogCommand.run(o)
 case .trail(let o): code = TrailCommand.run(o)
 case .whyQuit(let n): code = WhyQuitCommand.run(n)
 case .report(let o): code = ReportCommand.run(o)
+case .share(let o): code = ShareCommand.run(o)
 case .forward(let tool, let args): code = Tools.exec(tool, args)
 }
 exit(code)

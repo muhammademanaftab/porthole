@@ -11,7 +11,8 @@ final class HTTPServer {
 
     private(set) var advertised: String?
 
-    init(config: HostConfig, pairing: PairingDesk? = nil, trust: HostTrust? = nil, status: (() -> [String: Any])? = nil) throws {
+    init(config: HostConfig, pairing: PairingDesk? = nil, trust: HostTrust? = nil, guests: HostGuests? = nil,
+         allowControl: (@Sendable () -> Bool)? = nil, status: (() -> [String: Any])? = nil) throws {
         self.config = config
         listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: config.httpPort)!)
         let name = HTTPServer.computerName
@@ -23,10 +24,28 @@ final class HTTPServer {
         routes.onUnpair = { [weak trust] device in trust?.unpaired(device) }
         routes.localSecret = trust?.localSecret
         routes.localStatus = status
+        routes.shares = guests?.store
+        routes.guestControl = allowControl
+        routes.httpPort = config.httpPort
+        routes.resolveWindow = { target in pickWindow(target, in: HTTPServer.listWindowsBlocking()) }
+        routes.shareAddresses = { (lanAddress(), tailscaleAddress()) }
+        routes.onSharesChanged = { [weak guests] in guests?.changedFromCLI() }
+        routes.onUnshare = { [weak guests] link in guests?.revokedFromCLI(link) }
         self.routes = routes
         let txt = BonjourTXT.make(name: name, tailscaleIP: tailscaleAddress(), localHost: HTTPServer.localHostName,
                                  port: Int(config.httpPort), id: trust?.identity.id)
         listener.service = NWListener.Service(name: name, type: portholeServiceType, domain: nil, txtRecord: NWTXTRecord(txt))
+    }
+
+    static func listWindowsBlocking(timeout: TimeInterval = 5) -> [WindowInfo] {
+        let done = DispatchSemaphore(value: 0)
+        let box = WindowListBox()
+        Task.detached {
+            box.set((try? await WindowCatalog.list()) ?? [])
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + timeout)
+        return box.get()
     }
 
     static var computerName: String {
@@ -87,4 +106,11 @@ final class HTTPServer {
         default: return false
         }
     }
+}
+
+final class WindowListBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [WindowInfo] = []
+    func set(_ l: [WindowInfo]) { lock.lock(); list = l; lock.unlock() }
+    func get() -> [WindowInfo] { lock.lock(); defer { lock.unlock() }; return list }
 }

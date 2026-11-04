@@ -260,7 +260,7 @@ final class Connection: NSObject, RoomDelegate {
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
                           forTopic topic: String, encryptionType: EncryptionType) {
-        guard topic == portholeTopic, let m = Message.decode(data) else { return }
+        guard topic == portholeTopic, participant?.identity?.stringValue == "host", let m = Message.decode(data) else { return }
         Task { @MainActor in
             switch m.t {
             case .windows:

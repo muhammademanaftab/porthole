@@ -10,6 +10,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var http: HTTPServer?
     let pairing = PairingDesk(budgetFile: HostConfig.directory.appendingPathComponent("pairing-budget.json"))
     lazy var trust = HostTrust(desk: pairing, config: config)
+    lazy var guests = HostGuests(config: config)
     var statusItem: NSStatusItem?
     var settingsWindow: SettingsWindow?
     let heartbeats = Heartbeats()
@@ -92,13 +93,17 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
             let box = status
-            let http = try HTTPServer(config: config, pairing: pairing, trust: trust, status: { box.fresh() })
+            let http = try HTTPServer(config: config, pairing: pairing, trust: trust, guests: guests,
+                                      allowControl: { RemoteControlSwitch.enabled(stored: UserDefaults.standard.object(forKey: RemoteControlSwitch.settingKey)) },
+                                      status: { box.fresh() })
             http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
             let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh() }
             trust.attach(to: host)
+            guests.attach(to: host)
+            guests.onChange = { [weak self] in self?.refresh() }
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
@@ -126,7 +131,8 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         HostMenuModel(state: state, macName: HTTPServer.computerName,
                       address: tailscaleAddress(), shared: host.sharedWindows, screenLocked: Session.isScreenLocked,
                       screenRecording: CGPreflightScreenCaptureAccess(), accessibility: InputInjector.isTrusted,
-                      paired: trust.store.devices().count)
+                      paired: trust.store.devices().count, shareLinks: guests.links.count, allowControl: guests.allowControl,
+                      controlOverridden: guests.switchOverridden, asks: guests.pendingAsks.map { ($0.who, $0.link.label) })
     }
 
     func refresh() {
@@ -150,10 +156,16 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func copyPassword() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(config.password, forType: .string) }
     @objc func pairViewer() { trust.presentNewCode() }
     @objc func showPairedMacs() { trust.showPaired() }
+    @objc func shareWindow() { guests.showShareWindow(picker: false) }
+    @objc func sharePicker() { guests.showShareWindow(picker: true) }
+    @objc func showSharedLinks() { guests.showLinks() }
+    @objc func toggleAllowControl() { guests.setAllowControl(!guests.allowControl) }
+    @objc func allowAsk(_ item: NSMenuItem) { if let who = item.representedObject as? String { guests.answer(who, allow: true) } }
+    @objc func denyAsk(_ item: NSMenuItem) { if let who = item.representedObject as? String { guests.answer(who, allow: false) } }
     @objc func openScreenSettings() { HostSystemSettings.openScreenRecording() }
     @objc func openAXSettings() { HostSystemSettings.openAccessibility() }
     @objc func showSettings() {
-        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password }, trust: trust)
+        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password }, trust: trust, guests: guests)
         settingsWindow = w
         w.present()
     }
