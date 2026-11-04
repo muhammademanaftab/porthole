@@ -90,7 +90,24 @@ enum KeepRunning {
 
     static var bundleChanged: Bool {
         guard let stamp = bundleStamp else { return false }
-        return (try? String(contentsOf: stampURL, encoding: .utf8)) != stamp
+        guard let saved = try? String(contentsOf: stampURL, encoding: .utf8) else {
+            return Bundle.main.bundlePath.hasPrefix("/Applications/")
+        }
+        return saved != stamp && saved.hasPrefix(Bundle.main.bundlePath + " ")
+    }
+
+    static func registerAgain(attempt: Int = 1) {
+        do {
+            try service.register()
+            rememberBundle()
+            Log.info("keep running: watchdog agent registered again, status \(describe(status))", .watchdog)
+        } catch {
+            Log.error("keep running: registering the watchdog agent again failed (attempt \(attempt)): \(error.localizedDescription)", .watchdog)
+            guard attempt < 4 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(attempt * 2)) {
+                MainActor.assumeIsolated { registerAgain(attempt: attempt + 1) }
+            }
+        }
     }
 
     @discardableResult
@@ -101,9 +118,7 @@ enum KeepRunning {
                 if before == .enabled, bundleChanged {
                     Log.info("keep running: Porthole Host was replaced since the watchdog agent was registered; registering it again", .watchdog)
                     try? service.unregister()
-                    try service.register()
-                    rememberBundle()
-                    Log.info("keep running: watchdog agent registered again, status \(describe(status))", .watchdog)
+                    registerAgain()
                     return nil
                 }
                 guard before != .enabled && before != .requiresApproval else { return nil }

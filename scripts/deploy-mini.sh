@@ -66,7 +66,7 @@ stop_livekit() {
   for pid in $(livekits); do kill -KILL "$pid" 2>/dev/null || true; done
 }
 stop_host() {
-  stop_host_only
+  stop_host_only || return 1
   stop_livekit
 }
 stop_host_only() {
@@ -79,7 +79,8 @@ stop_host_only() {
   echo "Porthole Host ignored SIGTERM; killing it"
   for pid in $(hosts); do kill -KILL "$pid" 2>/dev/null || true; done
   for _ in $(seq 1 20); do [ -z "$(hosts)" ] && return 0; sleep 0.25; done
-  die "could not stop Porthole Host"
+  echo "deploy-mini: could not stop Porthole Host" >&2
+  return 1
 }
 start_host() {
   if [ "$watched" = 1 ]; then
@@ -94,28 +95,44 @@ start_host() {
   done
   return 1
 }
-stop_host
+MARKER="$HOME/Library/Application Support/Porthole/exit-marker"
+hold_watchdog() { mkdir -p "$(dirname "$MARKER")"; printf quit > "$MARKER"; }
+old_pids=" $(hosts | tr '\n' ' ')"
+restore() {
+  trap - ERR
+  echo "deploy-mini: rolling back to the previous Porthole Host" >&2
+  [ -f "$BACK" ] || { echo "deploy-mini: no rollback copy; Porthole Host is left as it is" >&2; exit 1; }
+  hold_watchdog
+  stop_host || true
+  hold_watchdog
+  rm -rf "$HOME/porthole-deploy/restore"; mkdir -p "$HOME/porthole-deploy/restore"
+  if tar -C "$HOME/porthole-deploy/restore" -xf "$BACK" && rsync -a --delete "$HOME/porthole-deploy/restore/Porthole Host.app/" "$APP/"; then
+    forget "$HOME/porthole-deploy/restore/Porthole Host.app"
+    rm -rf "$HOME/porthole-deploy/restore"
+    "$LSREG" -f "$APP" >/dev/null 2>&1 || true
+    codesign --verify --deep --strict "$APP" || echo "deploy-mini: the restored bundle fails codesign --verify" >&2
+    if start_host; then echo "rolled back to the previous Porthole Host" >&2; else echo "the previous Porthole Host did not answer either" >&2; fi
+  else
+    echo "deploy-mini: restoring failed; the previous bundle is kept in $BACK" >&2
+  fi
+  exit 1
+}
+hold_watchdog
+stop_host || die "could not stop Porthole Host; nothing was changed"
+hold_watchdog
 for stale in "$APP.rollback" "$APP.previous" "$HOME/porthole-deploy/rollback/Porthole Host.app" "$HOME/porthole-deploy/previous/Porthole Host.app"; do forget "$stale"; rm -rf "$stale"; done
 rm -f "$BACK"
 if [ -d "$APP" ]; then tar -C /Applications -cf "$BACK" "Porthole Host.app"; fi
+trap restore ERR
 mkdir -p "$APP"
 rsync -a --delete "$NEW/" "$APP/"
+codesign --verify --deep --strict "$APP"
 forget "$NEW"
 rm -rf "$HOME/porthole-deploy/new"
 "$LSREG" -f "$APP" >/dev/null 2>&1 || true
-if ! start_host; then
-  echo "deploy-mini: the new Porthole Host did not answer /hello within 60 s; rolling back" >&2
-  if [ -f "$BACK" ]; then
-    stop_host
-    rm -rf "$HOME/porthole-deploy/restore"; mkdir -p "$HOME/porthole-deploy/restore"
-    tar -C "$HOME/porthole-deploy/restore" -xf "$BACK"
-    rsync -a --delete "$HOME/porthole-deploy/restore/Porthole Host.app/" "$APP/"
-    forget "$HOME/porthole-deploy/restore/Porthole Host.app"
-    rm -rf "$HOME/porthole-deploy/restore" "$BACK"
-    if start_host; then echo "rolled back to the previous Porthole Host" >&2; else echo "the previous Porthole Host did not answer either" >&2; fi
-  fi
-  exit 1
-fi
+start_host || { echo "deploy-mini: the new Porthole Host did not answer /hello within 60 s" >&2; restore; }
+trap - ERR
+for p in $(hosts); do case "$old_pids" in *" $p "*) echo "deploy-mini: the old Porthole Host ($p) is still the one running" >&2; restore ;; esac; done
 sleep 3
 n=$(hosts | grep -c . || true)
 echo "Porthole Host instances running: $n"
