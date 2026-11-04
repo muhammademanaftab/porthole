@@ -147,18 +147,25 @@ enum Tools {
         return candidates.first { Bundle(url: $0)?.bundleIdentifier == bundleID }
     }
 
+    static var oneApp: URL? { app(bundleID: hostBundleID, name: OneApp.appName) }
+
+    static var oldHostApp: URL? {
+        OneApp.oldHostApps().first { Bundle(url: $0)?.bundleIdentifier == hostBundleID }
+    }
+
+    static var oldViewerApp: URL? { app(bundleID: viewerBundleID, name: OneApp.appName) }
+
     static func locate(_ tool: CLITool) -> URL? {
         let sibling = Paths.executable.deletingLastPathComponent().appendingPathComponent(tool.rawValue)
         if FileManager.default.isExecutableFile(atPath: sibling.path) { return sibling }
-        let app = tool == .host ? app(bundleID: hostBundleID, name: "Porthole Host") : app(bundleID: viewerBundleID, name: "Porthole")
-        let exe = app?.appendingPathComponent("Contents/MacOS/\(tool.rawValue)")
-        return exe.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
+        let candidates = [oneApp?.appendingPathComponent("Contents/MacOS/\(CLITool.host.rawValue)"),
+                          (tool == .host ? oldHostApp : oldViewerApp)?.appendingPathComponent("Contents/MacOS/\(tool.rawValue)")]
+        return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
     static func exec(_ tool: CLITool, _ args: [String]) -> Int32 {
         guard let exe = locate(tool) else {
-            fail(tool == .host ? "Porthole Host isn't installed on this Mac (looked next to porthole, in /Applications and with Launch Services)."
-                 : "Porthole (the viewer) isn't installed on this Mac (looked next to porthole, in /Applications and with Launch Services).")
+            fail("Porthole isn't installed on this Mac (looked next to porthole, in /Applications and with Launch Services).")
             return 1
         }
         let argv = [exe.path] + args
@@ -197,6 +204,14 @@ func tailscaleStatus() -> (cli: String?, status: TailscaleStatus?) {
     guard let exe = tailscaleCLIs.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return (nil, nil) }
     guard let r = Shell.run(exe, ["status", "--json"], timeout: 5) else { return (exe, nil) }
     return (exe, TailscaleStatus.parse(Data(r.out.utf8)))
+}
+
+func appDefaults() -> UserDefaults? {
+    Bundle.main.bundleIdentifier == Tools.hostBundleID ? .standard : UserDefaults(suiteName: Tools.hostBundleID)
+}
+
+func savedHosting() -> Bool? {
+    appDefaults()?.object(forKey: HostingSwitch.settingKey) as? Bool
 }
 
 func viewerDefaults() -> UserDefaults? {

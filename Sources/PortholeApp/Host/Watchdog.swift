@@ -51,7 +51,7 @@ final class Heartbeats {
     func start(watched: Bool) {
         HostFiles.watched = watched
         activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep],
-                                                         reason: "Porthole Host answers its watchdog")
+                                                         reason: "Porthole answers its watchdog")
         HostFiles.writeHeartbeat()
         let t = Timer(timeInterval: WatchdogMonitor.heartbeatEvery, repeats: true) { _ in HostFiles.writeHeartbeat() }
         RunLoop.main.add(t, forMode: .common)
@@ -92,10 +92,7 @@ enum KeepRunning {
 
     static var bundleChanged: Bool {
         guard let stamp = bundleStamp else { return false }
-        guard let saved = try? String(contentsOf: stampURL, encoding: .utf8) else {
-            return Bundle.main.bundlePath.hasPrefix("/Applications/")
-        }
-        return saved != stamp && saved.hasPrefix(Bundle.main.bundlePath + " ")
+        return WatchdogStamp.registerAgain(saved: try? String(contentsOf: stampURL, encoding: .utf8), current: stamp, bundlePath: Bundle.main.bundlePath)
     }
 
     static var watchdogRunning: Bool {
@@ -122,10 +119,20 @@ enum KeepRunning {
                             Log.info("keep running: the watchdog did not start after registering (attempt \(attempt)); trying again", .watchdog)
                             registerAgain(attempt: attempt + 1)
                         } else {
-                            Log.error("keep running: the watchdog did not start after \(attempt) registrations; turn Keep Porthole Host running off and on in Settings", .watchdog)
+                            Log.error("keep running: the watchdog did not start after \(attempt) registrations; turn Keep Porthole running off and on in Settings › Sharing", .watchdog)
                         }
                     }
                 }
+            }
+        }
+    }
+
+    static func checkStarted() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(8)) {
+            MainActor.assumeIsolated {
+                guard isEnabled, !watchdogRunning else { return }
+                Log.info("keep running: the watchdog is not running after registering; registering it again", .watchdog)
+                registerAgain(attempt: 2)
             }
         }
     }
@@ -136,13 +143,14 @@ enum KeepRunning {
         do {
             if on {
                 if before == .enabled, bundleChanged {
-                    Log.info("keep running: Porthole Host was updated or replaced since the watchdog agent was registered; registering it again", .watchdog)
+                    Log.info("keep running: Porthole was updated, replaced or moved since the watchdog agent was registered; registering it again", .watchdog)
                     registerAgain()
                     return nil
                 }
                 guard before != .enabled && before != .requiresApproval else { return nil }
                 try service.register()
                 rememberBundle()
+                checkStarted()
             } else {
                 guard before == .enabled || before == .requiresApproval else { return nil }
                 try service.unregister()

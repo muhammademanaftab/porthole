@@ -3,7 +3,7 @@ import CoreGraphics
 import PortholeCore
 
 @MainActor
-final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class HostApp: NSObject {
     let config = HostConfig.loadOrCreate()
     lazy var server = LiveKitServer(config: config)
     let host = HostRoom()
@@ -11,29 +11,27 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let pairing = PairingDesk(budgetFile: HostConfig.directory.appendingPathComponent("pairing-budget.json"))
     lazy var trust = HostTrust(desk: pairing, config: config)
     lazy var guests = HostGuests(config: config)
-    var statusItem: NSStatusItem?
-    var settingsWindow: SettingsWindow?
     let heartbeats = Heartbeats()
     let status = StatusBox()
     var statusTimer: Timer?
     let settings = HostSettings(lookup: { UserDefaults.standard.object(forKey: $0) })
     var state = "Starting…"
     var isGallery = false
+    var started = false
     let wholeMacUI = WholeMacUI()
+    var onRefresh: (() -> Void)?
+    var onSettings: (() -> Void)?
+    var onQuit: (() -> Void)?
 
     var browserLink: String {
         viewerLink(host: tailscaleAddress() ?? ProcessInfo.processInfo.hostName, port: config.httpPort, password: config.password)
     }
 
-    func applicationDidFinishLaunching(_ note: Notification) {
-        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst()), screens: hostGalleryScreens) {
-            isGallery = true
-            HostGallery.show(screen, app: self)
-            return
-        }
+    func start(environment env: [String: String]) {
+        guard !started else { return }
+        started = true
         let previous = HostFiles.readMarker()
         HostFiles.clearMarker()
-        let env = ProcessInfo.processInfo.environment
         Log.info("host started version=\(LocalStatus.version) launchedBy=\(env[WatchdogReason.envKey] == nil ? "user" : "watchdog") previousExit=\(previous?.rawValue ?? "none")", .host)
         if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)", .watchdog) }
         let fromLegacy = LegacyAgent.launchedUs
@@ -56,7 +54,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             Log.info("launched by the old login agent but the watchdog is \(KeepRunning.describe(KeepRunning.status)); staying up")
         }
-        setUpMenu()
+        refresh()
         Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), keep running \(keep) (watchdog \(KeepRunning.describe(KeepRunning.status)))", .host)
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
@@ -120,15 +118,6 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
-    func setUpMenu() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let menu = NSMenu()
-        menu.delegate = self
-        item.menu = menu
-        statusItem = item
-        refresh()
-    }
-
     var menuModel: HostMenuModel {
         HostMenuModel(state: state, macName: HTTPServer.computerName,
                       address: tailscaleAddress(), shared: host.sharedWindows, screenLocked: Session.isScreenLocked,
@@ -137,22 +126,13 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       controlOverridden: guests.switchOverridden, asks: guests.pendingAsks.map { ($0.who, $0.link.label) })
     }
 
-    func refresh() {
-        let n = host.openWindowCount
-        let symbol = state.hasPrefix("Error") ? "exclamationmark.triangle" : n > 0 ? "macwindow.on.rectangle" : "macwindow"
-        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Porthole Host")
-        statusItem?.button?.toolTip = hostMenuTitle(state: state, openWindows: n)
-        if let menu = statusItem?.menu { menuNeedsUpdate(menu) }
+    var menuSymbol: String {
+        state.hasPrefix("Error") ? "exclamationmark.triangle" : host.openWindowCount > 0 ? "macwindow.on.rectangle" : "macwindow"
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        let fresh = StatusMenu.build(menuModel, target: self)
-        let items = fresh.items
-        fresh.removeAllItems()
-        menu.removeAllItems()
-        menu.autoenablesItems = false
-        for item in items { menu.addItem(item) }
-    }
+    var menuToolTip: String { hostMenuTitle(state: state, openWindows: host.openWindowCount) }
+
+    func refresh() { onRefresh?() }
 
     @objc func copyLink() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(browserLink, forType: .string) }
     @objc func copyPassword() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(config.password, forType: .string) }
@@ -166,15 +146,11 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func denyAsk(_ item: NSMenuItem) { if let who = item.representedObject as? String { guests.answer(who, allow: false) } }
     @objc func openScreenSettings() { HostSystemSettings.openScreenRecording() }
     @objc func openAXSettings() { HostSystemSettings.openAccessibility() }
-    @objc func showSettings() {
-        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password }, trust: trust, guests: guests)
-        settingsWindow = w
-        w.present()
-    }
-    @objc func quit() { quitHost(marker: .quit) }
+    @objc func showSettings() { onSettings?() }
+    @objc func quit() { if let onQuit { onQuit() } else { quitHost(marker: .quit) } }
 
     func quitHost(marker: ExitMarker) {
-        guard !isGallery else { NSApp.terminate(nil); return }
+        guard !isGallery, started else { NSApp.terminate(nil); return }
         HostFiles.writeMarker(marker)
         Log.info("quitting (\(marker.rawValue))", .host)
         liftCurtain()
@@ -183,8 +159,8 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    func applicationWillTerminate(_ note: Notification) {
-        guard !isGallery else { return }
+    func willTerminate() {
+        guard !isGallery, started else { return }
         HostFiles.writeMarker(.session, unlessPresent: true)
         Log.info("terminating (\(HostFiles.readMarker()?.rawValue ?? ExitMarker.session.rawValue))", .host)
         liftCurtain()
@@ -209,22 +185,5 @@ enum HostSignals {
             source.resume()
             return source
         }
-    }
-}
-
-switch HostCommand.parse(arguments: Array(CommandLine.arguments.dropFirst()), environment: ProcessInfo.processInfo.environment) {
-case .agentPlist:
-    FileHandle.standardOutput.write(LaunchAgent.plistData(executableName: Bundle.main.executableURL?.lastPathComponent ?? "porthole-host") ?? Data())
-case .watchdog:
-    WatchdogRunner.run()
-case .app:
-    if let status = HostCLI.run(Array(CommandLine.arguments.dropFirst())) { exit(status) }
-    HostSignals.install()
-    MainActor.assumeIsolated {
-        let app = NSApplication.shared
-        let delegate = HostApp()
-        app.delegate = delegate
-        app.setActivationPolicy(.accessory)
-        app.run()
     }
 }

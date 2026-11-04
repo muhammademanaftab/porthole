@@ -17,6 +17,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_HOME", "host, viewer", "folder for identity, pairing, config and markers (a second, isolated instance)", "~/Library/Application Support/Porthole"),
         EnvFlag("PORTHOLE_LOG", "host, viewer", "debug: verbose (debug-level) lines for this process, like Settings > Verbose logging", "info"),
         EnvFlag("PORTHOLE_VERBOSE", "host, viewer", "1: the same as PORTHOLE_LOG=debug", "0"),
+        EnvFlag("PORTHOLE_HOSTING", "app", "0 or 1: whether this run shares this Mac (the host role), without changing the saved Share this Mac switch", "the saved switch (on after an upgrade from Porthole Host, off on a fresh install)"),
         EnvFlag("PORTHOLE_WATCHDOG", "host", "0 or 1: whether the watchdog watches this run, without changing the saved Keep running switch", "the saved switch"),
         EnvFlag("PORTHOLE_WATCHDOG_HANG_SECS", "watchdog", "seconds without a heartbeat before the watchdog samples and kills a hung host (at least 15)", "60"),
         EnvFlag("PORTHOLE_STAGE_IDLE_SECS", "host", "seconds the empty Stage waits before it is released (at least 5)", "600"),

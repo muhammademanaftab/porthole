@@ -18,9 +18,32 @@ struct HostMenuModel {
 
 @MainActor
 enum StatusMenu {
-    static func build(_ m: HostMenuModel, target: HostApp) -> NSMenu {
+    static func build(_ m: HostMenuModel?, host: HostApp?, app: ViewerApp) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        if let m, let host { addHost(m, to: menu, target: host) } else { addNotSharing(to: menu, app: app) }
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem.sectionHeader(title: "Viewing Other Macs"))
+        if app.connection != nil {
+            add(menu, "Show Windows on \(app.hostName)", #selector(ViewerApp.showPicker), "0", app, symbol: "square.grid.2x2")
+        }
+        add(menu, "Connect to a Mac…", #selector(ViewerApp.connectToHost), "k", app, symbol: "desktopcomputer.and.arrow.down")
+        menu.addItem(.separator())
+        add(menu, "Settings…", #selector(ViewerApp.showSettings as (ViewerApp) -> () -> Void), ",", app)
+        add(menu, "Quit Porthole", #selector(ViewerApp.quitApp), "q", app)
+        return menu
+    }
+
+    private static func addNotSharing(to menu: NSMenu, app: ViewerApp) {
+        let status = info("Not sharing this Mac", bold: true)
+        status.image = dot(.systemGray)
+        menu.addItem(status)
+        menu.addItem(info(HTTPServer.computerName, bold: false))
+        menu.addItem(.separator())
+        add(menu, "Share This Mac…", #selector(ViewerApp.showSharingSettings), "", app, symbol: "macwindow.on.rectangle")
+    }
+
+    private static func addHost(_ m: HostMenuModel, to menu: NSMenu, target: HostApp) {
 
         let ok = m.state == "Sharing"
         let failed = m.state.hasPrefix("Error")
@@ -91,10 +114,6 @@ enum StatusMenu {
             }
         }
 
-        menu.addItem(.separator())
-        add(menu, "Settings…", #selector(HostApp.showSettings), ",", target)
-        add(menu, "Quit Porthole Host", #selector(HostApp.quit), "q", target)
-        return menu
     }
 
     private static func info(_ text: String, bold: Bool) -> NSMenuItem {

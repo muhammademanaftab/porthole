@@ -89,6 +89,8 @@ public let galleryScreens = ["connect", "code", "picker", "loading", "empty", "l
 
 public let hostGalleryScreens = ["settings", "sharing", "help", "menu", "pairing"]
 
+public let appGalleryScreens = galleryScreens + hostGalleryScreens.filter { !galleryScreens.contains($0) }
+
 public func galleryScreen(_ args: [String], screens: [String] = galleryScreens) -> String? {
     guard args.first == "gallery", let first = screens.first else { return nil }
     if args.count == 1 { return first }

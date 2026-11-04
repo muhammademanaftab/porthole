@@ -45,9 +45,7 @@ enum Gallery {
             w.makeKeyAndOrderFront(nil)
             keep.append(w)
         case "settings":
-            let w = ViewerSettingsWindow()
-            keep.append(w)
-            w.present(tab: 2)
+            (NSApp.delegate as? ViewerApp)?.showSettings(tab: .stream)
         default:
             _ = connect()
         }

@@ -364,7 +364,7 @@ public enum HostPairCommand: Equatable, Sendable {
 
 public let hostUsage = """
 usage: porthole-host [command]
-  (no command)     run Porthole Host
+  (no command)     run Porthole (the viewer, and the host while Share this Mac is on)
   paircode         print this Mac's current pairing code (asks the running host; works over SSH)
   devices          print this Mac's device ID and the Macs paired with it
   unpair <name|id> forget a paired Mac; it loses access immediately

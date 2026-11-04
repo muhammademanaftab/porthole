@@ -207,7 +207,7 @@ public enum RestartDecision: Equatable, Sendable {
 public func restartDecision(hasOpenWindow: Bool, agentEnabled: Bool) -> RestartDecision {
     guard hasOpenWindow else { return .refuse("Open a window from that Mac first: only a viewer with a window open can restart its host.") }
     guard agentEnabled else {
-        return .refuse("Keep Porthole Host running is off on that Mac, so it can't restart itself. Turn it on in Porthole Host Settings.")
+        return .refuse("Keep Porthole running is off on that Mac, so it can't restart itself. Turn it on in Porthole Settings › Sharing.")
     }
     return .restart
 }

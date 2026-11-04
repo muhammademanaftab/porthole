@@ -24,7 +24,7 @@ enum Sounds {
 
     static var enabled: Bool {
         let ui = UserDefaults.standard.object(forKey: "com.apple.sound.uiaudio.enabled")
-        return SoundEffects.enabled(setting: ViewerSettingsWindow.current.soundEffects) && SoundEffects.systemAllows(ui)
+        return SoundEffects.enabled(setting: ViewerPrefs.current.soundEffects) && SoundEffects.systemAllows(ui)
     }
 
     static func play(_ cue: SoundCue) {

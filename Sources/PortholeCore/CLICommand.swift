@@ -99,13 +99,13 @@ Diagnostics
   doctor [--quick] [--windows] [--json]   check this Mac: roles, permissions, host, watchdog, ports, Tailscale, Bonjour, pairing, Stage, recent problems
   log [tail|-f|grep RE|path|--stats] [-n N] [-c category] [-l level] [-r role] [--since 30s|10m|2h] [--json]
   trail [minutes] [--since dur] [--all] [--json]   one timeline of the events that matter
-  why-quit [n]                            why the last n runs of Porthole Host ended
+  why-quit [n]                            why the last n runs of Porthole (sharing this Mac) ended
   report [--out path] [--since dur] [--no-logs] [--no-system] [--no-trust] [description]
                                           zip logs, samples and readouts to ~/Desktop; nothing is uploaded
   env [--set] [--json]                    every PORTHOLE_* flag with its meaning, default and current value
   version
 
-Sharing (asks the running Porthole Host)
+Sharing (asks the running Porthole, with Share this Mac on)
   share [window] [--control] [--wifi] [--ttl dur] [--json]
                                           browser links to one window (ID or part of its title) or to the
                                           window picker: one for this Wi-Fi and one for the tailnet; view only

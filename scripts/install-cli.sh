@@ -22,8 +22,8 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET=""
-for c in "/Applications/Porthole.app/Contents/MacOS/porthole" "/Applications/Porthole Host.app/Contents/MacOS/porthole" \
-         "$ROOT/dist/Porthole.app/Contents/MacOS/porthole" "$ROOT/dist/Porthole Host.app/Contents/MacOS/porthole"; do
+for c in "/Applications/Porthole.app/Contents/MacOS/porthole" "$ROOT/dist/Porthole.app/Contents/MacOS/porthole" \
+         "/Applications/Porthole Host.app/Contents/MacOS/porthole"; do
   if [ -x "$c" ]; then TARGET=$c; break; fi
 done
 if [ -z "$TARGET" ]; then echo "No porthole binary found in /Applications or dist/; run scripts/bundle.sh first." >&2; exit 1; fi

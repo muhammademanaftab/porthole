@@ -2,66 +2,13 @@ import AppKit
 import PortholeCore
 
 @MainActor
-final class ViewerSettingsWindow: NSWindow {
-    private let tabs = ViewerSettingsTabs()
-    private let general = ViewerGeneralPane()
-    var onChange: ((ViewerSettings) -> Void)? {
-        didSet { general.onChange = onChange; windows.onChange = onChange; stream.onChange = onChange }
-    }
-    private let windows = ViewerWindowsPane()
-    private let stream = ViewerStreamPane()
-
-    init() {
-        super.init(contentRect: CGRect(x: 0, y: 0, width: 520, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        isReleasedWhenClosed = false
-        tabs.tabStyle = .toolbar
-        for (pane, label, symbol) in [(general as NSViewController, "General", "gearshape"),
-                                      (windows, "Windows", "macwindow"),
-                                      (stream, "Stream", "dial.medium")] {
-            let item = NSTabViewItem(viewController: pane)
-            item.label = label
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-            tabs.addTabViewItem(item)
-        }
-        contentViewController = tabs
-        toolbarStyle = .preference
-        title = "General"
-    }
-
-    func present(tab: Int? = nil) {
-        if let tab { tabs.selectedTabViewItemIndex = tab }
-        title = tabs.tabViewItems[tabs.selectedTabViewItemIndex].label
-        tabs.fitWindow(animate: false)
-        if !isVisible { center() }
-        NSApp.activate()
-        makeKeyAndOrderFront(nil)
-    }
-
-    func reflect(_ s: ViewerSettings) { general.reflect(s) }
-
+enum ViewerPrefs {
     static var current: ViewerSettings { ViewerSettings(lookup: { UserDefaults.standard.object(forKey: $0) }) }
 
     static func save(_ s: ViewerSettings) {
         for (key, value) in s.stored {
             if let value { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         }
-    }
-}
-
-final class ViewerSettingsTabs: NSTabViewController {
-    override func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
-        super.tabView(tabView, didSelect: item)
-        if let label = item?.label { view.window?.title = label }
-        fitWindow(animate: view.window?.isVisible == true)
-    }
-
-    func fitWindow(animate: Bool) {
-        guard tabViewItems.indices.contains(selectedTabViewItemIndex),
-              let pane = tabViewItems[selectedTabViewItemIndex].viewController?.view, let w = view.window else { return }
-        pane.layoutSubtreeIfNeeded()
-        var frame = w.frameRect(forContentRect: NSRect(origin: .zero, size: NSSize(width: 520, height: pane.fittingSize.height)))
-        frame.origin = NSPoint(x: w.frame.minX, y: w.frame.maxY - frame.height)
-        w.setFrame(frame, display: true, animate: animate)
     }
 }
 
@@ -103,7 +50,7 @@ enum ViewerForm {
             content.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -24),
             content.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 20),
             content.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -20),
-            v.widthAnchor.constraint(equalToConstant: 520),
+            v.widthAnchor.constraint(equalToConstant: 560),
         ])
         return v
     }
@@ -127,9 +74,9 @@ class ViewerPane: NSViewController {
     var onChange: ((ViewerSettings) -> Void)?
 
     func update(_ change: (inout ViewerSettings) -> Void) {
-        var s = ViewerSettingsWindow.current
+        var s = ViewerPrefs.current
         change(&s)
-        ViewerSettingsWindow.save(s)
+        ViewerPrefs.save(s)
         onChange?(s)
     }
 }
@@ -144,11 +91,11 @@ final class ViewerGeneralPane: ViewerPane {
         title = "General"
         sound.target = self
         sound.action = #selector(toggleSound)
-        sound.state = ViewerSettingsWindow.current.playSound ? .on : .off
+        sound.state = ViewerPrefs.current.playSound ? .on : .off
         effects.target = self
         effects.action = #selector(toggleEffects)
-        effects.state = ViewerSettingsWindow.current.soundEffects ? .on : .off
-        route = ViewerForm.popUp(RouteMode.allCases, label: \.label, selected: ViewerSettingsWindow.current.route,
+        effects.state = ViewerPrefs.current.soundEffects ? .on : .off
+        route = ViewerForm.popUp(RouteMode.allCases, label: \.label, selected: ViewerPrefs.current.route,
                                  target: self, action: #selector(changeRoute))
         let grid = ViewerForm.grid([
             [NSTextField(labelWithString: "Sound:"),
@@ -182,7 +129,7 @@ final class ViewerWindowsPane: ViewerPane {
         title = "Windows"
         hide.target = self
         hide.action = #selector(toggleHide)
-        hide.state = ViewerSettingsWindow.current.hideTitleBar ? .on : .off
+        hide.state = ViewerPrefs.current.hideTitleBar ? .on : .off
         let grid = ViewerForm.grid([
             [NSTextField(labelWithString: "Title bar:"),
              ViewerForm.column([hide, ViewerForm.note("Shared windows show their title bar only while the pointer is near the top. Saved now; shared windows will follow it in a coming version.")])],
@@ -201,7 +148,7 @@ final class ViewerStreamPane: ViewerPane {
 
     override func loadView() {
         title = "Stream"
-        let s = ViewerSettingsWindow.current
+        let s = ViewerPrefs.current
         bitrate = ViewerForm.popUp(ViewerSettings.bitrateChoices, label: ViewerSettings.bitrateLabel, selected: s.bitrateKbps,
                                    target: self, action: #selector(changed))
         fps = ViewerForm.popUp(ViewerSettings.fpsChoices, label: ViewerSettings.fpsLabel, selected: s.fps, target: self, action: #selector(changed))

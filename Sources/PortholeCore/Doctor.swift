@@ -89,7 +89,7 @@ public func renderDoctor(_ checks: [DoctorCheck], header: String) -> String {
 }
 
 public func hostRunningCheck(status: [String: Any]?, pids: [Int32], now: Date = Date()) -> DoctorCheck {
-    guard !pids.isEmpty else { return DoctorCheck("Host", "running", .fail, "Porthole Host isn't running on this Mac.") }
+    guard !pids.isEmpty else { return DoctorCheck("Host", "running", .fail, "Porthole isn't sharing this Mac right now (it isn't running, or Share this Mac is off).") }
     guard let status else {
         return DoctorCheck("Host", "running", .warn, "pid \(pids.map(String.init).joined(separator: ", ")), but it didn't answer on 127.0.0.1 (older build, still starting, or hung).")
     }

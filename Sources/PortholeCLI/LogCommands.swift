@@ -124,9 +124,9 @@ enum WhyQuitCommand {
 
     static func text(_ n: Int) -> String {
         let all = runs()
-        guard !all.isEmpty else { return "No Porthole Host runs in \(Paths.logs.path)." }
+        guard !all.isEmpty else { return "No Porthole host runs in \(Paths.logs.path)." }
         let shown = all.suffix(n).reversed()
-        var out = ["Last \(shown.count) of \(all.count) run(s) of Porthole Host, newest first (UTC):"]
+        var out = ["Last \(shown.count) of \(all.count) run(s) of Porthole sharing this Mac, newest first (UTC):"]
         for r in shown { out.append(r.render()) }
         return out.joined(separator: "\n")
     }
@@ -150,7 +150,7 @@ enum VersionCommand {
         print("porthole \(SystemFacts.bundleVersion ?? portholeVersion) (protocol \(portholeProtocolVersion))")
         print("  binary \(Paths.executable.path)")
         if let host = Procs.hosts().isEmpty ? nil : LocalHost.status(timeout: 2) {
-            print("  running Porthole Host \(host["version"] as? String ?? "?") (pid \(host["pid"] as? Int ?? 0))")
+            print("  running Porthole \(host["version"] as? String ?? "?") (pid \(host["pid"] as? Int ?? 0))")
         }
         return 0
     }

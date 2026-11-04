@@ -5,8 +5,7 @@ let package = Package(
     name: "Porthole",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "porthole-host", targets: ["PortholeHost"]),
-        .executable(name: "porthole-view", targets: ["PortholeView"]),
+        .executable(name: "porthole-host", targets: ["PortholeApp"]),
         .executable(name: "porthole-tile", targets: ["PortholeTile"]),
         .executable(name: "porthole", targets: ["PortholeCLI"]),
     ],
@@ -16,11 +15,8 @@ let package = Package(
     targets: [
         .target(name: "PortholeCore"),
         .target(name: "VirtualDisplayBridge", linkerSettings: [.linkedFramework("CoreGraphics")]),
-        .executableTarget(name: "PortholeHost", dependencies: [
+        .executableTarget(name: "PortholeApp", dependencies: [
             "PortholeCore", "VirtualDisplayBridge", .product(name: "LiveKit", package: "client-sdk-swift"),
-        ]),
-        .executableTarget(name: "PortholeView", dependencies: [
-            "PortholeCore", .product(name: "LiveKit", package: "client-sdk-swift"),
         ]),
         .executableTarget(name: "PortholeTile", dependencies: ["PortholeCore"]),
         .executableTarget(name: "PortholeCLI", dependencies: ["PortholeCore"]),

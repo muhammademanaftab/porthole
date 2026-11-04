@@ -41,6 +41,12 @@ enum Processes {
         return ProcessArguments(procargs: Array(buf.prefix(size)))
     }
 
+    static func path(_ pid: pid_t) -> String? {
+        var buf = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path
+    }
+
     static func isWatchdog(_ pid: pid_t) -> Bool {
         arguments(pid).isWatchdog
     }

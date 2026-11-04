@@ -4,20 +4,28 @@ import PortholeCore
 
 @MainActor
 final class SettingsWindow: NSWindow, NSWindowDelegate {
-    private let tabs = SettingsTabs()
-    private let general: GeneralPane
-    private let sharing: SharingPane
-    private let help = HelpPane()
+    enum Tab: Int { case general, windows, stream, sharing, help }
 
-    init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust, guests: HostGuests) {
-        general = GeneralPane(deviceID: trust.identity.id)
-        sharing = SharingPane(link: link, password: password, trust: trust, guests: guests)
+    private let tabs = SettingsTabs()
+    private let general = ViewerGeneralPane()
+    private let windows = ViewerWindowsPane()
+    private let stream = ViewerStreamPane()
+    let sharing: SharingTab
+    private let help = HelpPane()
+    var onChange: ((ViewerSettings) -> Void)? {
+        didSet { general.onChange = onChange; windows.onChange = onChange; stream.onChange = onChange }
+    }
+
+    init(sharing: SharingTab) {
+        self.sharing = sharing
         super.init(contentRect: CGRect(x: 0, y: 0, width: 560, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         isReleasedWhenClosed = false
         delegate = self
         tabs.tabStyle = .toolbar
         for (pane, label, symbol) in [(general as NSViewController, "General", "gearshape"),
-                                      (sharing, "Sharing This Mac", "macwindow.on.rectangle"),
+                                      (windows, "Windows", "macwindow"),
+                                      (stream, "Stream", "dial.medium"),
+                                      (sharing, "Sharing", "macwindow.on.rectangle"),
                                       (help, "Help", "questionmark.circle")] {
             let item = NSTabViewItem(viewController: pane)
             item.label = label
@@ -27,11 +35,12 @@ final class SettingsWindow: NSWindow, NSWindowDelegate {
         contentViewController = tabs
         toolbarStyle = .preference
         title = "General"
+        sharing.onResize = { [weak self] in self?.tabs.fitWindow(animate: self?.isVisible == true) }
     }
 
-    func present(tab: Int? = nil) {
+    func present(tab: Tab? = nil) {
         refresh()
-        if let tab { tabs.selectedTabViewItemIndex = tab }
+        if let tab { tabs.selectedTabViewItemIndex = tab.rawValue }
         title = tabs.tabViewItems[safe: tabs.selectedTabViewItemIndex]?.label ?? title
         tabs.fitWindow(animate: false)
         if !isVisible { center() }
@@ -39,13 +48,99 @@ final class SettingsWindow: NSWindow, NSWindowDelegate {
         makeKeyAndOrderFront(nil)
     }
 
+    func reflect(_ s: ViewerSettings) { general.reflect(s) }
+
     func refresh() {
-        general.refresh()
         sharing.refresh()
         help.refresh()
     }
 
     func windowDidBecomeKey(_ notification: Notification) { refresh() }
+}
+
+@MainActor
+final class SharingTab: NSViewController {
+    private let toggle = NSButton(checkboxWithTitle: "Share this Mac", target: nil, action: nil)
+    private let toggleNote = Form.note("")
+    private let stack = NSStackView()
+    private var body: [NSViewController] = []
+    private weak var shown: HostApp?
+    private let host: () -> HostApp?
+    private let hostingOn: () -> Bool
+    private let overridden: Bool
+    private let change: (Bool) -> Void
+    private let link: (() -> String)?
+    private let password: (() -> String)?
+    var onResize: (() -> Void)?
+
+    init(host: @escaping () -> HostApp?, hostingOn: @escaping () -> Bool, overridden: Bool, change: @escaping (Bool) -> Void,
+         link: (() -> String)? = nil, password: (() -> String)? = nil) {
+        self.host = host
+        self.hostingOn = hostingOn
+        self.overridden = overridden
+        self.change = change
+        self.link = link
+        self.password = password
+        super.init(nibName: nil, bundle: nil)
+        title = "Sharing"
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        toggle.target = self
+        toggle.action = #selector(toggled)
+        let grid = Form.grid([[Form.label("This Mac:"), Form.column([toggle, toggleNote])]])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.addArrangedSubview(Form.pane(grid))
+        view = stack
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        refresh()
+    }
+
+    func refresh() {
+        guard isViewLoaded else { return }
+        let on = hostingOn()
+        toggle.state = on ? .on : .off
+        toggle.isEnabled = !overridden
+        toggleNote.stringValue = overridden
+            ? "Set by \(HostingSwitch.envKey) for this run."
+            : on ? "Your other Macs and browsers can view this Mac's windows. Porthole stays in the menu bar while no window from another Mac is open here."
+            : "Off: this Mac only views other Macs. On: it shares its windows too, like Porthole Host did, and keeps a menu-bar icon."
+        let current = on ? host() : nil
+        if current !== shown || (current != nil && body.isEmpty) { rebuild(current) }
+        for pane in body {
+            (pane as? GeneralPane)?.refresh()
+            (pane as? SharingPane)?.refresh()
+        }
+    }
+
+    private func rebuild(_ app: HostApp?) {
+        for pane in body { pane.view.removeFromSuperview(); pane.removeFromParent() }
+        body = []
+        shown = app
+        if let app {
+            let link = self.link ?? { [unowned app] in app.browserLink }
+            let password = self.password ?? { [unowned app] in app.config.password }
+            body = [GeneralPane(deviceID: app.trust.identity.id), SharingPane(link: link, password: password, trust: app.trust, guests: app.guests)]
+            for pane in body {
+                addChild(pane)
+                stack.addArrangedSubview(pane.view)
+            }
+        }
+        onResize?()
+    }
+
+    @objc private func toggled() {
+        let on = toggle.state == .on
+        change(on)
+        DispatchQueue.main.async { [weak self] in self?.refresh() }
+    }
 }
 
 final class SettingsTabs: NSTabViewController {
@@ -123,12 +218,12 @@ enum Form {
         return b
     }
 
-    static func pane(_ content: NSView) -> NSView {
+    static func pane(_ content: NSView, top: CGFloat = 24) -> NSView {
         let v = NSView()
         content.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(content)
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: v.topAnchor, constant: 24),
+            content.topAnchor.constraint(equalTo: v.topAnchor, constant: top),
             content.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -24),
             content.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 20),
             content.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -20),
@@ -152,7 +247,7 @@ enum Form {
 
 @MainActor
 final class GeneralPane: NSViewController {
-    private let keepRunning = NSButton(checkboxWithTitle: "Keep Porthole Host running on this Mac", target: nil, action: nil)
+    private let keepRunning = NSButton(checkboxWithTitle: "Keep Porthole running on this Mac", target: nil, action: nil)
     private let keepStatus = NSTextField(wrappingLabelWithString: "")
     private let approve = NSButton(title: "Open Login Items…", target: nil, action: nil)
     private let deviceID: String
@@ -190,12 +285,12 @@ final class GeneralPane: NSViewController {
         id.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         id.textColor = .secondaryLabelColor
         let grid = Form.grid([
-            [Form.label("This Mac:"), name],
+            [Form.label("Name:"), name],
             [Form.label("Device ID:"), id],
             [Form.label("Startup:"), keep],
         ])
         grid.row(at: 2).topPadding = 8
-        view = Form.pane(grid)
+        view = Form.pane(grid, top: 0)
     }
 
     override func viewWillAppear() {
@@ -212,7 +307,7 @@ final class GeneralPane: NSViewController {
         if let lastError {
             keepStatus.stringValue = "Couldn't change it: \(lastError)"
         } else if on && status == .requiresApproval {
-            keepStatus.stringValue = "macOS needs your approval: turn Porthole Host on in Login Items."
+            keepStatus.stringValue = "macOS needs your approval: turn Porthole on in Login Items."
         } else if on && status != .enabled {
             keepStatus.stringValue = "The watchdog isn't registered (\(KeepRunning.describe(status)))."
         } else {
@@ -257,7 +352,7 @@ final class SharingPane: NSViewController {
         self.trust = trust
         self.guests = guests
         super.init(nibName: nil, bundle: nil)
-        title = "Sharing This Mac"
+        title = "Sharing"
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -327,7 +422,7 @@ final class SharingPane: NSViewController {
         grid.row(at: 2).topPadding = 10
         grid.row(at: 4).topPadding = 10
         grid.row(at: 5).topPadding = 10
-        view = Form.pane(grid)
+        view = Form.pane(grid, top: 0)
     }
 
     override func viewWillAppear() {
@@ -379,7 +474,7 @@ final class SharingPane: NSViewController {
         let mode = WholeMacMode.allCases[max(0, wholeMac.indexOfSelectedItem)]
         UserDefaults.standard.set(mode.rawValue, forKey: WholeMac.settingKey)
         Log.info("settings: allow whole mac \(mode.rawValue)")
-        (NSApp.delegate as? HostApp)?.host.wholeMacModeChanged()
+        (NSApp.delegate as? ViewerApp)?.hosting?.host.wholeMacModeChanged()
         refresh()
     }
 
@@ -387,7 +482,7 @@ final class SharingPane: NSViewController {
         let on = curtain.state == .on
         UserDefaults.standard.set(on, forKey: CurtainSetting.settingKey)
         Log.info("settings: curtain while the whole mac is shared \(on ? "on" : "off")")
-        (NSApp.delegate as? HostApp)?.host.wholeMacChanged()
+        (NSApp.delegate as? ViewerApp)?.hosting?.host.wholeMacChanged()
     }
 
     @objc private func pairNew() { trust.presentNewCode() }
@@ -415,7 +510,7 @@ final class HelpPane: NSViewController {
         verbose.action = #selector(toggleVerbose)
         let logs = Form.button("Open Log Folder", self, #selector(openLogFolder), symbol: "folder")
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development build"
-        let about = Form.label("Porthole Host \(version)")
+        let about = Form.label("Porthole \(version)")
         about.textColor = .secondaryLabelColor
         let grid = Form.grid([
             [Form.label("Logs:"), Form.column([logs, Form.note("~/Library/Logs/Porthole. Nothing is uploaded.")], spacing: 6)],

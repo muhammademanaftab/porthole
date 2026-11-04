@@ -20,18 +20,26 @@ enum DoctorCommand {
 
     static func checks(quick: Bool) -> [DoctorCheck] {
         var out: [DoctorCheck] = []
-        let hostApp = Tools.app(bundleID: Tools.hostBundleID, name: "Porthole Host")
-        let viewerApp = Tools.app(bundleID: Tools.viewerBundleID, name: "Porthole")
+        let app = Tools.oneApp
+        let oldHost = Tools.oldHostApp
+        let oldViewer = Tools.oldViewerApp
         let config = savedConfig()
         let viewerDefaults = viewerDefaults()
         let viewerTrust = ViewerTrust.decode(viewerDefaults?.data(forKey: "pairedHosts"))
         let recents = RecentPortals.load(in: Paths.support)
+        let hosting = savedHosting()
+        let isHost = hosting ?? (config != nil || oldHost != nil)
+        let place = { (url: URL?) in url.map { " (\($0.path))" } ?? "" }
         var roles: [String] = []
-        if config != nil || hostApp != nil { roles.append("host" + (hostApp.map { " (\($0.path))" } ?? "")) }
-        if viewerApp != nil || !viewerTrust.hosts.isEmpty || !recents.isEmpty { roles.append("viewer" + (viewerApp.map { " (\($0.path))" } ?? "")) }
-        out.append(DoctorCheck("This Mac", "roles", roles.isEmpty ? .warn : .info, roles.isEmpty ? "neither Porthole Host nor Porthole is installed or has run here" : roles.joined(separator: "\n")))
+        if isHost { roles.append("host: Share this Mac is on" + place(app ?? oldHost)) }
+        else if app != nil { roles.append("host: off (Settings › Sharing › Share this Mac)") }
+        if app != nil || oldViewer != nil || !viewerTrust.hosts.isEmpty || !recents.isEmpty { roles.append("viewer" + place(app ?? oldViewer)) }
+        out.append(DoctorCheck("This Mac", "roles", roles.isEmpty ? .warn : .info, roles.isEmpty ? "Porthole isn't installed and hasn't run here" : roles.joined(separator: "\n")))
+        let leftovers = [oldHost, oldViewer].compactMap { $0 }.filter { $0.standardizedFileURL != app?.standardizedFileURL }
+        if app != nil && !leftovers.isEmpty {
+            out.append(DoctorCheck("This Mac", "old apps", .warn, "still installed, replaced by \(app?.path ?? "Porthole.app"): \(leftovers.map(\.path).joined(separator: ", "))"))
+        }
 
-        let isHost = config != nil || hostApp != nil
         if isHost { out += hostChecks(config: config, quick: quick) }
 
         out += networkChecks(status: isHost ? cachedStatus : nil)
@@ -56,9 +64,9 @@ enum DoctorCommand {
         if let status {
             let sr = status["screenRecording"] as? Bool ?? false, ax = status["accessibility"] as? Bool ?? false
             out.append(DoctorCheck("Host", "screen recording", sr ? .ok : .fail,
-                                   sr ? "granted (as the host sees it)" : "missing: System Settings > Privacy & Security > Screen & System Audio Recording, turn on Porthole Host"))
+                                   sr ? "granted (as the host sees it)" : "missing: System Settings > Privacy & Security > Screen & System Audio Recording, turn on Porthole"))
             out.append(DoctorCheck("Host", "accessibility", ax ? .ok : .fail,
-                                   ax ? "granted (as the host sees it)" : "missing: System Settings > Privacy & Security > Accessibility, turn on Porthole Host; typing and clicks won't arrive"))
+                                   ax ? "granted (as the host sees it)" : "missing: System Settings > Privacy & Security > Accessibility, turn on Porthole; typing and clicks won't arrive"))
             if status["screenLocked"] as? Bool == true {
                 out.append(DoctorCheck("Host", "screen", .warn, "locked: a locked screen hides every window from capture"))
             }
@@ -70,10 +78,10 @@ enum DoctorCommand {
         for (name, port) in [("web port", http), ("LiveKit port", lk)] {
             let up = portListening(port)
             let st: CheckStatus = up == !pids.isEmpty ? (up ? .ok : .fail) : (up ? .warn : .fail)
-            let detail = up ? (pids.isEmpty ? "\(port) is taken by something other than Porthole Host" : "\(port) listening")
+            let detail = up ? (pids.isEmpty ? "\(port) is taken by something other than Porthole" : "\(port) listening")
                 : "\(port) not listening" + (pids.isEmpty ? " (the host isn't running)" : "")
             if up, !pids.isEmpty, port == lk, let owner = listenerParent(port), !pids.contains(owner) {
-                out.append(DoctorCheck("Host", name, .fail, "\(port) is held by a livekit-server the running host didn't start (parent \(owner)); quit Porthole Host, kill it and start again"))
+                out.append(DoctorCheck("Host", name, .fail, "\(port) is held by a livekit-server the running host didn't start (parent \(owner)); quit Porthole, kill it and start again"))
                 continue
             }
             out.append(DoctorCheck("Host", name, st, detail))

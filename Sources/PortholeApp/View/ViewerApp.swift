@@ -14,10 +14,15 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var clipTimer: Timer?
     let tiles = TileManager()
     var icons: [UInt32: Data] = [:]
-    var muted = !ViewerSettingsWindow.current.playSound
+    var muted = !ViewerPrefs.current.playSound
     var muteItem: NSMenuItem?
     var routeItem: NSMenuItem?
-    var settingsWindow: ViewerSettingsWindow?
+    var settingsWindow: SettingsWindow?
+    var hosting: HostApp?
+    var menuBar: MenuBar?
+    let idleBeats = Heartbeats()
+    let environment = ProcessInfo.processInfo.environment
+    var presenceObservers: [NSObjectProtocol] = []
     var hostName = ""
     var connectWindow: ConnectWindow?
     let discovery = HostDiscovery()
@@ -33,15 +38,20 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollClipboard() }
         }
-        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst())) {
-            Gallery.show(screen)
+        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst()), screens: appGalleryScreens) {
+            showGallery(screen)
             return
         }
+        let sharing = startRoles()
         listenForOpenRequests()
         RouteFinder.startBrowsingUnlessTailscaleOnly()
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
             connect(host: host, credential: .password(pw))
+            return
+        }
+        if sharing && args.host == nil {
+            VLog.info("sharing this Mac: starting in the menu bar; the viewer opens from its menu or the Dock")
             return
         }
         let host = args.host ?? UserDefaults.standard.string(forKey: "host")
@@ -59,7 +69,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Porthole", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings as () -> Void), keyEquivalent: ",")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "0")
         appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "k")
@@ -71,7 +81,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Porthole", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Porthole", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Porthole", action: #selector(quitApp), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let edit = NSMenu(title: "Edit")
@@ -117,11 +127,17 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         for p in portals.values { p.showRoute(route) }
     }
 
-    @objc func showPicker() { picker?.makeKeyAndOrderFront(nil); connection?.requestList() }
+    @objc func showPicker() {
+        guard let picker else { showConnect(address: nil); return }
+        updatePresence(adding: picker)
+        picker.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        connection?.requestList()
+    }
     @objc func toggleMute(_ item: NSMenuItem) {
-        var s = ViewerSettingsWindow.current
+        var s = ViewerPrefs.current
         s.playSound = muted
-        ViewerSettingsWindow.save(s)
+        ViewerPrefs.save(s)
         applySettings(s)
     }
 
@@ -133,17 +149,22 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         for p in portals.values { p.applyTitleBar(global: Self.hideTitleBar(s)) }
     }
 
-    @objc func showSettings() {
-        let w = settingsWindow ?? ViewerSettingsWindow()
+    @objc func showSettings() { showSettings(tab: nil) }
+
+    func showSettings(tab: SettingsWindow.Tab?, link: (() -> String)? = nil, password: (() -> String)? = nil) {
+        let w = settingsWindow ?? SettingsWindow(sharing: SharingTab(
+            host: { [weak self] in self?.hosting }, hostingOn: { [weak self] in self?.hosting != nil },
+            overridden: HostingSwitch.overridden(environment), change: { [weak self] on in self?.setHosting(on) },
+            link: link, password: password))
         w.onChange = { [weak self] s in self?.applySettings(s) }
         settingsWindow = w
-        w.present()
+        w.present(tab: tab)
     }
 
     @objc func restartHost() {
         guard let c = connection else { return }
         let alert = NSAlert()
-        alert.messageText = "Restart Porthole Host on \(c.hostAddress)?"
+        alert.messageText = "Restart Porthole on \(c.hostAddress)?"
         alert.informativeText = "Every window open from that Mac closes, for all viewers. Its watchdog starts it again in a few seconds."
         alert.addButton(withTitle: "Restart")
         alert.addButton(withTitle: "Cancel")
@@ -155,7 +176,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func showConnect(address: String?, ask: String? = nil) {
         let w = connectWindow ?? makeConnectWindow()
-        w.cancelQuits = connection == nil
+        w.cancelQuits = connection == nil && hosting == nil
+        updatePresence(adding: w)
         if let address { w.fill(address) }
         if let ask { w.ask(ask) }
         w.showRecents(RecentPortals.forConnect(RecentPortals.load(in: portholeSupportDirectory())))
@@ -175,7 +197,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         w.onRefresh = { [weak self] in self?.discovery.refresh() }
         w.onCancel = { [weak self, weak w] in
             guard let self else { return }
-            if self.connection == nil { NSApp.terminate(nil) }
+            if self.connection == nil && self.hosting == nil { self.quitApp() }
             w?.close()
             self.discovery.stop()
         }
@@ -186,7 +208,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     func askText(_ name: String?, _ address: String) -> String {
-        "Type the pairing code from \(name ?? address): on that Mac, click the Porthole Host menu-bar icon and choose Pair a New Viewer…. Its password works too."
+        "Type the pairing code from \(name ?? address): on that Mac, click the Porthole menu-bar icon and choose Pair a New Viewer…. Its password works too."
     }
 
     func reopenRecent(_ p: RecentPortal) {
@@ -288,6 +310,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         picker.hostAddress = host
         picker.recents = { RecentPortals.load(in: portholeSupportDirectory()) }
         self.picker = picker
+        updatePresence(adding: picker)
         picker.makeKeyAndOrderFront(nil)
         NSApp.activate()
         c.onWindows = { [weak self, weak picker] list in
@@ -441,7 +464,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         portal.showRoute(c.route)
         portal.unlocking = unlockStartedAt != nil
         portals[info.id] = portal
-        portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
+        portal.applyTitleBar(global: Self.hideTitleBar(ViewerPrefs.current))
+        updatePresence(adding: portal)
         portal.makeKeyAndOrderFront(nil)
         NSApp.activate()
         startTile(info, portal: portal)
@@ -526,7 +550,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
 
-    func applicationWillTerminate(_ note: Notification) { tiles.removeAll() }
+    func applicationWillTerminate(_ note: Notification) {
+        tiles.removeAll()
+        hosting?.willTerminate()
+    }
 
     func pollClipboard() {
         guard !portals.isEmpty, let c = connection else { return }
@@ -545,14 +572,4 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-}
-
-if let status = ViewerCLI.run(Array(CommandLine.arguments.dropFirst())) { exit(status) }
-
-MainActor.assumeIsolated {
-    let app = NSApplication.shared
-    let delegate = ViewerApp()
-    app.delegate = delegate
-    app.setActivationPolicy(.regular)
-    app.run()
 }

@@ -32,7 +32,7 @@ enum ShareCommand {
                                              "ttl": o.ttl.map { String(Int($0)) } ?? ""])
         }
         guard let reply else {
-            fail("Porthole Host isn't running on this Mac (or doesn't answer on 127.0.0.1). Share links are made by the running host.")
+            fail("Porthole isn't sharing this Mac (or doesn't answer on 127.0.0.1). Share links are made by Porthole with Share this Mac on.")
             return 1
         }
         guard reply.status == 200 else {

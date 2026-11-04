@@ -41,29 +41,28 @@ make_app() {
 PLIST
 }
 
-make_app "Porthole Host" porthole-host io.github.muhammademanaftab.porthole true PortholeHost
-AGENTS="dist/Porthole Host.app/Contents/Library/LaunchAgents"
+APP="dist/Porthole.app"
+make_app "Porthole" porthole-host io.github.muhammademanaftab.porthole true Porthole
+ln -s porthole-host "$APP/Contents/MacOS/porthole-view"
+AGENTS="$APP/Contents/Library/LaunchAgents"
 mkdir -p "$AGENTS"
 "$BIN/porthole-host" agent-plist > "$AGENTS/io.github.muhammademanaftab.porthole.watchdog.plist"
 plutil -lint -s "$AGENTS/io.github.muhammademanaftab.porthole.watchdog.plist"
-WEBDST="dist/Porthole Host.app/Contents/Resources/web"
+WEBDST="$APP/Contents/Resources/web"
 mkdir -p "$WEBDST"
 find web -maxdepth 1 -type f ! -name '.*' \( -name index.html -o -name '*.js' -o -name '*.css' -o -name '*.png' -o -name '*.webmanifest' \) \
   -exec cp {} "$WEBDST/" \;
 LK=$(command -v livekit-server || true)
 if [ -z "$LK" ]; then echo "livekit-server not found: brew install livekit" >&2; exit 1; fi
-LKDST="dist/Porthole Host.app/Contents/MacOS/livekit-server"
+LKDST="$APP/Contents/MacOS/livekit-server"
 cat "$(realpath "$LK")" > "$LKDST"
 chmod 755 "$LKDST"
 codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$LKDST"
-make_app "Porthole" porthole-view io.github.muhammademanaftab.porthole.view false Porthole
-TILEDST="dist/Porthole.app/Contents/Helpers/porthole-tile"
+TILEDST="$APP/Contents/Helpers/porthole-tile"
 mkdir -p "$(dirname "$TILEDST")"
 cp "$BIN/porthole-tile" "$TILEDST"
 codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$TILEDST"
 
-for app in "dist/Porthole Host.app" "dist/Porthole.app"; do
-  codesign --force --deep --options runtime --timestamp=none -s "$SIGN_ID" \
-    --entitlements scripts/entitlements.plist "$app"
-done
+codesign --force --deep --options runtime --timestamp=none -s "$SIGN_ID" \
+  --entitlements scripts/entitlements.plist "$APP"
 echo "Built: $(ls -d dist/*.app | tr '\n' ' ')"

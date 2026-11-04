@@ -1,9 +1,9 @@
 #!/bin/bash
 set -uo pipefail
 cd "$(dirname "$0")/.."
-HOST="dist/Porthole Host.app"
-VIEW="dist/Porthole.app"
-WEB="$HOST/Contents/Resources/web"
+APP="dist/Porthole.app"
+HOST="$APP"
+WEB="$APP/Contents/Resources/web"
 failures=0
 
 pass() { echo "PASS  $1"; }
@@ -11,22 +11,28 @@ fail() { echo "FAIL  $1"; failures=$((failures + 1)); }
 expect() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got '$2')"; fi }
 plist() { plutil -extract "$2" raw -o - "$1/Contents/Info.plist" 2>/dev/null || echo "<missing>"; }
 
-for app in "$HOST" "$VIEW"; do
-  if [ ! -d "$app" ]; then echo "$app not found; run scripts/bundle.sh first" >&2; exit 2; fi
+if [ ! -d "$APP" ]; then echo "$APP not found; run scripts/bundle.sh first" >&2; exit 2; fi
+for old in "dist/Porthole Host.app"; do
+  if [ -e "$old" ]; then fail "only one app is built ($old is left over)"; else pass "only one app is built"; fi
 done
 
-expect "host bundle id" "$(plist "$HOST" CFBundleIdentifier)" "io.github.muhammademanaftab.porthole"
-expect "viewer bundle id" "$(plist "$VIEW" CFBundleIdentifier)" "io.github.muhammademanaftab.porthole.view"
-expect "host is a menu-bar agent (LSUIElement true)" "$(plist "$HOST" LSUIElement)" "true"
-expect "viewer is a regular app (LSUIElement false)" "$(plist "$VIEW" LSUIElement)" "false"
-expect "host executable" "$(plist "$HOST" CFBundleExecutable)" "porthole-host"
-expect "viewer executable" "$(plist "$VIEW" CFBundleExecutable)" "porthole-view"
-for app in "$HOST" "$VIEW"; do
-  expect "$(basename "$app") declares the _porthole._tcp Bonjour service" "$(plist "$app" NSBonjourServices.0)" "_porthole._tcp"
-  expect "$(basename "$app") names its icon" "$(plist "$app" CFBundleIconFile)" "AppIcon"
-  if [ "$(head -c 4 "$app/Contents/Resources/AppIcon.icns" 2>/dev/null)" = "icns" ]; then pass "$(basename "$app") bundles AppIcon.icns"; else fail "$(basename "$app") bundles AppIcon.icns"; fi
-done
-if cmp -s "$HOST/Contents/Resources/AppIcon.icns" "$VIEW/Contents/Resources/AppIcon.icns"; then fail "host and viewer icons differ"; else pass "host and viewer icons differ"; fi
+expect "bundle id stays the host's (TCC grants and the watchdog)" "$(plist "$APP" CFBundleIdentifier)" "io.github.muhammademanaftab.porthole"
+expect "bundle name" "$(plist "$APP" CFBundleName)" "Porthole"
+expect "starts as a menu-bar app (LSUIElement true); the Dock icon comes with a viewer window" "$(plist "$APP" LSUIElement)" "true"
+expect "executable" "$(plist "$APP" CFBundleExecutable)" "porthole-host"
+expect "declares the _porthole._tcp Bonjour service" "$(plist "$APP" NSBonjourServices.0)" "_porthole._tcp"
+expect "names its icon" "$(plist "$APP" CFBundleIconFile)" "AppIcon"
+if [ "$(head -c 4 "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null)" = "icns" ]; then pass "bundles AppIcon.icns"; else fail "bundles AppIcon.icns"; fi
+if cmp -s "$APP/Contents/Resources/AppIcon.icns" assets/Porthole.icns; then pass "uses the Porthole icon"; else fail "uses the Porthole icon"; fi
+VIEWLINK="$APP/Contents/MacOS/porthole-view"
+expect "porthole-view is a relative link to the app's executable" "$(readlink "$VIEWLINK" 2>/dev/null)" "porthole-host"
+"$VIEWLINK" help >/dev/null 2>&1
+expect "porthole-view help runs" "$?" "0"
+"$VIEWLINK" ls >/dev/null 2>&1
+expect "porthole-view ls without a host is a usage error" "$?" "2"
+"$APP/Contents/MacOS/porthole-host" pair >/dev/null 2>&1
+expect "porthole-host routes viewer commands (pair without a host is a usage error)" "$?" "2"
+if "$APP/Contents/MacOS/porthole-host" help 2>/dev/null | grep -q "usage: porthole-view"; then pass "porthole-host help lists the viewer commands too"; else fail "porthole-host help lists the viewer commands too"; fi
 
 AGENT="$HOST/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist"
 aplist() { plutil -extract "$1" raw -o - "$AGENT" 2>/dev/null || echo "<missing>"; }
@@ -54,7 +60,7 @@ if [ -z "$extra" ]; then pass "web holds only servable files"; else fail "web ho
 
 if [ -x "$HOST/Contents/MacOS/livekit-server" ]; then pass "livekit-server is executable"; else fail "livekit-server is executable"; fi
 if codesign --verify --strict "$HOST/Contents/MacOS/livekit-server" 2>/dev/null; then pass "livekit-server signature"; else fail "livekit-server signature"; fi
-TILE="$VIEW/Contents/Helpers/porthole-tile"
+TILE="$APP/Contents/Helpers/porthole-tile"
 if [ -x "$TILE" ]; then pass "porthole-tile helper is executable"; else fail "porthole-tile helper is executable"; fi
 if codesign --verify --strict "$TILE" 2>/dev/null; then pass "porthole-tile signature"; else fail "porthole-tile signature"; fi
 if otool -L "$TILE" 2>/dev/null | tail -n +2 | grep -qv -e '^[[:space:]]*/usr/lib/' -e '^[[:space:]]*/System/Library/'; then
@@ -63,7 +69,7 @@ else pass "porthole-tile links only system libraries"; fi
 "$TILE" >/dev/null 2>&1
 expect "porthole-tile refuses to run without arguments" "$?" "2"
 
-for app in "$HOST" "$VIEW"; do
+for app in "$APP"; do
   CLI="$app/Contents/MacOS/porthole"
   if [ -x "$CLI" ]; then pass "$(basename "$app") bundles the porthole command"; else fail "$(basename "$app") bundles the porthole command"; fi
   if codesign --verify --strict "$CLI" 2>/dev/null; then pass "$(basename "$app") porthole signature"; else fail "$(basename "$app") porthole signature"; fi
@@ -77,7 +83,7 @@ for app in "$HOST" "$VIEW"; do
   expect "$(basename "$app") porthole refuses an unknown command" "$rc" "2"
 done
 
-for app in "$HOST" "$VIEW"; do
+for app in "$APP"; do
   if codesign --verify --deep --strict "$app" 2>/dev/null; then pass "codesign --verify --deep --strict $app"; else fail "codesign --verify --deep --strict $app"; fi
 done
 
