@@ -153,6 +153,21 @@
     return RECONNECT_DELAYS[attempt - 1];
   }
 
+  const STABLE_CONNECTION = 30000;
+  function nextReconnectAttempt(previous, upForMs) {
+    if (upForMs >= STABLE_CONNECTION) return 1;
+    return (Number(previous) || 0) + 1;
+  }
+
+  async function hostReachable(fetchFn) {
+    try {
+      const r = await fetchFn('/hello', { cache: 'no-store' });
+      return !!(r && r.ok);
+    } catch (e) {
+      return false;
+    }
+  }
+
   return { randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
-    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel, reconnectDelay, RECONNECT_DELAYS };
+    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });

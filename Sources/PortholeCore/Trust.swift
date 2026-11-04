@@ -7,7 +7,7 @@ public func portholeSupportDirectory(environment: [String: String] = ProcessInfo
     return base.appendingPathComponent("Porthole", isDirectory: true)
 }
 
-func writePrivately(_ data: Data, to url: URL) -> Bool {
+public func writePrivately(_ data: Data, to url: URL) -> Bool {
     let dir = url.deletingLastPathComponent()
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")

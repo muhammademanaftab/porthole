@@ -88,6 +88,13 @@ public enum DisconnectKind: Equatable, Sendable { case byViewer, removed, replac
 
 public let reconnectDelays: [TimeInterval] = [1, 2, 4, 8, 15, 30, 30, 30]
 
+public let stableConnection: TimeInterval = 30
+
+public func nextReconnectAttempt(previous: Int, upFor: TimeInterval?) -> Int {
+    if let upFor, upFor >= stableConnection { return 1 }
+    return max(previous, 0) + 1
+}
+
 public func reconnectDelay(after kind: DisconnectKind, attempt: Int) -> TimeInterval? {
     guard kind == .lost, attempt >= 1, attempt <= reconnectDelays.count else { return nil }
     return reconnectDelays[attempt - 1]

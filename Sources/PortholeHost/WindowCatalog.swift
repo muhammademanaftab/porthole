@@ -42,8 +42,17 @@ struct LiveWindow {
     }
 
     var scale: CGFloat {
-        if !Thread.isMainThread { return DispatchQueue.main.sync { scale } }
-        let screens = NSScreen.screens.map { ScreenInfo(frame: $0.frame, scale: $0.backingScaleFactor) }
-        return backingScale(forCGBounds: bounds, screens: screens) ?? NSScreen.main?.backingScaleFactor ?? 2
+        backingScale(forCGBounds: bounds, displays: Self.displays()) ?? 2
+    }
+
+    static func displays() -> [ScreenInfo] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        return ids.prefix(Int(count)).compactMap { id in
+            guard let mode = CGDisplayCopyDisplayMode(id), mode.width > 0 else { return nil }
+            return ScreenInfo(frame: CGDisplayBounds(id), scale: CGFloat(mode.pixelWidth) / CGFloat(mode.width))
+        }
     }
 }

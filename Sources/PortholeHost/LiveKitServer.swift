@@ -25,8 +25,9 @@ final class LiveKitServer {
         Self.stopLeftovers(of: bin)
         let yaml = liveKitConfigYAML(port: config.livekitPort, apiKey: config.apiKey, apiSecret: config.apiSecret)
         let url = HostConfig.directory.appendingPathComponent("livekit.yaml")
-        try yaml.write(to: url, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        guard writePrivately(Data(yaml.utf8), to: url) else {
+            throw NSError(domain: "Porthole", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't write \(url.path)"])
+        }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)

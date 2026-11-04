@@ -65,9 +65,9 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         let s = SCStream(filter: filter, configuration: makeConfig(), delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await s.startCapture()
-        let late = queue.sync { () -> Bool in
-            guard !stopped else { return true }
-            stream = s
+        let late = await onQueue { () -> Bool in
+            guard !self.stopped else { return true }
+            self.stream = s
             return false
         }
         if late {
@@ -240,15 +240,21 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
         DispatchQueue.main.async { self.onClosed?() }
     }
 
+    private func onQueue<T>(_ work: @escaping () -> T) async -> T {
+        await withCheckedContinuation { cont in
+            queue.async { cont.resume(returning: work()) }
+        }
+    }
+
     func stop(in room: Room) async {
-        let capture: SCStream? = queue.sync {
-            stopped = true
-            timer?.cancel(); timer = nil
-            padTimer?.cancel(); padTimer = nil
-            track?.remove(delegate: self)
-            let s = stream
-            stream = nil
-            lastBuffer = nil
+        let capture: SCStream? = await onQueue {
+            self.stopped = true
+            self.timer?.cancel(); self.timer = nil
+            self.padTimer?.cancel(); self.padTimer = nil
+            self.track?.remove(delegate: self)
+            let s = self.stream
+            self.stream = nil
+            self.lastBuffer = nil
             return s
         }
         try? await capture?.stopCapture()

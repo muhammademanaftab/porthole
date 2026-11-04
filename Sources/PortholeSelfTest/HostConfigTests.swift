@@ -53,4 +53,14 @@ func hostConfigTests() {
     let again = HostConfig.load(in: dir)
     expect("config: an existing backup is not overwritten", again.backup?.lastPathComponent, "config.json.bad.2")
     expect("config: the first backup is untouched", try? Data(contentsOf: dir.appendingPathComponent("config.json.bad")), garbage)
+    expect("config: a rewritten config is readable only by the owner",
+           (try? fm.attributesOfItem(atPath: file.path))?[.posixPermissions] as? Int, 0o600)
+    let names = Set((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
+    expect("config: no temporary files are left behind", names, ["config.json", "config.json.bad", "config.json.bad.2"])
+
+    let yaml = dir.appendingPathComponent("livekit.yaml")
+    fm.createFile(atPath: yaml.path, contents: Data("old".utf8), attributes: [.posixPermissions: 0o644])
+    check("private write: replacing a 0644 livekit.yaml succeeds", writePrivately(Data("port: 7880".utf8), to: yaml))
+    expect("private write: the replaced file is 0600", (try? fm.attributesOfItem(atPath: yaml.path))?[.posixPermissions] as? Int, 0o600)
+    expect("private write: it holds the new bytes", try? Data(contentsOf: yaml), Data("port: 7880".utf8))
 }

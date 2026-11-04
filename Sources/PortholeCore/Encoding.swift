@@ -100,6 +100,8 @@ public struct ScaleLadder: Sendable {
     public private(set) var index = 0
     private var over = 0
     private var under = 0
+    private var zeroRun = 0
+    private var zeroCounted = false
     private var lastDownAt: Double?
     private var lastMotionAt: Double?
 
@@ -146,10 +148,20 @@ public struct ScaleLadder: Sendable {
         return ms <= config.upBudgetMs && s.encodedFps >= s.submittedFps * config.keepUpRatio
     }
 
-    public mutating func observe(_ s: EncoderSample, now: Double, lastInputAt: Double?) -> Double? {
-        guard !isPausedLayer(s) else { return nil }
+    public mutating func observe(_ s: EncoderSample, now: Double, lastInputAt: Double?, subscribed: Bool = true) -> Double? {
+        if isPausedLayer(s) {
+            zeroRun += 1
+            if !subscribed || zeroRun >= 2 {
+                if zeroCounted { over = max(0, over - 1); zeroCounted = false }
+                return nil
+            }
+        } else {
+            zeroRun = 0
+            zeroCounted = false
+        }
         if s.capturedFps >= config.motionFps { lastMotionAt = now }
         over = isOverBudget(s) ? over + 1 : 0
+        if zeroRun == 1 { zeroCounted = over > 0 }
         under = isUnderBudget(s) ? under + 1 : 0
         let duringInput = lastInputAt.map { now - $0 < config.inputHold } ?? false
         if over >= config.overSamples + (duringInput ? 1 : 0), index < levels.count - 1 {

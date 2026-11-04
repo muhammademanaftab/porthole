@@ -196,9 +196,9 @@ final class HostRoom: NSObject, RoomDelegate {
                 }
                 do { try await task.value } catch {
                     starting.finish(id)
+                    registry.startFailed(id)
                     await session.stop(in: room)
                     stage.unpark(id)
-                    registry.startFailed(id)
                     if sessions.isEmpty { stage.becameEmpty() }
                     throw error
                 }

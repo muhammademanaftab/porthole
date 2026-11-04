@@ -21,6 +21,8 @@ final class Connection: NSObject, RoomDelegate {
     private var closing = false
     private var reconnecting = false
     private var handlersReady = false
+    private var attempt = 0
+    private var connectedAt: Date?
 
     init(hostAddress: String, credential: ViewerCredential) {
         self.hostAddress = hostAddress
@@ -45,8 +47,11 @@ final class Connection: NSObject, RoomDelegate {
         case .refused(let why): throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: why])
         }
         try await setUpOnce()
+        guard !closing else { throw CancellationError() }
         try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
                                roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
+        if closing { await room.disconnect(); throw CancellationError() }
+        connectedAt = Date()
     }
 
     private func setUpOnce() async throws {
@@ -82,22 +87,27 @@ final class Connection: NSObject, RoomDelegate {
         reconnecting = true
         defer { reconnecting = false }
         onError?("Lost the connection to the host. Reconnecting…")
-        var attempt = 1
+        attempt = nextReconnectAttempt(previous: attempt, upFor: connectedAt.map { Date().timeIntervalSince($0) })
+        connectedAt = nil
         while !closing, let delay = reconnectDelay(after: .lost, attempt: attempt) {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !closing else { return }
             do {
                 try await connect()
+                if closing { await room.disconnect(); return }
+                let queued = pending
                 pending = [:]
                 openedReplies = [:]
                 listening = SharedUse()
                 onReconnected?()
+                for (id, then) in queued where pending[id] == nil { open(id, then: then) }
                 return
             } catch let err as NSError where err.domain == "Porthole" && (err.code == 401 || err.code == 403) {
                 onError?(err.localizedDescription)
                 return
             } catch {
-                attempt += 1
+                if closing { return }
+                attempt = nextReconnectAttempt(previous: attempt, upFor: nil)
             }
         }
         if !closing { onError?("Disconnected from host. Reconnect from the Porthole menu.") }

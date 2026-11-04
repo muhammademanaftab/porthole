@@ -50,8 +50,7 @@ public struct HostConfig: Codable, Equatable, Sendable {
         }
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? enc.encode(cfg).write(to: url, options: .atomic)
-        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        if let data = try? enc.encode(cfg) { _ = writePrivately(data, to: url) }
         return (cfg, backup)
     }
 }

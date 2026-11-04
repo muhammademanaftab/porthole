@@ -92,4 +92,18 @@ func pacingTests() {
     expect("screen scale: off-screen window falls back to the primary",
            backingScale(forCGBounds: CGRect(x: -5000, y: -5000, width: 10, height: 10), screens: [primary, right]), 2)
     expect("screen scale: no screens gives nil", backingScale(forCGBounds: .zero, screens: []), nil)
+
+    let cgAbove = ScreenInfo(frame: CGRect(x: 0, y: -1080, width: 1920, height: 1080), scale: 1)
+    let stage = ScreenInfo(frame: CGRect(x: 3360, y: 0, width: 1512, height: 982), scale: 2)
+    expect("display scale: CG display bounds need no flip", backingScale(forCGBounds: CGRect(x: 100, y: -500, width: 800, height: 400),
+                                                                      displays: [primary, cgAbove]), 1)
+    expect("display scale: window on the Retina primary", backingScale(forCGBounds: CGRect(x: 100, y: 100, width: 800, height: 600),
+                                                                      displays: [primary, cgAbove]), 2)
+    expect("display scale: window parked on the 2x stage", backingScale(forCGBounds: CGRect(x: 3400, y: 50, width: 900, height: 600),
+                                                                       displays: [primary, right, stage]), 2)
+    expect("display scale: straddling window uses the display holding most of it",
+           backingScale(forCGBounds: CGRect(x: 1000, y: 100, width: 1000, height: 600), displays: [primary, right]), 1)
+    expect("display scale: off-screen window falls back to the first display",
+           backingScale(forCGBounds: CGRect(x: -5000, y: -5000, width: 10, height: 10), displays: [right, primary]), 1)
+    expect("display scale: no displays gives nil", backingScale(forCGBounds: .zero, displays: []), nil)
 }

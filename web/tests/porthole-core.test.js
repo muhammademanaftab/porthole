@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'ensureRandomUUID', 'isAudioTrack', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'ensureRandomUUID', 'hostReachable', 'isAudioTrack', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerStatus', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
     assert.equal(html.includes(copy), false, copy);
@@ -446,9 +446,39 @@ test('reconnectDelay never reconnects after the viewer left, was removed, replac
   for (const reason of [1, 2, 4, 5, 10]) assert.equal(core.reconnectDelay(reason, 1), null, `reason ${reason}`);
 });
 
-test('index.html reconnects by reloading after a lost connection and clears the count once connected', () => {
+test('nextReconnectAttempt counts up until a connection stays up for 30 s', () => {
+  assert.equal(core.STABLE_CONNECTION, 30000);
+  assert.equal(core.nextReconnectAttempt(null, 0), 1);
+  assert.equal(core.nextReconnectAttempt('3', 5000), 4);
+  assert.equal(core.nextReconnectAttempt(3, 29999), 4);
+  assert.equal(core.nextReconnectAttempt('7', 30000), 1);
+  assert.equal(core.nextReconnectAttempt('garbage', 0), 1);
+});
+
+test('a connection that keeps dropping right after it comes back runs out of attempts', () => {
+  let n = null, waits = 0;
+  for (;;) {
+    n = core.nextReconnectAttempt(n, 2000);
+    if (core.reconnectDelay(0, n) === null) break;
+    waits++;
+  }
+  assert.equal(waits, core.RECONNECT_DELAYS.length);
+});
+
+test('hostReachable probes /hello and treats errors and non-200 as unreachable', async () => {
+  const asked = [];
+  assert.equal(await core.hostReachable(async (u, o) => { asked.push([u, o.cache]); return { ok: true }; }), true);
+  assert.deepEqual(asked, [['/hello', 'no-store']]);
+  assert.equal(await core.hostReachable(async () => ({ ok: false })), false);
+  assert.equal(await core.hostReachable(async () => { throw new TypeError('Failed to fetch'); }), false);
+  assert.equal(await core.hostReachable(async () => undefined), false);
+});
+
+test('index.html probes the host before reloading and keeps retrying when connect fails mid-reconnect', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  assert.match(html, /PC\.reconnectDelay\(reason, attempt\)/);
-  assert.match(html, /location\.reload\(\)/);
-  assert.ok(html.indexOf("sessionStorage.removeItem('reconnects')") > html.indexOf('await room.connect(url, token'));
+  assert.match(html, /if \(await PC\.hostReachable\(fetch\)\) location\.reload\(\); else scheduleReconnect\(0, 0\);/);
+  assert.match(html, /PC\.nextReconnectAttempt\(sessionStorage\.getItem\('reconnects'\), upForMs\)/);
+  assert.match(html, /if \(sessionStorage\.getItem\('reconnects'\)\) scheduleReconnect\(0, 0\); else showPassword/);
+  assert.equal((html.match(/location\.reload\(\)/g) || []).length, 1);
+  assert.ok(html.indexOf('connectedAt = Date.now()') > html.indexOf('await room.connect(url, token'));
 });

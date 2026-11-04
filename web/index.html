@@ -57,9 +57,22 @@ function send(msg, reliable = true) {
   room.localParticipant.publishData(data, { reliable, topic: 'porthole', destinationIdentities: ['host'] });
 }
 
+let connectedAt = 0;
+function scheduleReconnect(reason, upForMs) {
+  const attempt = PC.nextReconnectAttempt(sessionStorage.getItem('reconnects'), upForMs);
+  const wait = PC.reconnectDelay(reason, attempt);
+  if (wait === null) { sessionStorage.removeItem('reconnects'); hud('Disconnected from host', true); return; }
+  sessionStorage.setItem('reconnects', String(attempt));
+  hud('Lost the connection to the host. Reconnecting…', true);
+  setTimeout(async () => {
+    if (await PC.hostReachable(fetch)) location.reload(); else scheduleReconnect(0, 0);
+  }, wait);
+}
+
 async function connect(pw) {
   const r = await fetch(`/token?pw=${encodeURIComponent(pw)}&name=browser`);
-  if (!r.ok) { showPassword('Wrong password.'); return; }
+  if (r.status === 403) { sessionStorage.removeItem('reconnects'); showPassword('Wrong password.'); return; }
+  if (!r.ok) throw new Error(`the host answered HTTP ${r.status}`);
   sessionStorage.setItem('pw', pw);
   const { url, token } = await r.json();
   room = new LK.Room({ adaptiveStream: false, dynacast: false });
@@ -69,16 +82,9 @@ async function connect(pw) {
     clipFromHost(await reader.readAll());
   });
   room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSound);
-  room.on(LK.RoomEvent.Disconnected, (reason) => {
-    const attempt = Number(sessionStorage.getItem('reconnects') || 0) + 1;
-    const wait = PC.reconnectDelay(reason, attempt);
-    if (wait === null) { hud('Disconnected from host', true); return; }
-    sessionStorage.setItem('reconnects', String(attempt));
-    hud('Lost the connection to the host. Reconnecting…', true);
-    setTimeout(() => location.reload(), wait);
-  });
+  room.on(LK.RoomEvent.Disconnected, (reason) => scheduleReconnect(reason, Date.now() - connectedAt));
   await room.connect(url, token, { autoSubscribe: false });
-  sessionStorage.removeItem('reconnects');
+  connectedAt = Date.now();
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
   hostP = room.remoteParticipants.get('host');
   if (!hostP) { $('status').textContent = 'Connected, but the host is not in the room. Is Porthole Host running?'; return; }
@@ -259,7 +265,9 @@ function showPassword(msg) {
 $('pwform').addEventListener('submit', e => { e.preventDefault(); $('pwform').hidden = true; connect($('pw').value); });
 
 const pw = params.get('pw') || sessionStorage.getItem('pw');
-if (pw) connect(pw).catch(err => showPassword('Could not connect: ' + err.message)); else showPassword();
+if (pw) connect(pw).catch(err => {
+  if (sessionStorage.getItem('reconnects')) scheduleReconnect(0, 0); else showPassword('Could not connect: ' + err.message);
+}); else showPassword();
 </script>
 </body>
 </html>

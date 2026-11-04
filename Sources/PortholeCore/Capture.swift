@@ -66,6 +66,15 @@ public func appKitRect(fromCG r: CGRect, primaryHeight: CGFloat) -> CGRect {
     CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
 }
 
+public func backingScale(forCGBounds bounds: CGRect, displays: [ScreenInfo]) -> CGFloat? {
+    func area(_ s: ScreenInfo) -> CGFloat {
+        let i = s.frame.intersection(bounds)
+        return i.isNull ? 0 : i.width * i.height
+    }
+    guard let best = displays.max(by: { area($0) < area($1) }), area(best) > 0 else { return displays.first?.scale }
+    return best.scale
+}
+
 public func backingScale(forCGBounds bounds: CGRect, screens: [ScreenInfo]) -> CGFloat? {
     let rect = appKitRect(fromCG: bounds, primaryHeight: screens.first?.frame.height ?? 0)
     func area(_ s: ScreenInfo) -> CGFloat {

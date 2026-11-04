@@ -683,6 +683,18 @@ private func lockoutTests() {
         expect("reconnect: never after \(kind)", reconnectDelay(after: kind, attempt: 1), nil)
     }
     expect("viewer tokens: still 10 minutes", WebRoutes.viewerTokenTTL, 600)
+    expect("reconnect attempts: the first drop is attempt 1", nextReconnectAttempt(previous: 0, upFor: nil), 1)
+    expect("reconnect attempts: a drop within 30 s of reconnecting keeps counting", nextReconnectAttempt(previous: 3, upFor: 5), 4)
+    expect("reconnect attempts: just under 30 s still counts", nextReconnectAttempt(previous: 3, upFor: 29.9), 4)
+    expect("reconnect attempts: a connection that stayed up 30 s starts over", nextReconnectAttempt(previous: 7, upFor: 30), 1)
+    var flaps = 0
+    var n = 0
+    while true {
+        n = nextReconnectAttempt(previous: n, upFor: 2)
+        guard reconnectDelay(after: .lost, attempt: n) != nil else { break }
+        flaps += 1
+    }
+    expect("reconnect attempts: a connection that drops right after every reconnect gives up", flaps, reconnectDelays.count)
 }
 
 private func privateFileTests() {

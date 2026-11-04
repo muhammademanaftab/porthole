@@ -123,11 +123,23 @@ func scaleLadderTests() {
     var paused = ScaleLadder(native: 2)
     let pausedLayer = moving(nil, encoded: 0, submitted: 60, captured: 60)
     check("ladder: zero encoded with frames submitted is a paused layer", paused.isPausedLayer(pausedLayer))
-    _ = paused.observe(pausedLayer, now: 1, lastInputAt: nil)
-    expect("ladder: paused-layer samples never step down", paused.observe(pausedLayer, now: 2, lastInputAt: nil), nil)
-    _ = paused.observe(moving(40), now: 3, lastInputAt: nil)
-    _ = paused.observe(pausedLayer, now: 4, lastInputAt: nil)
-    expect("ladder: a paused-layer sample neither counts nor resets the over count", paused.observe(moving(40), now: 5, lastInputAt: nil), 1.5)
+    var steps: [Double?] = []
+    for t in 1...10 { steps.append(paused.observe(pausedLayer, now: Double(t), lastInputAt: nil)) }
+    expect("ladder: a run of zero-encoded samples (a paused layer) never steps down", steps.compactMap { $0 }, [])
+    expect("ladder: still at the top after the run", paused.level, 2)
+    expect("ladder: after the run one slow sample is not enough", paused.observe(moving(40), now: 11, lastInputAt: nil), nil)
+    expect("ladder: a second slow sample steps down", paused.observe(moving(40), now: 12, lastInputAt: nil), 1.5)
+
+    var unsubscribed = ScaleLadder(native: 2)
+    _ = unsubscribed.observe(moving(40), now: 3, lastInputAt: nil)
+    _ = unsubscribed.observe(pausedLayer, now: 4, lastInputAt: nil, subscribed: false)
+    expect("ladder: a zero sample with no subscribers neither counts nor resets the over count",
+           unsubscribed.observe(moving(40), now: 5, lastInputAt: nil), 1.5)
+
+    var stall = ScaleLadder(native: 2)
+    _ = stall.observe(moving(40), now: 1, lastInputAt: nil)
+    expect("ladder: a single zero-encoded sample while subscribed counts as overload and steps down",
+           stall.observe(pausedLayer, now: 2, lastInputAt: nil), 1.5)
     check("ladder: a still window with nothing submitted is not a paused layer", !paused.isPausedLayer(still))
 
     let dropper = ScaleLadder(native: 2)
