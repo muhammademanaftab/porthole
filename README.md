@@ -72,6 +72,10 @@ The host captures the display with ScreenCaptureKit, leaving out Porthole Host's
 
 **Privacy curtain.** "Curtain while the whole Mac is shared" (off until turned on; `PORTHOLE_CURTAIN=0|1` for one run). While a Whole Mac portal is open a frosted notice covers every physical display, above everything and left out of the capture; the pointer is hidden and the local keyboard, mouse and trackpad are blocked by an event tap (needs Accessibility). Events Porthole injects for the viewer carry its tag and pass. Control-Option-Command-Escape on the host lifts it (until that portal closes), and it lifts by itself when the portal closes, the viewer leaves, after 30 minutes, or when the host quits or crashes; a relaunched host never starts with a curtain. `porthole-host curtain-preview out.png` draws the notice into an image without showing it.
 
+## Install on the Mac mini
+
+`scripts/deploy-mini.sh` checks the mini answers SSH (and stops with a clear message if not), builds `dist/Porthole Host.app` under the build lock with `SWIFT_JOBS=3`, copies it over SSH with tar, quits the running host, swaps it into `/Applications` (the old one is kept as `Porthole Host.app.previous`), restarts the watchdog agent with `launchctl kickstart -k` so it runs the new binary, waits for `/hello`, checks exactly one host runs and prints `porthole doctor`. `--dry-run` prints every step without building or contacting the mini; `--no-build` installs the bundle already in `dist/`. `MINI_HOST`, `MINI_USER` and `MINI_KEY` change the target.
+
 ## Keep running
 
 Porthole Host's Settings… (⌘, in its menu) has "Keep Porthole Host running on this Mac", on by default. It registers a launch agent with ServiceManagement (`Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist`, shown in System Settings > General > Login Items as Porthole Host). The agent runs the host binary with `watchdog`, a small loop with no UI that:
