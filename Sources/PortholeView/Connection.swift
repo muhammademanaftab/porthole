@@ -13,6 +13,11 @@ final class Connection: NSObject, RoomDelegate {
     var onClosed: ((UInt32) -> Void)?
     var onClipboard: ((String) -> Void)?
     var onIcon: ((UInt32, Data) -> Void)?
+    var onThumb: ((UInt32, Data) -> Void)?
+    var onLink: ((LinkState) -> Void)?
+    var streamSettings: () -> ViewerSettings = { ViewerSettings() }
+
+    enum LinkState { case connected, reconnecting, disconnected(String) }
     private var pending: [UInt32: (VideoTrack, Message) -> Void] = [:]
     private var openedReplies: [UInt32: Message] = [:]
     private var listening = SharedUse<String, UInt32>()
@@ -51,6 +56,12 @@ final class Connection: NSObject, RoomDelegate {
             let png = try await reader.readAll()
             guard AppIcon.isAcceptable(png) else { return }
             Task { @MainActor [weak self] in self?.onIcon?(win, png) }
+        }
+        try await room.registerByteStreamHandler(for: thumbTopic) { [weak self] reader, identity in
+            guard identity.stringValue == "host", let win = AppIcon.window(from: reader.info.attributes) else { return }
+            let jpeg = try await reader.readAll()
+            guard WindowThumbnail.isAcceptable(jpeg) else { return }
+            Task { @MainActor [weak self] in self?.onThumb?(win, jpeg) }
         }
         try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
                                roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
@@ -99,12 +110,17 @@ final class Connection: NSObject, RoomDelegate {
         pending[id] = then
         var m = Message(.open); m.win = id
         if let screen = NSScreen.main?.frame.size { m.sw = screen.width; m.sh = screen.height; m.ss = NSScreen.main.map { Double($0.backingScaleFactor) } }
+        streamSettings().apply(to: &m)
         Task {
             for _ in 0..<RetryPolicy.open.times where pending[id] != nil && openedReplies[id] == nil {
                 send(m)
                 try? await Task.sleep(nanoseconds: UInt64(RetryPolicy.open.every * 1_000_000_000))
             }
         }
+    }
+
+    func requestThumbnails() {
+        send(Message(.thumb))
     }
 
     func requestIcon(_ id: UInt32) {
@@ -201,6 +217,18 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
-        Task { @MainActor in self.onError?("Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")") }
+        let text = "Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")"
+        Task { @MainActor in
+            self.onLink?(.disconnected(text))
+            self.onError?(text)
+        }
+    }
+
+    nonisolated func room(_ room: Room, didStartReconnectWithMode reconnectMode: ReconnectMode) {
+        Task { @MainActor in self.onLink?(.reconnecting) }
+    }
+
+    nonisolated func room(_ room: Room, didCompleteReconnectWithMode reconnectMode: ReconnectMode) {
+        Task { @MainActor in self.onLink?(.connected) }
     }
 }

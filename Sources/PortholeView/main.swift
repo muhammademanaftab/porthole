@@ -185,7 +185,14 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
         c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
-        c.onIcon = { [weak self] id, png in self?.icons[id] = png }
+        c.onIcon = { [weak self, weak picker] id, png in
+            self?.icons[id] = png
+            picker?.setIcon(id, png: png)
+        }
+        c.onThumb = { [weak picker] id, jpeg in picker?.setThumb(id, jpeg: jpeg) }
+        c.streamSettings = { ViewerSettings(lookup: { UserDefaults.standard.object(forKey: $0) }) }
+        picker.onThumbsWanted = { [weak c] in c?.requestThumbnails() }
+        picker.onIconWanted = { [weak c] id in c?.requestIcon(id) }
         Task {
             do {
                 try await c.connect()
