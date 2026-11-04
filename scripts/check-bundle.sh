@@ -23,7 +23,10 @@ expect "host executable" "$(plist "$HOST" CFBundleExecutable)" "porthole-host"
 expect "viewer executable" "$(plist "$VIEW" CFBundleExecutable)" "porthole-view"
 for app in "$HOST" "$VIEW"; do
   expect "$(basename "$app") declares the _porthole._tcp Bonjour service" "$(plist "$app" NSBonjourServices.0)" "_porthole._tcp"
+  expect "$(basename "$app") names its icon" "$(plist "$app" CFBundleIconFile)" "AppIcon"
+  if [ "$(head -c 4 "$app/Contents/Resources/AppIcon.icns" 2>/dev/null)" = "icns" ]; then pass "$(basename "$app") bundles AppIcon.icns"; else fail "$(basename "$app") bundles AppIcon.icns"; fi
 done
+if cmp -s "$HOST/Contents/Resources/AppIcon.icns" "$VIEW/Contents/Resources/AppIcon.icns"; then fail "host and viewer icons differ"; else pass "host and viewer icons differ"; fi
 
 AGENT="$HOST/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist"
 aplist() { plutil -extract "$1" raw -o - "$AGENT" 2>/dev/null || echo "<missing>"; }
