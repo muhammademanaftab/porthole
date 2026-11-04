@@ -33,7 +33,7 @@ final class HTTPServer {
         routes.onUnshare = { [weak guests] link in guests?.revokedFromCLI(link) }
         self.routes = routes
         let txt = BonjourTXT.make(name: name, tailscaleIP: tailscaleAddress(), localHost: HTTPServer.localHostName,
-                                 port: Int(config.httpPort), id: trust?.identity.id)
+                                 port: Int(config.httpPort), id: trust?.identity.id, lanIP: lanAddress())
         listener.service = NWListener.Service(name: name, type: portholeServiceType, domain: nil, txtRecord: NWTXTRecord(txt))
     }
 

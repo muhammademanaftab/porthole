@@ -339,6 +339,19 @@ public struct ViewerTrust: Codable, Equatable, Sendable {
         hosts = [PairedHost(id: id, name: cleanDeviceName(name), addresses: [address] + old)] + others.filter { !$0.addresses.isEmpty }
     }
 
+    public mutating func learn(id: String, address: String) {
+        guard let key = savedPasswordKey(address), let i = hosts.firstIndex(where: { $0.id == id }) else { return }
+        guard !hosts[i].addresses.contains(where: { savedPasswordKey($0) == key }) else { return }
+        hosts[i].addresses.append(address)
+        for j in hosts.indices where j != i { hosts[j].addresses.removeAll { savedPasswordKey($0) == key } }
+        hosts.removeAll { $0.addresses.isEmpty }
+    }
+
+    public func addresses(of id: String?) -> [String] {
+        guard let id else { return [] }
+        return hosts.first { $0.id == id }?.addresses ?? []
+    }
+
     public mutating func forget(id: String) {
         hosts.removeAll { $0.id == id }
     }
