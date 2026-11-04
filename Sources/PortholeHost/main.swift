@@ -64,12 +64,10 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func startStatus(watched: Bool) {
-        status.set(LocalStatus.snapshot(self, watched: watched))
-        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.status.set(LocalStatus.snapshot(self, watched: watched))
-            }
+        status.start { [weak self] in self.map { LocalStatus.snapshot($0, watched: watched) } ?? [:] }
+        let box = status
+        let t = Timer(timeInterval: StatusBox.interval, repeats: true) { _ in
+            MainActor.assumeIsolated { box.refresh() }
         }
         RunLoop.main.add(t, forMode: .common)
         statusTimer = t
@@ -93,7 +91,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
             let box = status
-            let http = try HTTPServer(config: config, pairing: pairing, trust: trust, status: { box.get() })
+            let http = try HTTPServer(config: config, pairing: pairing, trust: trust, status: { box.fresh() })
             http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
@@ -178,6 +176,25 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+enum HostSignals {
+    nonisolated(unsafe) static var sources: [DispatchSourceSignal] = []
+
+    static func install() {
+        sources = [(SIGTERM, "SIGTERM"), (SIGINT, "SIGINT")].map { number, name in
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler {
+                Log.signalled(name)
+                LiveKitServer.shared?.stop()
+                Log.flush()
+                exit(0)
+            }
+            source.resume()
+            return source
+        }
+    }
+}
+
 switch HostCommand.parse(arguments: Array(CommandLine.arguments.dropFirst()), environment: ProcessInfo.processInfo.environment) {
 case .agentPlist:
     FileHandle.standardOutput.write(LaunchAgent.plistData(executableName: Bundle.main.executableURL?.lastPathComponent ?? "porthole-host") ?? Data())
@@ -185,8 +202,7 @@ case .watchdog:
     WatchdogRunner.run()
 case .app:
     if let status = HostCLI.run(Array(CommandLine.arguments.dropFirst())) { exit(status) }
-    signal(SIGTERM) { _ in Log.signalled("SIGTERM"); LiveKitServer.shared?.stop(); exit(0) }
-    signal(SIGINT) { _ in Log.signalled("SIGINT"); LiveKitServer.shared?.stop(); exit(0) }
+    HostSignals.install()
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         let delegate = HostApp()

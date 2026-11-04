@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import PortholeCore
+import SystemConfiguration
 
 enum Paths {
     static var support: URL { portholeSupportDirectory() }
@@ -50,25 +51,6 @@ func knownSecrets() -> [String] {
     if let c = savedConfig() { out += [c.password, c.apiKey, c.apiSecret] }
     if let s = LocalSecret.read(in: Paths.support) { out.append(s) }
     return out
-}
-
-struct Shell {
-    static func run(_ exe: String, _ args: [String], timeout: TimeInterval = 10) -> (status: Int32, out: String)? {
-        guard FileManager.default.isExecutableFile(atPath: exe) else { return nil }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = args
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { return nil }
-        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        killer.cancel()
-        return (p.terminationStatus, String(decoding: data, as: UTF8.self))
-    }
 }
 
 enum LocalHost {
@@ -201,7 +183,9 @@ enum SystemFacts {
         let v = ProcessInfo.processInfo.operatingSystemVersion
         return "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)" + (sysctlString("kern.osversion").map { " (\($0))" } ?? "")
     }
-    static var computerName: String { Host.current().localizedName ?? ProcessInfo.processInfo.hostName }
+    static var computerName: String {
+        (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? shortHostName(ProcessInfo.processInfo.hostName)
+    }
     static var bundleVersion: String? {
         Paths.containingApp.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String }
     }

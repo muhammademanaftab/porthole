@@ -52,9 +52,14 @@ public enum EnvFlags {
         var rows = all.map { Row(flag: $0, current: environment[$0.name], known: true) }
         let known = Set(all.map(\.name))
         for name in environment.keys.sorted() where name.hasPrefix("PORTHOLE_") && !known.contains(name) {
-            rows.append(Row(flag: EnvFlag(name, "unknown", "not a flag Porthole reads", "-"), current: environment[name], known: false))
+            rows.append(Row(flag: EnvFlag(name, "unknown", "not a flag Porthole reads", "-", secret: looksSecret(name)), current: environment[name], known: false))
         }
         return setOnly ? rows.filter { $0.current != nil } : rows
+    }
+
+    public static func looksSecret(_ name: String) -> Bool {
+        let upper = name.uppercased()
+        return ["PW", "PASS", "SECRET", "TOKEN", "KEY"].contains { upper.contains($0) }
     }
 
     public static func shown(_ row: Row) -> String {

@@ -15,6 +15,7 @@ public struct Scrubber: Sendable {
         (#"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"#, "Bearer " + mask),
         (#"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}"#, mask),
         (#"(?i)\b(code|pairing code)(\s*[:=]?\s*)\d{3}[ -]?\d{3}\b"#, "$1$2" + mask),
+        (#"(?i)\b([0-9a-f]{8})[0-9a-f]{8}\b"#, "$1…"),
     ]
 
     static let compiled: [(NSRegularExpression, String)] = rules.compactMap { pattern, template in

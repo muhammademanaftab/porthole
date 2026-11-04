@@ -18,6 +18,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var hostName = ""
     var connectWindow: ConnectWindow?
     let discovery = HostDiscovery()
+    var openObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
@@ -30,6 +31,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             Gallery.show(screen)
             return
         }
+        listenForOpenRequests()
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
             connect(host: host, credential: .password(pw))
@@ -285,6 +287,37 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     var autoOpenMatch = ProcessInfo.processInfo.environment["PORTHOLE_OPEN"]
+
+    func listenForOpenRequests() {
+        openObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(OpenRequest.notification), object: String(ProcessInfo.processInfo.processIdentifier), queue: .main) { [weak self] note in
+            guard let request = OpenRequest(userInfo: note.userInfo) else { return }
+            MainActor.assumeIsolated { self?.handle(request) }
+        }
+    }
+
+    func handle(_ request: OpenRequest) {
+        let saved = PasswordStore.credential(for: request.address)
+        let reply: OpenReply
+        switch request.plan(connectedTo: connection?.hostAddress, hasCredential: saved != nil) {
+        case .refreshList:
+            VLog.info("cli open handed over: window \(request.windowID) on \(request.address)")
+            autoOpenMatch = request.match
+            connection?.requestList()
+            reply = OpenReply(token: request.token, ok: true, message: "the running Porthole is opening it")
+        case .connect:
+            guard let (cred, id) = saved else { return }
+            VLog.info("cli open handed over: connecting to \(request.address) for window \(request.windowID)")
+            autoOpenMatch = request.match
+            connect(host: request.address, credential: cred, saved: true, hostID: id)
+            reply = OpenReply(token: request.token, ok: true, message: "the running Porthole switched to \(request.address) to open it")
+        case .noCredential:
+            reply = OpenReply(token: request.token, ok: false, message: "the running Porthole has no saved pairing or password for \(request.address)")
+        }
+        if reply.ok { NSApp.activate() }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(OpenRequest.replyNotification), object: request.token, userInfo: reply.userInfo, deliverImmediately: true)
+    }
 
     func autoOpen(_ list: [WindowInfo]) {
         guard let info = autoOpenWindow(autoOpenMatch, in: list) else { return }

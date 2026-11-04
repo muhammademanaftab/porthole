@@ -19,9 +19,21 @@ public enum LogFiles {
         (0...keep).reversed().map { generation($0, role: role, in: dir) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    public static func lockURL(role: String, in dir: URL) -> URL { dir.appendingPathComponent("\(role).log.lock") }
+
+    static func size(of url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int
+    }
+
     public static func rotateIfNeeded(role: String, in dir: URL, maxBytes: Int = maxBytes) -> Bool {
         let live = url(role: role, in: dir)
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: live.path))?[.size] as? Int, size >= maxBytes else { return false }
+        guard let size = size(of: live), size >= maxBytes else { return false }
+        let fd = open(lockURL(role: role, in: dir).path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else { return false }
+        defer { flock(fd, LOCK_UN) }
+        guard let locked = self.size(of: live), locked >= maxBytes else { return false }
         let fm = FileManager.default
         try? fm.removeItem(at: generation(keep, role: role, in: dir))
         for n in stride(from: keep - 1, through: 0, by: -1) {

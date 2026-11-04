@@ -3,14 +3,36 @@ import CoreGraphics
 import PortholeCore
 
 final class StatusBox: @unchecked Sendable {
+    static let interval: TimeInterval = 10
     private let lock = NSLock()
     private var value: [String: Any] = [:]
+    private var maker: (@MainActor () -> [String: Any])?
 
     func set(_ v: [String: Any]) { lock.lock(); value = v; lock.unlock() }
 
     func get() -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
         return value
+    }
+
+    @MainActor func start(_ make: @escaping @MainActor () -> [String: Any]) {
+        lock.lock(); maker = make; lock.unlock()
+        refresh()
+    }
+
+    @MainActor func refresh() {
+        lock.lock(); let make = maker; lock.unlock()
+        if let make { set(make()) }
+    }
+
+    func fresh(wait: TimeInterval = 0.5) -> [String: Any] {
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.refresh() }
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + wait)
+        return get()
     }
 }
 

@@ -14,12 +14,13 @@ enum ViewerTools {
     }
 
     static func runLoop(timeout: TimeInterval, _ what: String, _ body: @escaping @MainActor () -> Void) -> Never {
-        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+        let limit = Timer(timeInterval: timeout, repeats: false) { _ in
             fail("timed out after \(Int(timeout)) s \(what)")
             finish(1)
         }
+        RunLoop.main.add(limit, forMode: .common)
         DispatchQueue.main.async { MainActor.assumeIsolated { body() } }
-        dispatchMain()
+        while true { RunLoop.main.run(mode: .default, before: .distantFuture) }
     }
 
     static func resolve(_ host: String) -> String {
@@ -151,8 +152,61 @@ enum ViewerTools {
         }
     }
 
+    static func runningViewers() -> [NSRunningApplication] {
+        let exe = Bundle.main.executableURL?.resolvingSymlinksInPath()
+        return NSWorkspace.shared.runningApplications.filter { app in
+            app.bundleIdentifier == PasswordStore.service || (exe != nil && app.executableURL?.resolvingSymlinksInPath() == exe)
+        }
+    }
+
     static func launch(_ address: String, _ w: WindowInfo) {
         print("Opening \(w.app) — \(w.title.isEmpty ? "(untitled)" : w.title) (window \(w.id)) from \(address)")
+        let viewers = runningViewers()
+        switch ViewerLaunch.decide(viewers: viewers.map(\.processIdentifier), me: ProcessInfo.processInfo.processIdentifier) {
+        case .handOff(let pids):
+            let request = OpenRequest(address: address, windowID: w.id, token: UUID().uuidString)
+            let apps = viewers.filter { pids.contains($0.processIdentifier) }
+            handOff(request, to: pids) {
+                if apps.contains(where: { $0.activationPolicy == .regular }) {
+                    fail("Porthole is running but didn't take the request. Open the window from its picker, or quit Porthole and try again.")
+                    finish(1)
+                }
+                start(address, w)
+            }
+        case .launch:
+            start(address, w)
+        }
+    }
+
+    static func handOff(_ request: OpenRequest, to pids: [Int32], otherwise: @escaping @MainActor () -> Void) {
+        guard let pid = pids.first else { otherwise(); return }
+        let center = DistributedNotificationCenter.default()
+        let pending = PendingHandOff()
+        pending.observer = center.addObserver(forName: Notification.Name(OpenRequest.replyNotification), object: request.token, queue: .main) { note in
+            guard let reply = OpenReply(userInfo: note.userInfo), reply.token == request.token else { return }
+            MainActor.assumeIsolated {
+                guard pending.end() else { return }
+                VLog.info("cli open: handed window \(request.windowID) on \(request.address) to Porthole pid \(pid): \(reply.message)")
+                if reply.ok {
+                    print("Porthole is already running: \(reply.message).")
+                    finish(0)
+                }
+                fail(reply.message)
+                finish(1)
+            }
+        }
+        center.postNotificationName(Notification.Name(OpenRequest.notification), object: String(pid),
+                                    userInfo: request.userInfo, deliverImmediately: true)
+        let wait = Timer(timeInterval: 3, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                guard pending.end() else { return }
+                handOff(request, to: Array(pids.dropFirst()), otherwise: otherwise)
+            }
+        }
+        RunLoop.main.add(wait, forMode: .common)
+    }
+
+    static func start(_ address: String, _ w: WindowInfo) {
         VLog.info("cli open: window \(w.id) of \(w.app) on \(address)")
         let env = ["PORTHOLE_OPEN": "id:\(w.id)"]
         let app = Bundle.main.bundleURL
@@ -160,7 +214,6 @@ enum ViewerTools {
             let cfg = NSWorkspace.OpenConfiguration()
             cfg.arguments = [address]
             cfg.environment = env
-            cfg.createsNewApplicationInstance = !NSRunningApplication.runningApplications(withBundleIdentifier: PasswordStore.service).isEmpty
             NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, error in
                 if let error { fail("couldn't open Porthole: \(error.localizedDescription)"); finish(1) }
                 finish(0)
@@ -176,5 +229,19 @@ enum ViewerTools {
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { fail("couldn't start \(exe.path): \(error.localizedDescription)"); finish(1) }
         finish(0)
+    }
+}
+
+@MainActor
+final class PendingHandOff {
+    var observer: NSObjectProtocol?
+    private var done = false
+
+    func end() -> Bool {
+        guard !done else { return false }
+        done = true
+        if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
+        observer = nil
+        return true
     }
 }

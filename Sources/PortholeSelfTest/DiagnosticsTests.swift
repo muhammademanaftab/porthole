@@ -38,6 +38,8 @@ func diagnosticsTests() {
     doctorModelTests()
     logFileTests()
     localStatusRouteTests()
+    shellTests()
+    openHandOffTests()
     viewerToolCommandTests()
 }
 
@@ -326,11 +328,12 @@ private func whyQuitTests() {
     ].joined(separator: "\n")
     let runs = deriveRuns(lines(log), alive: [600])
     expect("why-quit: one run per host pid", runs.map { $0.pid ?? 0 }, [100, 200, 300, 400, 500, 600])
-    expect("why-quit: the causes", runs.map(\.cause.key), ["quit", "crash", "hang", "session", "signal", "running"])
+    expect("why-quit: the causes", runs.map(\.cause.key), ["quit", "killed", "hang", "session", "signal", "running"])
     expect("why-quit: a menu quit", runs[0].cause, .quit)
     expect("why-quit: uptime from first to last line", runs[0].uptime, 599)
     expect("why-quit: launched by", runs[0].launchedBy, "watchdog")
-    expect("why-quit: a crash without a report", runs[1].cause, .crash(report: nil))
+    expect("why-quit: a watchdog crash relaunch with no report is no trace, not a crash", runs[1].cause, .noTrace)
+    check("why-quit: no trace says there is no crash report", RunCause.noTrace.summary.contains("no crash report") && RunCause.noTrace.summary.contains("SIGKILL"))
     expect("why-quit: the crash was relaunched", runs[1].relaunch, "crash")
     expect("why-quit: a hang keeps its sample path", runs[2].cause, .hang(sample: "/Users/me/Library/Logs/Porthole/hang-2026-11-04T093000Z.txt"))
     expect("why-quit: a hang ends when the watchdog gave up on it", runs[2].end, at("2026-11-04T09:30:00Z"))
@@ -344,7 +347,7 @@ private func whyQuitTests() {
     let report = CrashReport(path: "/Users/me/Library/Logs/DiagnosticReports/porthole-host-2026-11-04-090501.ips", time: at("2026-11-04T09:05:01Z"), pid: 200)
     expect("why-quit: a crash report with the same pid is named", deriveRuns(lines(log), alive: [600], crashes: [report])[1].cause, .crash(report: report.path))
     let otherPid = CrashReport(path: "/x.ips", time: at("2026-11-04T09:05:01Z"), pid: 999)
-    expect("why-quit: a crash report for another pid is not", deriveRuns(lines(log), alive: [600], crashes: [otherPid])[1].cause, .crash(report: nil))
+    expect("why-quit: a crash report for another pid is not", deriveRuns(lines(log), alive: [600], crashes: [otherPid])[1].cause, .noTrace)
     expect("why-quit: the exit marker explains a silent last run", deriveRuns(lines(log), alive: [], lastMarker: "quit").last?.cause, .quit)
     check("why-quit: render names the pid, uptime and cause", runs[2].render().contains("pid 300") && runs[2].render().contains("up 24m 57s") && runs[2].render().contains("sample /Users/me"))
     check("why-quit: render of a relaunched run says so", runs[3].render().contains("the watchdog relaunched it (missingAfterQuit)"))
@@ -375,7 +378,7 @@ private func legacyWhyQuitTests() {
     """
     let runs = deriveRuns(lines(old))
     expect("old log: runs split at each permissions line", runs.count, 4)
-    expect("old log: causes", runs.map(\.cause.key), ["quit", "crash", "hang", "session"])
+    expect("old log: causes; a crash relaunch with no report is no trace", runs.map(\.cause.key), ["quit", "killed", "hang", "session"])
     expect("old log: the watchdog's launch lines start the next run", runs[2].start, at("2026-11-04T11:25:01Z"))
     expect("old log: a mid-run settings line stays in its run", runs[3].end, at("2026-11-04T11:55:00Z"))
     expect("old log: the hang sample", runs[2].cause, .hang(sample: "/tmp/hang-1.txt"))
@@ -398,6 +401,10 @@ private func scrubTests() {
     expect("scrub: code=123456", s.scrub("code=123456"), "code=[redacted]")
     let plain = "2026-11-04T11:55:09Z info host:1 [stage] stage: parked window 62763 at (0, 0), scale 2.0"
     expect("scrub: ordinary lines are untouched", s.scrub(plain), plain)
+    expect("scrub: a 16-hex device ID is shortened", s.scrub("paired device 0123456789abcdef (Air)"), "paired device 01234567… (Air)")
+    expect("scrub: a device ID in a field is shortened", s.scrub("open from view-a device=a1b2c3d4e5f60718 ok"), "open from view-a device=a1b2c3d4… ok")
+    expect("scrub: longer hex runs are left alone", s.scrub("sha 0123456789abcdef0123"), "sha 0123456789abcdef0123")
+    expect("scrub: window IDs and times are left alone", s.scrub("window 62763 at 2026-11-04T11:55:09Z"), "window 62763 at 2026-11-04T11:55:09Z")
     expect("short id: 16 hex characters become 8 and an ellipsis", shortID("0123456789abcdef"), "01234567…")
     expect("short id: short ids stay", shortID("abc"), "abc")
 }
@@ -421,6 +428,12 @@ private func envFlagTests() {
     expect("env: every flag is a row", EnvFlags.rows(environment: [:], setOnly: false).count, EnvFlags.all.count)
     check("env: render shows unset values", EnvFlags.render(EnvFlags.rows(environment: [:], setOnly: false)).contains("(unset)"))
     check("env: json masks secrets", (EnvFlags.json(set)[1]["current"] as? String) == "[redacted]")
+    let odd = EnvFlags.rows(environment: ["PORTHOLE_API_KEY": "k1", "PORTHOLE_my_pass": "p1", "PORTHOLE_OLD_PW": "p2", "PORTHOLE_AuthToken": "t1",
+                                          "PORTHOLE_SECRET2": "s1", "PORTHOLE_TYPO": "visible"], setOnly: true)
+    expect("env: unknown flags named like secrets are masked, others shown", odd.map { "\($0.flag.name)=\(EnvFlags.shown($0))" },
+           ["PORTHOLE_API_KEY=[redacted]", "PORTHOLE_AuthToken=[redacted]", "PORTHOLE_OLD_PW=[redacted]", "PORTHOLE_SECRET2=[redacted]",
+            "PORTHOLE_TYPO=visible", "PORTHOLE_my_pass=[redacted]"])
+    check("env: render never prints a masked unknown value", !EnvFlags.render(odd).contains("k1") && !EnvFlags.render(odd).contains("p1"))
 }
 
 private func recentTests() {
@@ -549,11 +562,82 @@ private func logFileTests() {
     expect("rotate: generations read oldest first", LogFiles.generations(role: "host", in: dir).map(\.lastPathComponent), ["host.2.log", "host.1.log"])
     for _ in 0..<6 { try? Data(repeating: 68, count: 300).write(to: live); _ = LogFiles.rotateIfNeeded(role: "host", in: dir, maxBytes: 100) }
     check("rotate: at most \(LogFiles.keep) old generations", !FileManager.default.fileExists(atPath: LogFiles.generation(LogFiles.keep + 1, role: "host", in: dir).path))
+    rotateLockTests()
 
     let h = lines("2026-11-04T10:00:00Z a\n2026-11-04T10:00:02Z c\nno time here\n2026-11-04T10:00:04Z e")
     let vw = lines("2026-11-04T10:00:01Z b\n2026-11-04T10:00:03Z d", role: "viewer")
     expect("merge: by time across files, untimed lines stay after their neighbour", LogFiles.merge([h, vw]).map(\.text), ["a", "b", "c", "no time here", "d", "e"])
     check("verbose: PORTHOLE_LOG=debug", verboseFromEnvironment(["PORTHOLE_LOG": "debug"]) && verboseFromEnvironment(["PORTHOLE_VERBOSE": "1"]) && !verboseFromEnvironment([:]))
+}
+
+private final class Counter: @unchecked Sendable {
+    let lock = NSLock()
+    var n = 0
+    func bump() { lock.lock(); n += 1; lock.unlock() }
+}
+
+private func rotateLockTests() {
+    let dir = scratch()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let live = LogFiles.url(role: "viewer", in: dir)
+    try? Data(repeating: 70, count: 500).write(to: live)
+    let rotated = Counter()
+    DispatchQueue.concurrentPerform(iterations: 8) { _ in
+        if LogFiles.rotateIfNeeded(role: "viewer", in: dir, maxBytes: 100) { rotated.bump() }
+    }
+    expect("rotate lock: racing rotations move the file once", rotated.n, 1)
+    expect("rotate lock: the file lands in viewer.1.log, not shifted twice", LogFiles.generations(role: "viewer", in: dir).map(\.lastPathComponent), ["viewer.1.log"])
+    expect("rotate lock: the lock file is per log", LogFiles.lockURL(role: "viewer", in: dir).lastPathComponent, "viewer.log.lock")
+
+    try? Data(repeating: 71, count: 500).write(to: live)
+    let fd = open(LogFiles.lockURL(role: "viewer", in: dir).path, O_RDWR | O_CREAT, 0o644)
+    _ = flock(fd, LOCK_EX)
+    let done = DispatchSemaphore(value: 0)
+    let result = Counter()
+    DispatchQueue.global().async {
+        if LogFiles.rotateIfNeeded(role: "viewer", in: dir, maxBytes: 100) { result.bump() }
+        done.signal()
+    }
+    let waitedWhileLocked = done.wait(timeout: .now() + 0.3) == .timedOut
+    check("rotate lock: a rotation waits while another process holds the lock", waitedWhileLocked && FileManager.default.fileExists(atPath: live.path))
+    try? FileManager.default.moveItem(at: live, to: dir.appendingPathComponent("moved-by-other.log"))
+    _ = flock(fd, LOCK_UN)
+    close(fd)
+    _ = done.wait(timeout: .now() + 5)
+    expect("rotate lock: after the lock, the size is checked again and a rotation already done elsewhere is not repeated", result.n, 0)
+    expect("rotate lock: viewer.2.log was not made", FileManager.default.fileExists(atPath: LogFiles.generation(2, role: "viewer", in: dir).path), false)
+}
+
+private func shellTests() {
+    let echo = Shell.run("/bin/sh", ["-c", "printf hello"])
+    expect("shell: output and status", echo.map { "\($0.status) \($0.out)" }, "0 hello")
+    expect("shell: a missing tool is nil", Shell.run("/no/such/tool", []) == nil, true)
+    let slow = Date()
+    let sleeper = Shell.run("/bin/sh", ["-c", "printf early; exec sleep 30"], timeout: 0.5)
+    check("shell: a timed-out command is stopped with SIGTERM promptly", Date().timeIntervalSince(slow) < 2.5 && sleeper?.status == SIGTERM)
+    expect("shell: output before the timeout is kept", sleeper?.out, "early")
+    let stubborn = Date()
+    let ignoring = Shell.run("/bin/sh", ["-c", "trap '' TERM; printf x; while :; do sleep 0.1; done"], timeout: 0.5, grace: 0.5)
+    check("shell: a command ignoring SIGTERM is killed after the grace period", Date().timeIntervalSince(stubborn) < 4 && ignoring?.status == SIGKILL && ignoring?.out == "x")
+    let held = Date()
+    let orphan = Shell.run("/bin/sh", ["-c", "sleep 4 & printf done"], timeout: 5)
+    check("shell: a child left holding the pipe does not block the read", Date().timeIntervalSince(held) < 2 && orphan?.out == "done" && orphan?.status == 0)
+}
+
+private func openHandOffTests() {
+    let r = OpenRequest(address: "100.64.0.2", windowID: 62763, token: "t-1")
+    expect("open hand-off: the request survives a notification round trip", OpenRequest(userInfo: r.userInfo as [AnyHashable: Any]), r)
+    expect("open hand-off: it opens by window ID", r.match, "id:62763")
+    expect("open hand-off: a request without a window is ignored", OpenRequest(userInfo: ["address": "x", "token": "t"]), nil)
+    expect("open hand-off: a request without a token is ignored", OpenRequest(userInfo: ["address": "x", "window": "1", "token": ""]), nil)
+    expect("open hand-off: same host refreshes the list", r.plan(connectedTo: "100.64.0.2", hasCredential: false), .refreshList)
+    expect("open hand-off: another host with a saved pairing connects", r.plan(connectedTo: "mini.local", hasCredential: true), .connect)
+    expect("open hand-off: no connection and no pairing is refused", r.plan(connectedTo: nil, hasCredential: false), .noCredential)
+    let reply = OpenReply(token: "t-1", ok: false, message: "no pairing")
+    expect("open hand-off: the reply survives a round trip", OpenReply(userInfo: reply.userInfo as [AnyHashable: Any]), reply)
+    expect("open hand-off: a running Porthole gets the request", ViewerLaunch.decide(viewers: [500, 42], me: 42), .handOff([500]))
+    expect("open hand-off: only this process running means launch", ViewerLaunch.decide(viewers: [42], me: 42), .launch)
+    expect("open hand-off: nothing running means launch", ViewerLaunch.decide(viewers: [], me: 42), .launch)
 }
 
 private func localStatusRouteTests() {

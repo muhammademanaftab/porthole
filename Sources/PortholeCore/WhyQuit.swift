@@ -7,7 +7,7 @@ public enum RunCause: Equatable, Sendable {
     case migrate
     case session
     case signal(String)
-    case crash(report: String?)
+    case crash(report: String)
     case hang(sample: String?)
     case noTrace
 
@@ -19,9 +19,9 @@ public enum RunCause: Equatable, Sendable {
         case .migrate: return "handed over from the old login agent"
         case .session: return "session end: logout, shutdown or an outside quit (Activity Monitor, osascript)"
         case .signal(let name): return "caught \(name)"
-        case .crash(let report): return "crash" + (report.map { "; report \($0)" } ?? "; no crash report found")
+        case .crash(let report): return "crashed; report \(report)"
         case .hang(let sample): return "main thread hung; the watchdog killed it" + (sample.map { "; sample \($0)" } ?? "; no sample")
-        case .noTrace: return "killed, no trace (SIGKILL, Force Quit, jetsam or power loss)"
+        case .noTrace: return "gone without a marker and no crash report (crash, SIGKILL, Force Quit or jetsam)"
         }
     }
 
@@ -191,7 +191,6 @@ public func deriveRuns(_ lines: [LogLine], alive: Set<Int32> = [], hostRunning: 
                 return c.time >= end.addingTimeInterval(-5) && c.time <= end.addingTimeInterval(180)
             }
             if let report { run.cause = .crash(report: report.path) }
-            else if run.relaunch == "crash" { run.cause = .crash(report: nil) }
             else if run.relaunch == "missingAfterQuit" { run.cause = .session }
             else if run.relaunch == "hang" { run.cause = .hang(sample: sample) }
             else if run.relaunch == "remote" { run.cause = .remoteRestart }
