@@ -64,12 +64,18 @@ public struct TailscalePeer: Equatable, Sendable {
     public var ipv4: String?
     public var online: Bool
     public var os: String
+    public var ips: [String]
+    public var curAddr: String
+    public var relay: String
 
-    public init(hostName: String, dnsName: String, ipv4: String?, online: Bool, os: String) {
+    public init(hostName: String, dnsName: String, ipv4: String?, online: Bool, os: String, ips: [String] = [], curAddr: String = "", relay: String = "") {
         self.hostName = hostName; self.dnsName = dnsName; self.ipv4 = ipv4; self.online = online; self.os = os
+        self.ips = ips; self.curAddr = curAddr; self.relay = relay
     }
 
     public var isMac: Bool { os == "macOS" }
+
+    public var isRelayed: Bool { curAddr.isEmpty && !relay.isEmpty }
 }
 
 public struct TailscaleStatus: Equatable, Sendable {
@@ -83,6 +89,8 @@ public struct TailscaleStatus: Equatable, Sendable {
         var OS: String?
         var TailscaleIPs: [String]?
         var Online: Bool?
+        var CurAddr: String?
+        var Relay: String?
     }
 
     private struct Status: Decodable {
@@ -97,11 +105,17 @@ public struct TailscaleStatus: Equatable, Sendable {
         let peers = (s.Peer ?? [:]).values.map { n in
             TailscalePeer(hostName: n.HostName ?? "", dnsName: n.DNSName ?? "",
                           ipv4: (n.TailscaleIPs ?? []).first(where: isTailscaleAddress),
-                          online: n.Online ?? false, os: n.OS ?? "")
+                          online: n.Online ?? false, os: n.OS ?? "", ips: n.TailscaleIPs ?? [],
+                          curAddr: n.CurAddr ?? "", relay: n.Relay ?? "")
         }
         let ips = s.TailscaleIPs ?? s.Self?.TailscaleIPs ?? []
         return TailscaleStatus(running: s.BackendState == "Running", selfIPv4: ips.first(where: isTailscaleAddress),
                                peers: peers.sorted { ($0.hostName, $0.dnsName) < ($1.hostName, $1.dnsName) })
+    }
+
+    public func peer(withIP ip: String) -> TailscalePeer? {
+        let want = bareHost(ip)
+        return peers.first { p in p.ips.contains { bareHost($0) == want } || p.ipv4.map { bareHost($0) == want } == true }
     }
 
     public var probeTargets: [TailscalePeer] {
@@ -118,8 +132,9 @@ public func peerDisplayName(_ peer: TailscalePeer) -> String {
 
 public enum BonjourTXT {
     public static func make(name: String, tailscaleIP: String?, localHost: String?,
-                            port: Int = Int(HostConfig.defaultHTTPPort), id: String? = nil) -> [String: String] {
+                            port: Int = Int(HostConfig.defaultHTTPPort), id: String? = nil, lanIP: String? = nil) -> [String: String] {
         var txt = ["v": String(portholeProtocolVersion), "name": clip(name, bytes: 200), "port": String(port)]
+        if let lanIP, addressScope(lanIP) == .local { txt["ip"] = lanIP }
         if let id, DeviceIdentity.isValidID(id) { txt["id"] = id }
         if let tailscaleIP, isTailscaleAddress(tailscaleIP) { txt["ts"] = tailscaleIP }
         if let localHost, !localHost.isEmpty { txt["host"] = clip(localHost, bytes: 200) }
@@ -132,9 +147,12 @@ public enum BonjourTXT {
         let name = (txt["name"] ?? "").isEmpty ? serviceName : txt["name"]!
         let ts = txt["ts"].flatMap { isTailscaleAddress($0) ? $0 : nil }
         let lan = txt["host"].flatMap { $0.isEmpty ? nil : $0 }
-        guard ts != nil || lan != nil else { return nil }
-        return DiscoveredHost(name: name, tailscaleIP: ts, lanHost: lan, port: port ?? Int(HostConfig.defaultHTTPPort),
-                              status: .online, viaBonjour: true, hostID: txt["id"].flatMap { DeviceIdentity.isValidID($0) ? $0 : nil })
+        let ip = txt["ip"].flatMap { addressScope($0) == .local ? $0 : nil }
+        guard ts != nil || lan != nil || ip != nil else { return nil }
+        var host = DiscoveredHost(name: name, tailscaleIP: ts, lanHost: lan, port: port ?? Int(HostConfig.defaultHTTPPort),
+                                  status: .online, viaBonjour: true, hostID: txt["id"].flatMap { DeviceIdentity.isValidID($0) ? $0 : nil })
+        host.lanIP = ip
+        return host
     }
 
     static func clip(_ s: String, bytes: Int) -> String {
@@ -162,6 +180,7 @@ public struct DiscoveredHost: Equatable, Sendable {
     public var viaTailscale: Bool
     public var saved: Bool
     public var hostID: String?
+    public var lanIP: String?
 
     public init(name: String, tailscaleIP: String? = nil, lanHost: String? = nil, port: Int = Int(HostConfig.defaultHTTPPort),
                 status: Status, viaBonjour: Bool = false, viaTailscale: Bool = false, saved: Bool = false, hostID: String? = nil) {
@@ -211,6 +230,7 @@ public struct DiscoveredHost: Equatable, Sendable {
         viaTailscale = viaTailscale || o.viaTailscale
         saved = saved || o.saved
         hostID = hostID ?? o.hostID
+        lanIP = lanIP ?? o.lanIP
         if name == tailscaleIP || name == lanHost || name.isEmpty { name = o.name }
     }
 }

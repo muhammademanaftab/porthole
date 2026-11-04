@@ -27,13 +27,15 @@ final class HTTPServer {
         routes.shares = guests?.store
         routes.guestControl = allowControl
         routes.httpPort = config.httpPort
+        routes.ownsAddress = { ownAddresses().contains($0) }
+        routes.passwordThrottle = PasswordThrottle()
         routes.resolveWindow = { target in pickWindow(target, in: HTTPServer.listWindowsBlocking()) }
         routes.shareAddresses = { (lanAddress(), tailscaleAddress()) }
         routes.onSharesChanged = { [weak guests] in guests?.changedFromCLI() }
         routes.onUnshare = { [weak guests] link in guests?.revokedFromCLI(link) }
         self.routes = routes
         let txt = BonjourTXT.make(name: name, tailscaleIP: tailscaleAddress(), localHost: HTTPServer.localHostName,
-                                 port: Int(config.httpPort), id: trust?.identity.id)
+                                 port: Int(config.httpPort), id: trust?.identity.id, lanIP: lanAddress())
         listener.service = NWListener.Service(name: name, type: portholeServiceType, domain: nil, txtRecord: NWTXTRecord(txt))
     }
 
@@ -90,12 +92,23 @@ final class HTTPServer {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
             guard let self, let data, let req = String(data: data, encoding: .utf8) else { conn.cancel(); return }
             let loopback = Self.isLoopback(conn.endpoint)
-            conn.send(content: self.routes.respond(to: req, fromLoopback: loopback).serialized, completion: .contentProcessed { _ in conn.cancel() })
+            let source = Self.sourceHost(conn.endpoint)
+            conn.send(content: self.routes.respond(to: req, fromLoopback: loopback, source: source).serialized, completion: .contentProcessed { _ in conn.cancel() })
         }
     }
 
     func respond(to request: String) -> HTTPResponse {
         routes.respond(to: request)
+    }
+
+    static func sourceHost(_ endpoint: NWEndpoint) -> String {
+        guard case .hostPort(let host, _) = endpoint else { return "unknown" }
+        switch host {
+        case .ipv4(let a): return "\(a)"
+        case .ipv6(let a): return a.asIPv4.map { "\($0)" } ?? "\(a)"
+        case .name(let n, _): return n
+        @unknown default: return "unknown"
+        }
     }
 
     static func isLoopback(_ endpoint: NWEndpoint) -> Bool {

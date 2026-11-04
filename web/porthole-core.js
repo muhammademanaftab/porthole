@@ -267,6 +267,90 @@
     return out;
   }
 
-  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  function ipv4(s) {
+    const parts = s.split('.');
+    if (parts.length !== 4 || !parts.every(p => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return null;
+    return parts.map(Number);
+  }
+
+  function ipv4Scope(b) {
+    if (b[0] === 127) return 'loopback';
+    if (b[0] === 100 && b[1] >= 64 && b[1] <= 127) return 'tailscale';
+    if (b[0] === 10 || (b[0] === 172 && b[1] >= 16 && b[1] <= 31) || (b[0] === 192 && b[1] === 168) || (b[0] === 169 && b[1] === 254)) return 'local';
+    return 'other';
+  }
+
+  function bareHost(host) {
+    let h = String(host || '').trim().toLowerCase();
+    if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+    const pct = h.indexOf('%');
+    if (pct >= 0) h = h.slice(0, pct);
+    if (h.endsWith('.')) h = h.slice(0, -1);
+    return h;
+  }
+
+  function addressScope(host) {
+    const h = bareHost(host);
+    const v4 = ipv4(h);
+    if (v4) return ipv4Scope(v4);
+    if (h.includes(':')) {
+      if (h === '::1') return 'loopback';
+      const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+      if (mapped && ipv4(mapped[1])) return ipv4Scope(ipv4(mapped[1]));
+      if (/^fd7a:115c:a1e0(:|$)/.test(h)) return 'tailscale';
+      if (/^fe[89ab][0-9a-f]:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h)) return 'local';
+      return 'other';
+    }
+    if (h === 'localhost') return 'loopback';
+    if (h.endsWith('.local')) return 'local';
+    if (h.endsWith('.ts.net')) return 'tailscale';
+    return 'other';
+  }
+
+  const ROUTE_LABELS = { thisMac: 'This Mac', sameNetwork: 'Same network', tailscale: 'Tailscale', relayed: 'Relayed', internet: 'Internet' };
+
+  function ipv6Groups(host) {
+    const h = bareHost(host);
+    if (!h.includes(':') || /[^0-9a-f:]/.test(h)) return null;
+    const halves = h.split('::');
+    if (halves.length > 2) return null;
+    const head = halves[0] ? halves[0].split(':') : [];
+    const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    const fill = 8 - head.length - tail.length;
+    if (halves.length === 1 ? fill !== 0 : fill < 1) return null;
+    const groups = [...head, ...Array(halves.length === 2 ? fill : 0).fill('0'), ...tail];
+    if (groups.length !== 8 || !groups.every(g => /^[0-9a-f]{1,4}$/.test(g))) return null;
+    return groups.map(g => parseInt(g, 16));
+  }
+
+  function sameIPv6Subnet(a, b) {
+    const x = ipv6Groups(a), y = ipv6Groups(b);
+    if (!x || !y || x.slice(0, 5).every(g => g === 0)) return false;
+    return x.slice(0, 4).every((g, i) => g === y[i]);
+  }
+
+  function routeKind(remoteAddress, remoteType, localType, localAddress) {
+    if (remoteType === 'relay' || localType === 'relay') return 'relayed';
+    const kind = { loopback: 'thisMac', local: 'sameNetwork', tailscale: 'tailscale', other: 'internet' }[addressScope(remoteAddress)];
+    if (kind === 'internet' && remoteType === 'host' && localType === 'host' && sameIPv6Subnet(remoteAddress, localAddress)) return 'sameNetwork';
+    return kind;
+  }
+
+  function selectedRoute(report) {
+    const all = report ? [...(typeof report.values === 'function' ? report.values() : report)] : [];
+    const byId = new Map(all.map(s => [s.id, s]));
+    const transport = all.find(s => s.type === 'transport' && s.selectedCandidatePairId);
+    let pair = transport && byId.get(transport.selectedCandidatePairId);
+    if (!pair) pair = all.find(s => s.type === 'candidate-pair' && (s.selected || (s.nominated && s.state === 'succeeded')));
+    if (!pair) return null;
+    const remote = byId.get(pair.remoteCandidateId), local = byId.get(pair.localCandidateId);
+    const address = remote && (remote.address || remote.ip);
+    if (!address) return null;
+    const kind = routeKind(address, remote.candidateType, local && local.candidateType, local && (local.address || local.ip));
+    const host = bareHost(address);
+    return { kind, address: host, label: ROUTE_LABELS[kind], text: `${ROUTE_LABELS[kind]} (${host})` };
+  }
+
+  return { addressScope, routeKind, sameIPv6Subnet, selectedRoute, ROUTE_LABELS, THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });

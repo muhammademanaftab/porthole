@@ -43,6 +43,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
                    styleMask: companion ? [.borderless] : [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         self.title = title
         self.subtitle = subtitle
+        baseSubtitle = subtitle
         isReleasedWhenClosed = false
         delegate = self
         backgroundColor = .black
@@ -82,6 +83,13 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         show(.opening(app))
         if companion { hasShadow = true; alphaValue = 0 } else { center() }
         makeFirstResponder(inputView)
+    }
+
+    private var baseSubtitle = ""
+
+    func showRoute(_ route: RouteInfo?) {
+        guard !isCompanion else { return }
+        subtitle = route.map { "\(baseSubtitle) · \($0.kind.label)" } ?? baseSubtitle
     }
 
     func attach(_ track: VideoTrack) {

@@ -339,6 +339,11 @@ public struct ViewerTrust: Codable, Equatable, Sendable {
         hosts = [PairedHost(id: id, name: cleanDeviceName(name), addresses: [address] + old)] + others.filter { !$0.addresses.isEmpty }
     }
 
+    public func addresses(of id: String?) -> [String] {
+        guard let id else { return [] }
+        return hosts.first { $0.id == id }?.addresses ?? []
+    }
+
     public mutating func forget(id: String) {
         hosts.removeAll { $0.id == id }
     }

@@ -69,12 +69,12 @@ enum ViewerTools {
 
     static func withWindows(_ host: String, _ then: @escaping @MainActor (String, [WindowInfo]) -> Void) -> Never {
         let address = resolve(host)
-        guard let (cred, _) = PasswordStore.credential(for: address) else {
+        guard let (cred, hostID) = PasswordStore.credential(for: address) else {
             fail("no saved pairing or password for \(address). Pair first: porthole-view request \(address)")
             finish(1)
         }
         runLoop(timeout: 25, "waiting for \(address)'s window list") {
-            let c = Connection(hostAddress: address, credential: cred)
+            let c = Connection(hostAddress: address, credential: cred, hostID: hostID)
             var done = false
             c.onWindows = { list in
                 guard !done else { return }

@@ -16,6 +16,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var icons: [UInt32: Data] = [:]
     var muted = !ViewerSettingsWindow.current.playSound
     var muteItem: NSMenuItem?
+    var routeItem: NSMenuItem?
     var settingsWindow: ViewerSettingsWindow?
     var hostName = ""
     var connectWindow: ConnectWindow?
@@ -35,6 +36,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             return
         }
         listenForOpenRequests()
+        RouteFinder.startBrowsingUnlessTailscaleOnly()
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
             connect(host: host, credential: .password(pw))
@@ -91,12 +93,25 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         window.addItem(.separator())
         window.addItem(withTitle: "Hide Title Bar Automatically", action: #selector(PortalWindow.toggleTitleBarAutoHide(_:)), keyEquivalent: "")
         window.addItem(.separator())
+        routeItem = window.addItem(withTitle: Self.routeTitle(nil), action: nil, keyEquivalent: "")
+        window.addItem(.separator())
         window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         let windowItem = NSMenuItem()
         windowItem.submenu = window
         main.addItem(windowItem)
         NSApp.windowsMenu = window
         NSApp.mainMenu = main
+    }
+
+    static func routeTitle(_ route: RouteInfo?) -> String {
+        route?.menuTitle ?? "Connection: Not connected"
+    }
+
+    func routeChanged(_ route: RouteInfo?) {
+        routeItem?.title = Self.routeTitle(route)
+        routeItem?.toolTip = connection?.activeAddress.map { "Signaling through \($0)" }
+        picker?.route = route?.kind.label
+        for p in portals.values { p.showRoute(route) }
     }
 
     @objc func showPicker() { picker?.makeKeyAndOrderFront(nil); connection?.requestList() }
@@ -262,8 +277,9 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         hostName = name ?? host
         if let old = connection { Task { await old.disconnect() } }
         picker?.close()
-        let c = Connection(hostAddress: host, credential: credential)
+        let c = Connection(hostAddress: host, credential: credential, hostID: hostID)
         connection = c
+        routeChanged(nil)
         c.muted = muted
         let picker = PickerWindow(hostName: name ?? host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
         picker.hostAddress = host
@@ -286,6 +302,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.isCompanion = { [weak self] id in self?.companions[id] != nil }
         c.onSized = { [weak self] m in if let id = m.win { self?.portals[id]?.hostSized(m) } }
         c.onOpenError = { [weak self] id, msg in (self?.portals[id] ?? self?.companions[id])?.show(.failed(msg)) }
+        c.onRoute = { [weak self, weak c] route in
+            guard let self, let c, self.connection === c else { return }
+            self.routeChanged(route)
+        }
         c.onLink = { [weak self] state in
             self?.portals.values.forEach { $0.linkChanged(state) }
         }
@@ -405,6 +425,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             self.request(info.id, into: portal)
         }
         portal.wholeScreen = info.screen == true
+        portal.showRoute(c.route)
         portals[info.id] = portal
         portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
         portal.makeKeyAndOrderFront(nil)

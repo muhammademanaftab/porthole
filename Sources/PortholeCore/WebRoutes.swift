@@ -49,6 +49,8 @@ public struct WebRoutes {
     public var onSharesChanged: (() -> Void)?
     public var onUnshare: ((ShareLink) -> Void)?
     public var now: () -> Date = Date.init
+    public var ownsAddress: ((String) -> Bool)?
+    public var passwordThrottle: PasswordThrottle?
     public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
@@ -63,7 +65,7 @@ public struct WebRoutes {
         self.trust = trust; self.hostID = hostID
     }
 
-    public func respond(to request: String, fromLoopback: Bool = false) -> HTTPResponse {
+    public func respond(to request: String, fromLoopback: Bool = false, source: String? = nil) -> HTTPResponse {
         let lines = request.components(separatedBy: "\r\n")
         let parts = lines.first?.split(separator: " ") ?? []
         guard parts.count >= 2 else { return HTTPResponse("400 Bad Request", "text/plain", "bad request") }
@@ -86,12 +88,12 @@ public struct WebRoutes {
                 return constantTimeEqual(String(line.dropFirst(localRouteHeader.count + 1)).trimmingCharacters(in: .whitespaces), secret)
             }
         } == true
-        var response = comps.path.hasPrefix("/local/") ? localRoute(comps, allowed: local) : route(comps, hostHeader: hostHeader)
+        var response = comps.path.hasPrefix("/local/") ? localRoute(comps, allowed: local) : route(comps, hostHeader: hostHeader, source: source ?? "unknown")
         if parts[0] == "HEAD" { response.sendsBody = false }
         return response
     }
 
-    private func route(_ comps: URLComponents, hostHeader: String) -> HTTPResponse {
+    private func route(_ comps: URLComponents, hostHeader: String, source: String) -> HTTPResponse {
         let query = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         switch comps.path {
         case "/", "/index.html":
@@ -102,12 +104,20 @@ public struct WebRoutes {
         case "/token":
             if let share = query["share"] { return guestToken(share, client: query["cid"], hostHeader: hostHeader) }
             let identity: String
+            let triesPassword = !(query["pw"] ?? "").isEmpty
+            if triesPassword, let paused = passwordThrottle?.secondsPaused(source) {
+                let minutes = max(1, (paused + 59) / 60)
+                return Self.json("429 Too Many Requests", ["error": "Too many wrong passwords from this computer. Try again in \(minutes) \(minutes == 1 ? "minute" : "minutes")."])
+            }
             switch authorizeToken(query: query, password: password, verify: { id, secret in trust?.verify(id: id, secret: secret) }) {
             case .refused:
+                if triesPassword { passwordThrottle?.failed(source) }
                 return HTTPResponse("403 Forbidden", "application/json", #"{"error":"wrong password"}"#)
             case .unpaired:
+                if triesPassword { passwordThrottle?.failed(source) }
                 return Self.json("403 Forbidden", ["error": "This Mac isn't paired with \(hostName) any more. Pair it again.", "unpaired": true])
             case .password:
+                passwordThrottle?.succeeded(source)
                 identity = Self.viewerIdentity(name: query["name"], suffix: suffix())
             case .device(let device):
                 identity = pairedIdentity(name: query["name"], suffix: suffix(), device: device.id)
@@ -116,7 +126,16 @@ public struct WebRoutes {
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
             return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         case "/hello":
-            return HTTPResponse("200 OK", "application/json", HostHello(name: hostName, version: portholeProtocolVersion, id: hostID).json)
+            let hello = HostHello(name: hostName, version: portholeProtocolVersion, id: hostID)
+            let trust = self.trust
+            guard let proof = HelloProof.answer(query: query, hostHeader: hostHeader, hostID: hostID,
+                                                secretHash: { id in trust?.devices().first { $0.id == id }?.secretHash },
+                                                ownsAddress: ownsAddress ?? { _ in false }),
+                  var obj = (try? JSONSerialization.jsonObject(with: hello.json)) as? [String: Any] else {
+                return HTTPResponse("200 OK", "application/json", hello.json)
+            }
+            obj["proof"] = proof
+            return Self.json("200 OK", obj)
         case "/pair":
             return pair(query["code"] ?? "", device: query["device"], name: query["name"])
         case "/pair/request":
