@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'hostReachable', 'iconRequests', 'isAudioTrack', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)', 'normalize(', '.every(t']) {
     assert.equal(html.includes(copy), false, copy);
@@ -579,4 +579,23 @@ test('index.html only asks for thumbnails while the room is connected and frees 
   assert.ok(thumbSends.some(l => l.includes('live()')));
   assert.match(html, /PC\.staleIds\(thumbs\.keys\(\), list\)\) \{ URL\.revokeObjectURL/);
   assert.match(html, /PC\.staleIds\(icons\.keys\(\), list\)\) \{ URL\.revokeObjectURL/);
+});
+
+test('whole mac cards are screens and need no app icon', () => {
+  const screen = { id: 0xFFFFFF00, app: 'Whole Mac', title: 'Main Display', screen: true, w: 1512, h: 982 };
+  const win = { id: 42, app: 'Safari', title: 'x', w: 800, h: 600 };
+  assert.equal(core.isScreen(screen), true);
+  assert.equal(core.isScreen(win), false);
+  assert.equal(core.isScreenId(0xFFFFFF0F), true);
+  assert.equal(core.isScreenId(0xFFFFFF10), false);
+  assert.equal(core.isScreenId(null), false);
+  assert.deepEqual(core.iconRequests([screen, win]), [42]);
+});
+
+test('whole mac screen ids match the Swift side', () => {
+  const swift = fs.readFileSync(path.join(__dirname, '../../Sources/PortholeCore/WholeMac.swift'), 'utf8');
+  assert.match(swift, /firstID: UInt32 = 0xFFFF_FF00/);
+  assert.match(swift, /maxScreens = 16/);
+  assert.equal(core.isScreenId(0xFFFFFF00), true);
+  assert.equal(core.isScreenId(0xFFFFFEFF), false);
 });

@@ -151,7 +151,13 @@ func offScreenWindow() -> WindowInfo? {
     }
     return nil
 }
-guard let target = windows.first(where: { $0.app == targetApp && $0.title.contains(titleMatch) }) ?? offScreenWindow() else {
+let screenProbe = env["PORTHOLE_SCREEN"] != nil
+if screenProbe {
+    let cards = windows.filter { $0.screen == true }
+    guard !cards.isEmpty else { fail("no Whole Mac card in the list (is Whole Mac off, or is this viewer not allowed?)") }
+    print("PASS  host offered \(cards.count) Whole Mac card(s): \(cards.map { "\($0.title) \(Int($0.w))x\(Int($0.h))" })")
+}
+guard let target = screenProbe ? windows.first(where: { $0.screen == true }) : windows.first(where: { $0.app == targetApp && $0.title.contains(titleMatch) }) ?? offScreenWindow() else {
     fail("no \(targetApp) window titled *\(titleMatch)*; got: \(windows.map { "\($0.app): \($0.title)" })")
 }
 print("PASS  found \(target.app) — \(target.title) (\(Int(target.w))×\(Int(target.h)) pt)")
@@ -169,9 +175,9 @@ for pair in (env0["PORTHOLE_STREAM"] ?? "").split(separator: ",") {
 }
 let t0 = Date()
 var openReply: Message?
-for _ in 0..<5 where openReply == nil {
+for _ in 0..<(screenProbe ? 1 : 5) where openReply == nil {
     try await probe.send(open)
-    openReply = await probe.wait(for: .opened, timeout: 3)
+    openReply = await probe.wait(for: .opened, timeout: screenProbe ? 25 : 3)
 }
 guard let opened = openReply, opened.t == .opened, let trackName = opened.track else {
     fail("open reply: \(String(describing: probe.inbox))")
@@ -316,7 +322,7 @@ if env["PORTHOLE_P3"] != nil {
     exit(0)
 }
 
-let sendsInput = targetApp == "TextEdit"
+let sendsInput = targetApp == "TextEdit" && !screenProbe
 if sendsInput {
     var click = Message(.mouse); click.win = target.id; click.x = 0.5; click.y = 0.6; click.btn = 0; click.clicks = 1
     click.kind = .down; try await probe.send(click)

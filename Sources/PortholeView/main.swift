@@ -367,6 +367,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             guard let self, let portal else { return }
             self.request(info.id, into: portal)
         }
+        portal.wholeScreen = info.screen == true
         portals[info.id] = portal
         portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
         portal.makeKeyAndOrderFront(nil)
@@ -439,7 +440,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     func localIcon(_ info: WindowInfo) -> Data? {
-        let image = info.bundle.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+        let image = info.screen == true ? NSWorkspace.shared.icon(forFile: "/System/Applications/Utilities/Screen Sharing.app") : info.bundle.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
             .map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSWorkspace.shared.icon(for: .applicationBundle)
         var rect = CGRect(x: 0, y: 0, width: AppIcon.pixels, height: AppIcon.pixels)
         return image.cgImage(forProposedRect: &rect, context: nil, hints: nil).flatMap { AppIcon.png(from: $0) }

@@ -19,12 +19,25 @@ final class InputInjector {
 
     func handle(_ m: Message) {
         guard let id = m.win, let live = LiveWindow.lookup(id) else { return }
+        let focus: () -> Void = { [weak self] in self?.focus(id: id, live: live) }
         switch m.t {
-        case .mouse: mouse(m, id: id, live: live)
-        case .scroll: scroll(m, live: live)
-        case .key: key(m, id: id, live: live)
-        case .text: text(m, id: id, live: live)
+        case .mouse: mouse(m, bounds: live.bounds, focus: focus)
+        case .scroll: scroll(m, bounds: live.bounds)
+        case .key: key(m, focus: focus)
+        case .text: text(m, focus: focus)
         case .resize: break
+        default: break
+        }
+    }
+
+    func handle(_ m: Message, screen bounds: CGRect) {
+        guard WholeMac.acceptsInput(m.t) else { return }
+        let none: () -> Void = {}
+        switch m.t {
+        case .mouse: mouse(m, bounds: bounds, focus: none)
+        case .scroll: scroll(m, bounds: bounds)
+        case .key: key(m, focus: none)
+        case .text: text(m, focus: none)
         default: break
         }
     }
@@ -53,13 +66,13 @@ final class InputInjector {
         buttonsDown.removeAll()
     }
 
-    private func mouse(_ m: Message, id: UInt32, live: LiveWindow) {
-        let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
+    private func mouse(_ m: Message, bounds: CGRect, focus: () -> Void) {
+        let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: bounds)
         let btn = m.btn ?? 0
         let kind = m.kind ?? .move
         switch kind {
         case .down:
-            focus(id: id, live: live)
+            focus()
             buttonsDown.insert(btn)
         case .up:
             buttonsDown.remove(btn)
@@ -73,8 +86,8 @@ final class InputInjector {
         e.post(tap: .cghidEventTap)
     }
 
-    private func scroll(_ m: Message, live: LiveWindow) {
-        let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: live.bounds)
+    private func scroll(_ m: Message, bounds: CGRect) {
+        let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: bounds)
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
             .post(tap: .cghidEventTap)
         let (wheel1, wheel2) = MouseMapping.wheelDeltas(dx: m.dx, dy: m.dy)
@@ -88,7 +101,7 @@ final class InputInjector {
         Modifiers(rawValue: mods ?? 0).cgEventFlags
     }
 
-    private func key(_ m: Message, id: UInt32, live: LiveWindow) {
+    private func key(_ m: Message, focus: () -> Void) {
         guard let code = m.code else { return }
         let down = m.down ?? true
         if Modifiers.flagKeyCodes.contains(code) {
@@ -98,15 +111,15 @@ final class InputInjector {
             e.post(tap: .cghidEventTap)
             return
         }
-        if down { focus(id: id, live: live) }
+        if down { focus() }
         guard let e = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { return }
         e.flags = flags(m.mods)
         e.post(tap: .cghidEventTap)
     }
 
-    private func text(_ m: Message, id: UInt32, live: LiveWindow) {
+    private func text(_ m: Message, focus: () -> Void) {
         guard let s = m.s, !s.isEmpty else { return }
-        focus(id: id, live: live)
+        focus()
         for chunk in utf16Chunks(s) {
             for down in [true, false] {
                 guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else { continue }
