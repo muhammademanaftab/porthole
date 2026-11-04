@@ -2,3 +2,4 @@
 .swiftpm/
 dist/
 .claude/
+.playwright-mcp/
