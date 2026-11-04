@@ -121,21 +121,31 @@ final class Stage {
 
     static let fullscreenPolicy = FullscreenPolicy(environment: ProcessInfo.processInfo.environment)
 
-    func leaveFullscreen(_ id: UInt32) async {
-        guard let live = LiveWindow.lookup(id) else { return }
+    func leaveFullscreen(_ id: UInt32) async -> Bool {
+        guard let live = LiveWindow.lookup(id) else { return true }
         guard let w = AXWindows.window(id: id, pid: live.pid) else {
             Log.info("fullscreen: window \(id) of pid \(live.pid) has no accessibility element")
-            return
+            return true
         }
-        guard Self.fullscreenPolicy.shouldExit(isFullscreen: AXWindows.isFullscreen(w) == true) else { return }
-        guard AXWindows.setFullscreen(w, false) else { Log.info("fullscreen: could not take window \(id) out of full screen"); return }
+        let full = AXWindows.isFullscreen(w) == true
+        guard Self.fullscreenPolicy.shouldExit(isFullscreen: full) else { return !full }
+        guard AXWindows.setFullscreen(w, false) else {
+            Log.info("fullscreen: could not take window \(id) out of full screen; sharing it where it is")
+            return false
+        }
         let deadline = Date().addingTimeInterval(FullscreenPolicy.exitTimeout)
-        while Date() < deadline {
+        var done = false
+        while Date() < deadline, !done {
             try? await Task.sleep(nanoseconds: 100_000_000)
-            if FullscreenPolicy.exitDone(stillFullscreen: AXWindows.isFullscreen(w), before: live.bounds, now: LiveWindow.lookup(id)?.bounds) { break }
+            done = FullscreenPolicy.exitDone(stillFullscreen: AXWindows.isFullscreen(w), before: live.bounds, now: LiveWindow.lookup(id)?.bounds)
+        }
+        guard done else {
+            Log.info("fullscreen: window \(id) did not leave full screen within \(Int(FullscreenPolicy.exitTimeout)) s; sharing it where it is")
+            return false
         }
         try? await Task.sleep(nanoseconds: UInt64(FullscreenPolicy.settleSeconds * 1_000_000_000))
         Log.info("fullscreen: window \(id) left full screen, now \(LiveWindow.lookup(id)?.bounds ?? .zero)")
+        return true
     }
 
     func park(_ id: UInt32) async {

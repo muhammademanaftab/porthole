@@ -107,18 +107,29 @@ public enum PortalSizing {
     }
 
     public struct Limits: Equatable, Sendable {
+        public static let increment: CGFloat = 40
+        public static let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
         public var minimum: CGSize
         public var maximum: CGSize
 
-        public init(minimum: CGSize = .zero, maximum: CGSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)) {
+        public init(minimum: CGSize = .zero, maximum: CGSize = unbounded) {
             self.minimum = minimum; self.maximum = maximum
         }
 
-        public mutating func learn(asked: CGSize, actual: CGSize) {
-            if actual.width > asked.width + tolerance { minimum.width = max(minimum.width, actual.width) }
-            if actual.height > asked.height + tolerance { minimum.height = max(minimum.height, actual.height) }
-            if actual.width < asked.width - tolerance { maximum.width = min(maximum.width, actual.width) }
-            if actual.height < asked.height - tolerance { maximum.height = min(maximum.height, actual.height) }
+        public mutating func reset() { self = Limits() }
+
+        public mutating func learn(asked: CGSize, actual: CGSize, liveResizing: Bool, finalAsked: CGSize?) {
+            guard !liveResizing, let finalAsked, !differs(asked, finalAsked, tolerance: 0.5) else { return }
+            if actual.width < minimum.width { minimum.width = actual.width }
+            if actual.height < minimum.height { minimum.height = actual.height }
+            if actual.width > maximum.width { maximum.width = actual.width }
+            if actual.height > maximum.height { maximum.height = actual.height }
+            let dw = actual.width - asked.width, dh = actual.height - asked.height
+            if dw >= Self.increment { minimum.width = max(minimum.width, actual.width) }
+            if dh >= Self.increment { minimum.height = max(minimum.height, actual.height) }
+            if dw <= -Self.increment { maximum.width = min(maximum.width, actual.width) }
+            if dh <= -Self.increment { maximum.height = min(maximum.height, actual.height) }
             if maximum.width < minimum.width { maximum.width = minimum.width }
             if maximum.height < minimum.height { maximum.height = minimum.height }
         }
@@ -145,4 +156,26 @@ public func filledRect(content: CGSize, in bounds: CGRect) -> CGRect {
     let scale = max(bounds.width / content.width, bounds.height / content.height)
     let size = CGSize(width: content.width * scale, height: content.height * scale)
     return CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
+}
+
+public struct LatestWins<Key: Hashable & Sendable, Value: Sendable>: Sendable {
+    private var pending: [Key: Value] = [:]
+    private var busy: Set<Key> = []
+
+    public init() {}
+
+    public mutating func offer(_ key: Key, _ value: Value) -> Bool {
+        pending[key] = value
+        guard !busy.contains(key) else { return false }
+        busy.insert(key)
+        return true
+    }
+
+    public mutating func next(_ key: Key) -> Value? {
+        if let v = pending.removeValue(forKey: key) { return v }
+        busy.remove(key)
+        return nil
+    }
+
+    public func isBusy(_ key: Key) -> Bool { busy.contains(key) }
 }

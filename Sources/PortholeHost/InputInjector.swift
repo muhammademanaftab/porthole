@@ -7,6 +7,8 @@ final class InputInjector {
     private let source = CGEventSource(stateID: .hidSystemState)
     private var focusedWindow: UInt32?
     private var buttonsDown: Set<Int> = []
+    private var axWindows: [UInt32: AXUIElement] = [:]
+    static let resizeTimeout: Float = 0.25
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
@@ -116,14 +118,29 @@ final class InputInjector {
 
     func resize(_ m: Message) -> (asked: CGSize, actual: CGSize)? {
         guard let id = m.win, let live = LiveWindow.lookup(id), let asked = resizeTarget(w: m.w, h: m.h) else { return nil }
-        guard let ax = AXWindows.window(id: id, pid: live.pid) else {
-            Log.info("resize: window \(id) of pid \(live.pid) has no accessibility element")
-            return nil
-        }
         let plan = ResizePlan.make(window: live.bounds, asked: asked, areas: Self.usableAreas())
-        if let origin = plan.origin { AXWindows.setPosition(ax, origin) }
-        AXWindows.setSize(ax, plan.size)
-        return (asked, AXWindows.size(ax) ?? plan.size)
+        for attempt in 0..<2 {
+            guard let ax = axWindow(id, pid: live.pid) else {
+                Log.info("resize: window \(id) of pid \(live.pid) has no accessibility element")
+                return nil
+            }
+            if let origin = plan.origin { AXWindows.setPosition(ax, origin) }
+            if AXWindows.setSize(ax, plan.size) || attempt == 1 { return (asked, AXWindows.size(ax) ?? plan.size) }
+            axWindows[id] = nil
+        }
+        return nil
+    }
+
+    private func axWindow(_ id: UInt32, pid: pid_t) -> AXUIElement? {
+        if let cached = axWindows[id] { return cached }
+        guard let w = AXWindows.window(id: id, pid: pid) else { return nil }
+        AXUIElementSetMessagingTimeout(w, Self.resizeTimeout)
+        axWindows[id] = w
+        return w
+    }
+
+    func forget(_ id: UInt32) {
+        axWindows[id] = nil
     }
 
     static func usableAreas() -> [CGRect] {

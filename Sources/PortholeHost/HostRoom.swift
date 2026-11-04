@@ -25,6 +25,12 @@ final class HostRoom: NSObject, RoomDelegate {
     private var tracker = CompanionTracker()
     private var baselines: [UInt32: Set<UInt32>] = [:]
     private var companionTimer: Timer?
+    private var resizes = LatestWins<UInt32, ResizeJob>()
+
+    struct ResizeJob: Sendable {
+        var message: Message
+        var who: String
+    }
     var companionsEnabled: () -> Bool = { true }
     var onChange: (() -> Void)?
     var accepts: ((String) -> Bool)?
@@ -186,13 +192,17 @@ final class HostRoom: NSObject, RoomDelegate {
             input.handle(m)
             sessions[id]?.noteInput()
             if m.t == .resize {
-                if let r = input.resize(m), PortalSizing.hostShouldReply(asked: r.asked, actual: r.actual) {
-                    var reply = Message(.sized)
-                    reply.win = id; reply.w = r.actual.width; reply.h = r.actual.height
-                    reply.aw = r.asked.width; reply.ah = r.asked.height
-                    await send(reply, to: who)
+                guard resizes.offer(id, ResizeJob(message: m, who: who)) else { return }
+                while let job = resizes.next(id) {
+                    if let r = input.resize(job.message), PortalSizing.hostShouldReply(asked: r.asked, actual: r.actual) {
+                        var reply = Message(.sized)
+                        reply.win = id; reply.w = r.actual.width; reply.h = r.actual.height
+                        reply.aw = r.asked.width; reply.ah = r.asked.height
+                        await send(reply, to: job.who)
+                    }
+                    sessions[id]?.followSizeSoon()
+                    await Task.yield()
                 }
-                sessions[id]?.followSizeSoon()
             }
         case .restart:
             let refusal = onRestart.map { $0(who, registry.activeViewers.contains(who)) } ?? "This host can't restart itself."
@@ -205,8 +215,9 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func open(_ id: UInt32, by who: String, screen: CGSize?, prefs: StreamPrefs) async {
-        let companion = tracker.parent(of: id) != nil
-        if companion && !tracker.mayOpen(id, by: who) { return }
+        let parentOfCompanion = tracker.parent(of: id)
+        let companion = parentOfCompanion != nil
+        if let p = parentOfCompanion, !tracker.mayOpen(id, by: who, parentViewers: registry.viewers[p] ?? []) { return }
         if tracker.wasCompanion(id) {
             var reply = Message(.error); reply.win = id; reply.msg = "That dialog has closed."
             await send(reply, to: who)
@@ -214,7 +225,7 @@ final class HostRoom: NSObject, RoomDelegate {
         }
         let found = companion ? (try? await WindowCatalog.window(id: id)) ?? nil
             : (try? await WindowCatalog.shareable(onScreenOnly: false))?.first { $0.windowID == id }
-        guard let found else {
+        guard let found, !(companion && CompanionRules.isBlocked(found.owningApplication?.bundleIdentifier)) else {
             var reply = Message(.error); reply.win = id; reply.msg = "That window can't be shared."
             await send(reply, to: who)
             return
@@ -230,8 +241,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 let session = WindowSession(windowID: id, prefs: sharedPrefs(id, adding: id))
                 let stage = stage, room = room
                 let task = starting.begin(id) { @MainActor in
-                    if !companion {
-                        await stage.leaveFullscreen(id)
+                    if !companion, await stage.leaveFullscreen(id) {
                         await stage.ensure(screenPoints: screen)
                         await stage.park(id)
                     }
@@ -251,6 +261,15 @@ final class HostRoom: NSObject, RoomDelegate {
                     await session.stop(in: room)
                     stage.unpark(id)
                     if sessions.isEmpty { stage.becameEmpty() }
+                    return
+                }
+                if companion && tracker.parent(of: id) == nil {
+                    let told = registry.windowClosed(id) ?? []
+                    viewerPrefs[id] = nil
+                    await session.stop(in: room)
+                    if sessions.isEmpty { stage.becameEmpty() }
+                    var reply = Message(.error); reply.win = id; reply.msg = "That dialog has closed."
+                    for v in told.union([who]).sorted() { await send(reply, to: v) }
                     return
                 }
                 session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
@@ -284,6 +303,8 @@ final class HostRoom: NSObject, RoomDelegate {
 
     private func release(_ id: UInt32, by who: String) async {
         viewerPrefs[id]?[who] = nil
+        tracker.release(id, by: who)
+        tracker.parentReleased(id, by: who)
         if registry.release(id, by: who) { await stopSession(id) }
         applyPrefs()
     }
@@ -302,6 +323,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private func stopSession(_ id: UInt32) async {
         viewerPrefs[id] = nil
         guard let session = sessions.removeValue(forKey: id) else { return }
+        input.forget(id)
         shared[id] = nil
         baselines[id] = nil
         await audio.remove(window: id, in: room)
@@ -315,6 +337,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private func windowClosed(_ id: UInt32) async {
         guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
         viewerPrefs[id] = nil
+        input.forget(id)
         shared[id] = nil
         baselines[id] = nil
         await audio.remove(window: id, in: room)
@@ -340,11 +363,19 @@ final class HostRoom: NSObject, RoomDelegate {
         let parents = parentIDs.filter { registry.live.contains($0) }
         let actions: [CompanionTracker.Action]
         if companionsEnabled(), !parents.isEmpty {
-            let windows = Self.onScreenWindows()
+            var bundles: [Int32: String?] = [:]
+            let windows = Self.onScreenWindows().map { w -> WindowSnapshot in
+                var w = w
+                if bundles[w.pid] == nil { bundles[w.pid] = .some(NSRunningApplication(processIdentifier: w.pid)?.bundleIdentifier) }
+                w.bundle = bundles[w.pid] ?? nil
+                return w
+            }
             let byID = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
             var input: [UInt32: CompanionTracker.Parent] = [:]
             for p in parents {
-                input[p] = CompanionTracker.Parent(window: byID[p], baseline: baselines[p] ?? [], viewers: registry.viewers[p] ?? [])
+                input[p] = CompanionTracker.Parent(window: byID[p], baseline: baselines[p] ?? [], viewers: registry.viewers[p] ?? [],
+                                                   appActive: byID[p].map { $0.pid == front } ?? false)
             }
             actions = tracker.update(parents: input, windows: windows) { parent, ids in
                 guard let pid = byID[parent]?.pid else { return [] }
@@ -370,8 +401,11 @@ final class HostRoom: NSObject, RoomDelegate {
                 if let v = registry.windowClosed(id) { viewers.formUnion(v) }
                 if let session = sessions.removeValue(forKey: id) {
                     viewerPrefs[id] = nil
+                    input.forget(id)
                     await session.stop(in: room)
+                    if sessions.isEmpty { stage.becameEmpty() }
                     applyPrefs()
+                    onChange?()
                 }
                 var m = Message(.closed); m.win = id
                 for v in viewers.sorted() { await send(m, to: v) }

@@ -15,6 +15,7 @@ final class Connection: NSObject, RoomDelegate {
     var onIcon: ((UInt32, Data) -> Void)?
     var onThumb: ((UInt32, Data) -> Void)?
     var onOpenError: ((UInt32, String) -> Void)?
+    var isCompanion: (UInt32) -> Bool = { _ in false }
     var onSized: ((Message) -> Void)?
     var onCompanion: ((Message) -> Void)?
     var onLink: ((LinkState) -> Void)?
@@ -258,6 +259,11 @@ final class Connection: NSObject, RoomDelegate {
             case .sized: self.onSized?(m)
             case .companion: self.onCompanion?(m)
             case .error:
+                if let id = m.win, self.isCompanion(id) {
+                    self.pending[id] = nil
+                    self.onOpenError?(id, m.msg ?? "Unknown error")
+                    return
+                }
                 if let id = m.win, self.pending.removeValue(forKey: id) != nil { self.onOpenError?(id, m.msg ?? "Unknown error") }
                 self.onError?(m.msg ?? "Unknown error")
             default: break

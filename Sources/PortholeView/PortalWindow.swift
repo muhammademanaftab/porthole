@@ -154,6 +154,11 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             if event.type == .keyDown, !event.isARepeat, phase.canRetry { overlay.retryClicked() }
             return
         }
+        if let phase, !phase.busy, event.type == .keyDown, event.charactersIgnoringModifiers == "w",
+           event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command {
+            close()
+            return
+        }
         super.sendEvent(event)
     }
 
@@ -187,7 +192,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     func hostSized(_ m: Message) {
         guard let w = m.w, let h = m.h, let aw = m.aw, let ah = m.ah else { return }
         let actual = CGSize(width: w, height: h), asked = CGSize(width: aw, height: ah)
-        limits.learn(asked: asked, actual: actual)
+        limits.learn(asked: asked, actual: actual, liveResizing: inLiveResize, finalAsked: throttle.lastSent)
         contentMinSize = CGSize(width: max(100, limits.minimum.width), height: max(80, limits.minimum.height))
         contentMaxSize = limits.maximum
         let screen = self.screen?.visibleFrame.size ?? NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
@@ -329,6 +334,32 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             barBackdrop.animator().alphaValue = shown ? 1 : 0
             contentView?.layoutSubtreeIfNeeded()
         }, completionHandler: { MainActor.assumeIsolated { if !shown { finish() } } })
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        limits.reset()
+        contentMinSize = CGSize(width: 100, height: 80)
+        contentMaxSize = PortalSizing.Limits.unbounded
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        guard autoHidesTitleBar else { return }
+        reveal.hide()
+        titlebarContainer?.isHidden = false
+        titlebarContainer?.alphaValue = 1
+        titleVisibility = .visible
+        barBackdrop.alphaValue = 0
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard autoHidesTitleBar else { return }
+        reveal.hide()
+        titleVisibility = .hidden
+        showBar(false, animated: false)
+    }
+
+    override func performClose(_ sender: Any?) {
+        if isCompanion { close() } else { super.performClose(sender) }
     }
 
     func windowWillClose(_ notification: Notification) {

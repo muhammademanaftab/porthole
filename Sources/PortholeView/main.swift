@@ -8,7 +8,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var picker: PickerWindow?
     var portals: [UInt32: PortalWindow] = [:]
     var companions: [UInt32: PortalWindow] = [:]
-    var dismissedCompanions: Set<UInt32> = []
+    var dismissedCompanions: [UInt32: UInt32] = [:]
     var titles: [UInt32: String] = [:]
     var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     var clipTimer: Timer?
@@ -247,11 +247,12 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
         c.onClosed = { [weak self] id in
             guard let self else { return }
-            self.dismissedCompanions.remove(id)
+            self.dismissedCompanions[id] = nil
             self.closeCompanions { $0 == id }
             self.portals[id]?.close()
         }
         c.onCompanion = { [weak self] m in self?.companionOffered(m) }
+        c.isCompanion = { [weak self] id in self?.companions[id] != nil }
         c.onSized = { [weak self] m in if let id = m.win { self?.portals[id]?.hostSized(m) } }
         c.onOpenError = { [weak self] id, msg in (self?.portals[id] ?? self?.companions[id])?.show(.failed(msg)) }
         c.onLink = { [weak self] state in
@@ -321,6 +322,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             self?.portals[info.id] = nil
             self?.tiles.remove(info.id)
             self?.closeCompanions { [weak self] in self?.companions[$0]?.companionOf == info.id }
+            self?.dismissedCompanions = self?.dismissedCompanions.filter { $0.value != info.id } ?? [:]
         }
         portal.onLayout = { [weak self, weak portal] in
             guard let self, let portal else { return }
@@ -342,7 +344,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func companionOffered(_ m: Message) {
         guard let id = m.win, let parentID = m.of, let parent = portals[parentID], let c = connection,
-              !dismissedCompanions.contains(id) else { return }
+              dismissedCompanions[id] == nil else { return }
         if let existing = companions[id] {
             existing.place(companion: m, over: parent)
             return
@@ -352,9 +354,13 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         portal.companionOf = parentID
         portal.onClose = { [weak self, weak portal] in
             guard let self else { return }
-            if portal?.closedByHost != true { self.dismissedCompanions.insert(id) }
+            if portal?.closedByHost != true { self.dismissedCompanions[id] = parentID }
             self.connection?.close(id)
             self.companions[id] = nil
+        }
+        portal.onRetry = { [weak self, weak portal] in
+            guard let self, let portal else { return }
+            self.request(id, into: portal, fit: false)
         }
         companions[id] = portal
         portal.place(companion: m, over: parent)

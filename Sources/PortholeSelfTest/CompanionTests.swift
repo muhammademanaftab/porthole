@@ -30,7 +30,7 @@ func companionTests() {
     let old = WindowSnapshot(id: 9, pid: 100, owner: "Scratch", layer: 0, bounds: CGRect(x: 250, y: 150, width: 400, height: 300))
     let tiny = WindowSnapshot(id: 17, pid: 100, owner: "Scratch", layer: 0, bounds: CGRect(x: 300, y: 150, width: 10, height: 10))
     let all = [parent, sheet, alert, farDoc, menu, savePanel, otherApp, old, tiny]
-    let found = CompanionRules.candidates(of: parent, among: all, baseline: [9, 10], excluded: []).map(\.id)
+    let found = CompanionRules.candidates(of: parent, among: all, baseline: [9, 10], excluded: [], appActive: true).map(\.id)
     expect("companions: same-app window over it, modal alert anywhere, and the Save panel service", found, [11, 12, 15])
     check("companions: a new document window far away is not one", !found.contains(13))
     check("companions: menus are left to the picture", !found.contains(14))
@@ -38,7 +38,21 @@ func companionTests() {
     check("companions: a window open before sharing is not one", !found.contains(9))
     check("companions: slivers are ignored", !found.contains(17))
     expect("companions: already shared or attached windows are excluded",
-           CompanionRules.candidates(of: parent, among: all, baseline: [9, 10], excluded: [11, 15]).map(\.id), [12])
+           CompanionRules.candidates(of: parent, among: all, baseline: [9, 10], excluded: [11, 15], appActive: true).map(\.id), [12])
+    expect("companions: a Save panel service window is only taken while the shared app is in front",
+           CompanionRules.candidates(of: parent, among: all, baseline: [9, 10], excluded: [], appActive: false).map(\.id), [11, 12])
+    var farPanel = savePanel
+    farPanel.bounds.origin = CGPoint(x: 3200, y: 400)
+    expect("companions: with the app in front its panel counts even on another display (a Stage-parked parent)",
+           CompanionRules.candidates(of: parent, among: [parent, farPanel], baseline: [10], excluded: [], appActive: true).map(\.id), [15])
+    var lockedPanel = alert
+    lockedPanel.bundle = "com.1password.1password"
+    expect("companions: never a window of a blocked app",
+           CompanionRules.candidates(of: parent, among: [parent, lockedPanel], baseline: [10], excluded: [], appActive: true).map(\.id), [])
+    var blockedParent = parent
+    blockedParent.bundle = "com.bitwarden.desktop"
+    expect("companions: nothing for a parent from a blocked app",
+           CompanionRules.candidates(of: blockedParent, among: all, baseline: [9, 10], excluded: [], appActive: true).map(\.id), [])
 
     let offer = CompanionRules.message(child: sheet, parent: parent.bounds, parentID: 10)
     expect("offer: carries the type, child and parent", [offer.t == .companion, offer.win == 11, offer.of == 10], [true, true, true])
@@ -67,14 +81,16 @@ func companionTests() {
     var tr = CompanionTracker()
     let viewers: Set<String> = ["mac-a", "mac-b"]
     func parents(_ w: WindowSnapshot?, _ v: Set<String> = viewers) -> [UInt32: CompanionTracker.Parent] {
-        [10: CompanionTracker.Parent(window: w, baseline: [9, 10], viewers: v)]
+        [10: CompanionTracker.Parent(window: w, baseline: [9, 10], viewers: v, appActive: true)]
     }
     var asked: [[UInt32]] = []
     let a1 = tr.update(parents: parents(parent), windows: [parent, old, sheet, alert]) { _, ids in asked.append(ids); return [11] }
     expect("tracker: AX is asked once about the new windows", asked, [[11, 12]])
     expect("tracker: an attached sheet stays in the picture, the alert is offered to each viewer", announced(a1), ["12>mac-a", "12>mac-b"])
     expect("tracker: the alert is recorded under its parent", tr.parent(of: 12), 10)
-    check("tracker: only viewers it was offered to may open it", tr.mayOpen(12, by: "mac-a") && !tr.mayOpen(12, by: "mac-c"))
+    check("tracker: only viewers it was offered to may open it",
+          tr.mayOpen(12, by: "mac-a", parentViewers: viewers) && !tr.mayOpen(12, by: "mac-c", parentViewers: viewers.union(["mac-c"])))
+    check("tracker: nor a viewer that no longer has the parent open", !tr.mayOpen(12, by: "mac-a", parentViewers: ["mac-b"]))
     asked = []
     let a2 = tr.update(parents: parents(parent), windows: [parent, old, sheet, alert]) { _, ids in asked.append(ids); return [] }
     check("tracker: nothing new means no AX calls and no messages", asked.isEmpty && a2.isEmpty)
@@ -100,6 +116,26 @@ func companionTests() {
     _ = tr.update(parents: parents(parent), windows: [parent, savePanel]) { _, _ in [] }
     expect("tracker: switching the feature off closes every companion", tr.removeAll(), [.gone(15, told: viewers)])
     check("tracker: nothing left after that", tr.records.isEmpty)
+    var re = CompanionTracker()
+    let only: Set<String> = ["mac-a"]
+    _ = re.update(parents: parents(parent, only), windows: [parent, alert]) { _, _ in [] }
+    re.release(12, by: "mac-a")
+    check("reopen: a viewer that closed the dialog is not offered it again",
+          re.update(parents: parents(parent, only), windows: [parent, alert]) { _, _ in [] }.isEmpty)
+    var nudged = alert
+    nudged.bounds.origin.y += 5
+    check("reopen: not even when it moves", re.update(parents: parents(parent, only), windows: [parent, nudged]) { _, _ in [] }.isEmpty)
+    _ = re.update(parents: parents(parent, []), windows: [parent, nudged]) { _, _ in [] }
+    expect("reopen: after closing and reopening the parent it is offered again",
+           announced(re.update(parents: parents(parent, only), windows: [parent, nudged]) { _, _ in [] }), ["12>mac-a"])
+    re.parentReleased(10, by: "mac-a")
+    expect("reopen: closing and reopening the parent between two polls also re-offers it",
+           announced(re.update(parents: parents(parent, only), windows: [parent, nudged]) { _, _ in [] }), ["12>mac-a"])
+    var parentMoved = parent
+    parentMoved.bounds.size.width += 100
+    let pm = re.update(parents: parents(parentMoved, only), windows: [parentMoved, nudged]) { _, _ in [] }
+    expect("reopen: a resized parent re-offers with its new size", pm.compactMap { if case .announce(let m, _) = $0 { return m.pw } else { return nil } }, [900])
+
     var many = CompanionTracker()
     for i in 0..<100 {
         let w = WindowSnapshot(id: UInt32(1000 + i), pid: 100, owner: "Scratch", layer: 8, bounds: CGRect(x: 300, y: 200, width: 200, height: 100))

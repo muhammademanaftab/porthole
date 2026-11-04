@@ -7,9 +7,10 @@ public struct WindowSnapshot: Equatable, Sendable {
     public var owner: String
     public var layer: Int
     public var bounds: CGRect
+    public var bundle: String?
 
-    public init(id: UInt32, pid: Int32, owner: String, layer: Int, bounds: CGRect) {
-        self.id = id; self.pid = pid; self.owner = owner; self.layer = layer; self.bounds = bounds
+    public init(id: UInt32, pid: Int32, owner: String, layer: Int, bounds: CGRect, bundle: String? = nil) {
+        self.id = id; self.pid = pid; self.owner = owner; self.layer = layer; self.bounds = bounds; self.bundle = bundle
     }
 
     public init?(cgInfo d: [String: Any]) {
@@ -47,14 +48,19 @@ public enum CompanionRules {
         parent.insetBy(dx: -nearMargin, dy: -nearMargin).intersects(child)
     }
 
+    public static func isBlocked(_ bundle: String?) -> Bool {
+        guard let bundle else { return false }
+        return WindowFilter.blockedBundles.contains(bundle) || WindowFilter.systemBundles.contains(bundle)
+    }
+
     public static func candidates(of parent: WindowSnapshot, among windows: [WindowSnapshot], baseline: Set<UInt32>,
-                                  excluded: Set<UInt32>) -> [WindowSnapshot] {
-        windows.filter { c in
+                                  excluded: Set<UInt32>, appActive: Bool) -> [WindowSnapshot] {
+        guard !isBlocked(parent.bundle) else { return [] }
+        return windows.filter { c in
             guard c.id != parent.id, !baseline.contains(c.id), !excluded.contains(c.id), layers.contains(c.layer),
-                  c.bounds.width >= minSize.width, c.bounds.height >= minSize.height else { return false }
-            let near = isNear(c.bounds, parent.bounds)
-            if c.pid == parent.pid { return near || c.layer > 0 }
-            return near && isPanelService(c.owner)
+                  c.bounds.width >= minSize.width, c.bounds.height >= minSize.height, !isBlocked(c.bundle) else { return false }
+            if c.pid == parent.pid { return isNear(c.bounds, parent.bounds) || c.layer > 0 }
+            return appActive && isPanelService(c.owner)
         }
     }
 
@@ -100,16 +106,19 @@ public struct CompanionTracker: Sendable {
     public struct Record: Equatable, Sendable {
         public var parent: UInt32
         public var bounds: CGRect
+        public var parentBounds: CGRect
         public var told: Set<String>
+        public var declined: Set<String>
     }
 
     public struct Parent: Sendable {
         public var window: WindowSnapshot?
         public var baseline: Set<UInt32>
         public var viewers: Set<String>
+        public var appActive: Bool
 
-        public init(window: WindowSnapshot?, baseline: Set<UInt32>, viewers: Set<String>) {
-            self.window = window; self.baseline = baseline; self.viewers = viewers
+        public init(window: WindowSnapshot?, baseline: Set<UInt32>, viewers: Set<String>, appActive: Bool = false) {
+            self.window = window; self.baseline = baseline; self.viewers = viewers; self.appActive = appActive
         }
     }
 
@@ -130,7 +139,21 @@ public struct CompanionTracker: Sendable {
 
     public func parent(of child: UInt32) -> UInt32? { records[child]?.parent }
 
-    public func mayOpen(_ child: UInt32, by who: String) -> Bool { records[child]?.told.contains(who) == true }
+    public func mayOpen(_ child: UInt32, by who: String, parentViewers: Set<String>) -> Bool {
+        records[child]?.told.contains(who) == true && parentViewers.contains(who)
+    }
+
+    public mutating func release(_ child: UInt32, by who: String) {
+        records[child]?.told.remove(who)
+        records[child]?.declined.insert(who)
+    }
+
+    public mutating func parentReleased(_ parent: UInt32, by who: String) {
+        for id in records.keys where records[id]?.parent == parent {
+            records[id]?.told.remove(who)
+            records[id]?.declined.remove(who)
+        }
+    }
 
     public func wasCompanion(_ id: UInt32) -> Bool { records[id] == nil && retired.contains(id) }
 
@@ -155,7 +178,7 @@ public struct CompanionTracker: Sendable {
         for pid in parents.keys.sorted() {
             guard let p = parents[pid], let pw = p.window else { continue }
             let excluded = parentIDs.union(attached).union(claimed.keys)
-            var found = CompanionRules.candidates(of: pw, among: windows, baseline: p.baseline, excluded: excluded)
+            var found = CompanionRules.candidates(of: pw, among: windows, baseline: p.baseline, excluded: excluded, appActive: p.appActive)
             let unknown = found.map(\.id).filter { records[$0] == nil }
             if !unknown.isEmpty {
                 let stuck = attachedTo(pid, unknown)
@@ -174,11 +197,14 @@ public struct CompanionTracker: Sendable {
             guard let p = parents[pid], let pw = p.window else { continue }
             misses[id] = nil
             retired.removeAll { $0 == id }
-            var r = records[id] ?? Record(parent: pid, bounds: c.bounds, told: [])
-            let moved = r.bounds != c.bounds
+            var r = records[id] ?? Record(parent: pid, bounds: c.bounds, parentBounds: pw.bounds, told: [], declined: [])
+            let moved = r.bounds != c.bounds || r.parentBounds != pw.bounds
             r.bounds = c.bounds
+            r.parentBounds = pw.bounds
+            r.told.formIntersection(p.viewers)
+            r.declined.formIntersection(p.viewers)
             let m = CompanionRules.message(child: c, parent: pw.bounds, parentID: pid)
-            for v in p.viewers.sorted() where moved || !r.told.contains(v) {
+            for v in p.viewers.sorted() where !r.declined.contains(v) && (moved || !r.told.contains(v)) {
                 actions.append(.announce(m, to: v))
                 r.told.insert(v)
             }
