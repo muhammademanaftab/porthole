@@ -80,6 +80,7 @@
   #bar a { color: inherit; text-decoration: none; opacity: .75; white-space: nowrap; }
   #bar a:hover { opacity: 1; }
   #wtitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; padding: 0 6px; }
+  #route { opacity: .6; white-space: nowrap; padding-right: 4px; }
   #bar .sep { width: 1px; height: 16px; background: rgba(255,255,255,.2); }
   #bar button { padding: 4px 10px; border-radius: 7px; border: 0; background: rgba(255,255,255,.1); color: inherit; cursor: pointer; white-space: nowrap; font-size: 12px; }
   #bar button:hover, #bar button:focus-visible { background: rgba(255,255,255,.2); outline: none; }
@@ -125,6 +126,7 @@
   <div id="bar" class="hidden">
     <a id="back" href="?" title="All windows on this Mac">&#8592; Windows</a><span class="sep"></span>
     <span id="wtitle">Porthole</span>
+    <span id="route" hidden></span>
     <button id="snd" title="Turn the app's sound on or off in this tab">Sound on</button>
     <button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button>
     <button id="ask" title="Ask the Mac's owner to let you type and click in this window">Ask to Control</button>
@@ -425,8 +427,35 @@ function subscribe(trackName) {
     if (pub.trackName !== trackName) return;
     track.attach($('video'));
     $('video').focus();
+    watchRoute(track);
   });
   if (!tryNow()) room.on(LK.RoomEvent.TrackPublished, () => tryNow());
+}
+let routeTrack = null, routeTimer = null, routeText = '';
+async function routeReport(track) {
+  try { if (track.getRTCStatsReport) { const r = await track.getRTCStatsReport(); if (r) return r; } } catch (e) {}
+  try {
+    const pc = room.engine && room.engine.pcManager && room.engine.pcManager.subscriber;
+    if (pc && pc.getStats) return await pc.getStats();
+  } catch (e) {}
+  return null;
+}
+function watchRoute(track) {
+  routeTrack = track;
+  clearTimeout(routeTimer);
+  const tick = async () => {
+    if (routeTrack !== track) return;
+    const r = PC.selectedRoute(await routeReport(track));
+    if (r && r.text !== routeText) {
+      routeText = r.text;
+      $('route').textContent = '· ' + r.label;
+      $('route').title = 'Connection: ' + r.text;
+      $('route').hidden = false;
+      console.info('route: ' + r.text);
+    }
+    routeTimer = setTimeout(tick, r ? 15000 : 2000);
+  };
+  routeTimer = setTimeout(tick, 1000);
 }
 $('video').addEventListener('loadeddata', () => {
   firstFrame = true;
