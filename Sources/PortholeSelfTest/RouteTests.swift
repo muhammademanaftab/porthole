@@ -8,6 +8,15 @@ func routeTests() {
     routeCandidateTests()
     routeClassifyTests()
     routeTrustTests()
+    let yaml = liveKitConfigYAML(port: 7880, apiKey: "k", apiSecret: "s")
+    check("livekit config: binds every interface so ICE offers LAN and Tailscale host candidates", yaml.contains("bind_addresses:\n  - \"\""))
+    check("livekit config: no STUN lookup of a public IP", yaml.contains("use_external_ip: false"))
+    expect("signaling route: a LAN address", signalingRoute(address: "10.0.1.52:7878"), RouteInfo(kind: .sameNetwork, address: "10.0.1.52"))
+    expect("signaling route: the Tailscale address", signalingRoute(address: "100.101.102.103")?.text, "Tailscale (100.101.102.103)")
+    expect("signaling route: a .local name", signalingRoute(address: "Mini.local")?.kind, .sameNetwork)
+    expect("signaling route: nothing for a bad address", signalingRoute(address: ""), nil)
+    expect("hello URL: plain", helloURL(hostAddress: "10.0.1.52")?.absoluteString, "http://10.0.1.52:7878/hello")
+    expect("hello URL: custom port", helloURL(hostAddress: "mini.local:9000")?.absoluteString, "http://mini.local:9000/hello")
 }
 
 func routeTrustTests() {

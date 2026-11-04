@@ -105,6 +105,8 @@ func webRouteTests() {
     let hosts: [(String?, String, String)] = [
         ("100.101.102.103:7878", "HTTP/1.1", "ws://100.101.102.103:7880"),
         ("mini", "HTTP/1.1", "ws://mini:7880"),
+        ("10.0.1.52:7878", "HTTP/1.1", "ws://10.0.1.52:7880"),
+        ("Leos-Mac-mini.local:7878", "HTTP/1.1", "ws://Leos-Mac-mini.local:7880"),
         ("[fe80::1]:7878", "HTTP/1.1", "ws://[fe80::1]:7880"),
         ("[::1]", "HTTP/1.1", "ws://[::1]:7880"),
         ("   pc.tail.ts.net:80   ", "HTTP/1.1", "ws://pc.tail.ts.net:7880"),

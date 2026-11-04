@@ -116,6 +116,7 @@ final class Connection: NSObject, RoomDelegate {
                                roomOptions: RoomOptions(adaptiveStream: false, dynacast: false, reportRemoteTrackStatistics: true))
         if closing { await room.disconnect(); throw CancellationError() }
         connectedAt = Date()
+        sdkReconnecting = false
         activeAddress = candidate.address
         activeScope = candidate.scope
         VLog.info("route: signaling via \(candidate.address) (\(signalingRoute(address: candidate.address)?.kind.label ?? "unknown"))")
