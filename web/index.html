@@ -2,42 +2,133 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>Porthole</title>
 <link rel="icon" href="data:,">
 <style>
-  :root { color-scheme: dark; --bg:#0f1418; --panel:#182027; --ink:#e3e9ee; --muted:#8c9aa5; --accent:#5cc5cc; --line:#26323b; }
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7; --panel: #ffffff; --well: #ececf0; --ink: #1d1d1f; --muted: #6e6e73; --faint: #a1a1a6;
+    --line: rgba(0,0,0,.1); --accent: #0a84ff; --accent-soft: rgba(10,132,255,.12); --warn: #ff9f0a; --bad: #ff453a; --ok: #30d158;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 20px rgba(0,0,0,.06);
+    --glass: rgba(246,246,248,.78);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --panel: #2c2c2e; --well: #232325; --ink: #f5f5f7; --muted: #98989d; --faint: #636366;
+      --line: rgba(255,255,255,.1); --accent-soft: rgba(10,132,255,.22); --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --glass: rgba(30,30,32,.78);
+    }
+  }
   * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
-  #picker { max-width:720px; margin:0 auto; padding:32px 16px; }
-  h1 { font-size:22px; margin:0 0 4px; }
-  .muted { color:var(--muted); }
-  #list { margin-top:18px; display:grid; gap:6px; }
-  .row { display:flex; gap:12px; align-items:center; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; }
-  .row:hover, .row:focus-visible { border-color:var(--accent); outline:none; }
-  .row b { font-weight:600; } .row span { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .row small { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
-  form { display:flex; gap:8px; margin-top:18px; }
-  input { flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
-  button { padding:9px 14px; border-radius:8px; border:1px solid var(--accent); background:transparent; color:var(--accent); font:inherit; cursor:pointer; }
-  #stage { position:fixed; inset:0; background:#000; display:none; }
-  #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; touch-action:none; }
-  #fit { position:fixed; right:10px; bottom:10px; opacity:.35; background:rgba(20,28,34,.85); font-size:12px; padding:5px 10px; }
-  #fit:hover, #fit:focus-visible { opacity:1; }
-  #snd { position:fixed; right:96px; bottom:10px; display:none; opacity:.35; background:rgba(20,28,34,.85); font-size:12px; padding:5px 10px; }
-  #snd:hover, #snd:focus-visible, #snd.ask { opacity:1; }
-  #clip { position:fixed; right:10px; top:10px; display:none; background:rgba(20,28,34,.92); font-size:12px; padding:5px 10px; }
-  #hud { position:fixed; left:50%; top:8px; transform:translateX(-50%); background:rgba(20,28,34,.85); color:var(--ink); padding:4px 12px; border-radius:999px; font-size:12px; pointer-events:none; transition:opacity .4s; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input { font: inherit; color: inherit; }
+  .top { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); background: var(--glass); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand svg { flex: none; }
+  .brand h1 { font-size: 15px; font-weight: 600; margin: 0; line-height: 1.2; }
+  .brand small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spacer { flex: 1; }
+  .search { position: relative; width: min(260px, 40vw); }
+  .search input { width: 100%; padding: 6px 10px 6px 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); outline: none; }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+  .icon-btn { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; color: var(--muted); }
+  .icon-btn:hover, .icon-btn:focus-visible { color: var(--ink); border-color: var(--accent); outline: none; }
+  .btn { text-decoration: none; display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 500; }
+  .btn:hover, .btn:focus-visible { border-color: var(--accent); outline: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #picker { min-height: 100%; display: flex; flex-direction: column; }
+  #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; padding: 20px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); max-width: 1200px; width: 100%; margin: 0 auto; }
+  .card { display: flex; flex-direction: column; gap: 10px; padding: 8px; border-radius: 14px; color: inherit; text-decoration: none; border: 2px solid transparent; transition: background .15s, border-color .15s; }
+  .card:hover { background: var(--accent-soft); }
+  .card:focus-visible { outline: none; border-color: var(--accent); background: var(--accent-soft); }
+  .shot { position: relative; aspect-ratio: 16 / 10; border-radius: 9px; background: var(--well); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; }
+  .shot img.thumb { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); object-fit: contain; filter: drop-shadow(0 2px 6px rgba(0,0,0,.18)); }
+  .shot img.big { width: 56px; height: 56px; opacity: .9; }
+  .meta { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 2px; }
+  .meta img { width: 28px; height: 28px; flex: none; }
+  .meta .blank { width: 28px; height: 28px; flex: none; border-radius: 7px; background: var(--well); }
+  .meta div { min-width: 0; }
+  .meta b { display: block; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta span { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .notice { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding: 48px 24px; }
+  .notice h2 { margin: 8px 0 0; font-size: 18px; font-weight: 600; }
+  .notice p { margin: 0; max-width: 380px; color: var(--muted); }
+  .notice .btn { margin-top: 12px; }
+  .notice .glyph { font-size: 40px; line-height: 1; color: var(--faint); }
+  .notice.locked .glyph { color: var(--warn); }
+  .notice.error .glyph { color: var(--bad); }
+  .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--muted); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #pwform { margin: 8vh auto 0; width: min(360px, calc(100% - 32px)); padding: 24px; border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); text-align: center; display: grid; gap: 12px; }
+  #pwform[hidden] { display: none; }
+  #pwform h2 { margin: 0; font-size: 17px; }
+  #pwform p { margin: 0; color: var(--muted); font-size: 13px; }
+  #pwform input { padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); outline: none; text-align: center; }
+  #pwform input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); margin-right: 5px; vertical-align: 1px; }
+  .dot.ok { background: var(--ok); }
+  .dot.bad { background: var(--bad); }
+  #stage { position: fixed; inset: 0; background: #000; display: none; }
+  #stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; outline: none; touch-action: none; }
+  #bar { position: fixed; z-index: 3; top: 8px; left: 50%; transform: translate(-50%, 0); display: flex; align-items: center; gap: 6px; max-width: calc(100% - 16px); padding: 5px 6px 5px 12px; border-radius: 12px; color: #f5f5f7; background: rgba(30,30,32,.82); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 6px 24px rgba(0,0,0,.4); transition: opacity .25s, transform .25s; font-size: 12px; }
+  #bar.hidden { opacity: 0; transform: translate(-50%, -140%); pointer-events: none; }
+  #bar a { color: inherit; text-decoration: none; opacity: .75; white-space: nowrap; }
+  #bar a:hover { opacity: 1; }
+  #wtitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; padding: 0 6px; }
+  #bar .sep { width: 1px; height: 16px; background: rgba(255,255,255,.2); }
+  #bar button { padding: 4px 10px; border-radius: 7px; border: 0; background: rgba(255,255,255,.1); color: inherit; cursor: pointer; white-space: nowrap; font-size: 12px; }
+  #bar button:hover, #bar button:focus-visible { background: rgba(255,255,255,.2); outline: none; }
+  #snd, #clip { display: none; }
+  #snd.ask { background: var(--accent); }
+  #overlay { position: fixed; inset: 0; z-index: 2; display: none; place-items: center; background: rgba(0,0,0,.55); }
+  #overlay.on { display: grid; }
+  #overlay .hud { width: min(320px, calc(100% - 32px)); padding: 24px; border-radius: 16px; background: rgba(36,36,38,.9); color: #f5f5f7; text-align: center; display: grid; justify-items: center; gap: 8px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+  #overlay h2 { margin: 6px 0 0; font-size: 15px; }
+  #overlay p { margin: 0; color: #a1a1a6; font-size: 12px; }
+  #overlay .spinner { border-color: rgba(255,255,255,.15); border-top-color: #f5f5f7; }
+  #overlay .actions { display: flex; gap: 8px; margin-top: 8px; }
+  #overlay .actions[hidden] { display: none; }
+  #overlay .btn { background: rgba(255,255,255,.12); border-color: transparent; color: #f5f5f7; }
+  #overlay .btn.primary { background: var(--accent); }
+  #toast { position: fixed; z-index: 4; left: 50%; bottom: 16px; transform: translateX(-50%); background: rgba(30,30,32,.88); color: #f5f5f7; padding: 6px 14px; border-radius: 999px; font-size: 12px; pointer-events: none; transition: opacity .4s; opacity: 0; max-width: calc(100% - 32px); text-align: center; }
+  @media (max-width: 560px) {
+    .brand small { display: none; }
+    #list { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    #bar .hint { display: none; }
+  }
 </style>
 </head>
 <body>
 <div id="picker">
-  <h1>Porthole</h1>
-  <div class="muted" id="status">Connecting…</div>
-  <form id="pwform" hidden><input id="pw" type="password" placeholder="Host password" autocomplete="current-password"><button>Connect</button></form>
+  <header class="top">
+    <div class="brand">
+      <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f86f0"/><stop offset="1" stop-color="#0b2a6f"/></linearGradient><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a9e4ff"/><stop offset="1" stop-color="#2d7fe0"/></linearGradient></defs><rect x="2" y="2" width="60" height="60" rx="14" fill="url(#g1)"/><circle cx="32" cy="32" r="21" fill="#dde3ea"/><circle cx="32" cy="32" r="15" fill="url(#g2)"/><rect x="22.5" y="25" width="19" height="14" rx="2.5" fill="#fff"/><rect x="22.5" y="25" width="19" height="3.5" fill="#e9eef4"/></svg>
+      <div><h1>Porthole</h1><small id="status"><span class="dot"></span>Connecting…</small></div>
+    </div>
+    <div class="spacer"></div>
+    <label class="search" id="searchbox" hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5" stroke-linecap="round"/></svg><input id="q" type="search" placeholder="Search windows" autocomplete="off" aria-label="Search windows"></label>
+    <button class="icon-btn" id="refresh" title="Refresh (R)" aria-label="Refresh" hidden><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.5 1.5v3h-3"/></svg></button>
+  </header>
+  <form id="pwform" hidden><h2>Enter the host password</h2><p id="pwhint">It is in the Porthole Host menu on the Mac, under Copy Password.</p><input id="pw" type="password" placeholder="Password" autocomplete="current-password"><button class="btn primary">Connect</button></form>
+  <div class="notice" id="notice"><div class="spinner"></div><h2>Connecting…</h2><p>Asking the host for its windows.</p></div>
   <div id="list"></div>
 </div>
-<div id="stage"><video id="video" autoplay muted playsinline tabindex="0"></video><div id="hud"></div><button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button><button id="snd" title="Turn the app's sound on or off in this tab">Sound on</button><button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button></div>
+<div id="stage">
+  <video id="video" autoplay muted playsinline tabindex="0"></video>
+  <div id="bar" class="hidden">
+    <a id="back" href="?" title="All windows on this Mac">&#8592; Windows</a><span class="sep"></span>
+    <span id="wtitle">Porthole</span>
+    <button id="snd" title="Turn the app's sound on or off in this tab">Sound on</button>
+    <button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button>
+    <button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button>
+  </div>
+  <div id="overlay"><div class="hud"><div class="spinner" id="ospin"></div><h2 id="otitle"></h2><p id="otext"></p><div class="actions" id="oacts" hidden><a class="btn" id="oback" href="?">All Windows</a><button class="btn primary" id="oretry">Try Again</button></div></div></div>
+</div>
+<div id="toast"></div>
 <script src="livekit-client.umd.min.js"></script>
 <script src="porthole-core.js"></script>
 <script>
@@ -46,7 +137,9 @@ const params = new URLSearchParams(location.search);
 const winId = params.get('win') ? Number(params.get('win')) : null;
 const $ = (id) => document.getElementById(id);
 const isMac = /Mac/.test(navigator.platform);
-let room, hostP, listed = false, opened = false;
+let room, hostP, listed = false, opened = false, firstFrame = false;
+let windows = [], query = '', listError = null, loaded = false;
+const icons = new Map(), thumbs = new Map();
 
 const PC = window.PortholeCore;
 PC.ensureRandomUUID(window.crypto);
@@ -57,10 +150,31 @@ function send(msg, reliable = true) {
   room.localParticipant.publishData(data, { reliable, topic: 'porthole', destinationIdentities: ['host'] });
 }
 
+function setStatus(text, state) {
+  $('status').innerHTML = `<span class="dot ${state || ''}"></span>`;
+  $('status').append(text);
+}
+
+function imageHandler(store, type, after) {
+  return async (reader, info) => {
+    if (info.identity !== 'host') return;
+    const id = PC.streamWindow(reader.info.attributes);
+    if (id === null) return;
+    const chunks = await reader.readAll();
+    const old = store.get(id);
+    store.set(id, URL.createObjectURL(new Blob(chunks, { type })));
+    if (old) URL.revokeObjectURL(old);
+    after(id);
+  };
+}
+
 async function connect(pw) {
+  setStatus('Connecting…');
   const r = await fetch(`/token?pw=${encodeURIComponent(pw)}&name=browser`);
-  if (!r.ok) { showPassword('Wrong password.'); return; }
+  if (!r.ok) { showPassword('That password was refused. Try again.'); return; }
   sessionStorage.setItem('pw', pw);
+  $('back').href = PC.pickerLink(pw);
+  $('oback').href = $('back').href;
   const { url, token } = await r.json();
   room = new LK.Room({ adaptiveStream: false, dynacast: false });
   room.on(LK.RoomEvent.DataReceived, onData);
@@ -68,44 +182,168 @@ async function connect(pw) {
     if (info.identity !== 'host') return;
     clipFromHost(await reader.readAll());
   });
+  room.registerByteStreamHandler(PC.THUMB_TOPIC, imageHandler(thumbs, 'image/jpeg', paintCard));
+  room.registerByteStreamHandler(PC.ICON_TOPIC, imageHandler(icons, 'image/png', iconArrived));
   room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSound);
-  room.on(LK.RoomEvent.Disconnected, () => hud('Disconnected from host', true));
+  room.on(LK.RoomEvent.Reconnecting, () => { setStatus('Reconnecting…'); if (winId) overlay('reconnecting'); });
+  room.on(LK.RoomEvent.Reconnected, () => { setStatus('Connected', 'ok'); if (winId) overlay(firstFrame ? null : 'opening'); });
+  room.on(LK.RoomEvent.Disconnected, () => {
+    setStatus('Disconnected', 'bad');
+    if (winId) overlay('disconnected'); else { listError = 'Disconnected from the host. Reload to connect again.'; render(); }
+  });
   await room.connect(url, token, { autoSubscribe: false });
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
   hostP = room.remoteParticipants.get('host');
-  if (!hostP) { $('status').textContent = 'Connected, but the host is not in the room. Is Porthole Host running?'; return; }
-  if (winId) openWindow(winId); else PC.retry(() => send({ t: 'list' }), () => listed, PC.RETRY.list.every, PC.RETRY.list.times);
+  if (!hostP) {
+    listError = 'Connected, but the host is not in the room. Is Porthole Host running?';
+    if (winId) overlay('failed', listError); else render();
+    return;
+  }
+  setStatus('Connected', 'ok');
+  if (winId) { openWindow(winId); send({ t: 'list' }); } else requestList();
+}
+
+function requestList() {
+  listed = false;
+  PC.retry(() => send({ t: 'list' }), () => listed, PC.RETRY.list.every, PC.RETRY.list.times);
 }
 
 function onData(payload, participant, kind, topic) {
   if (topic !== 'porthole') return;
   const m = JSON.parse(new TextDecoder().decode(payload));
-  if (m.t === 'windows') { listed = true; renderList(m.list || []); }
+  if (m.t === 'windows') { listed = true; gotList(m.list || []); }
   else if (m.t === 'opened' && m.win === winId && !opened) { opened = true; subscribe(m.track); if (PC.isAudioTrack(m.audio)) listen(m.audio); }
-  else if (m.t === 'closed' && m.win === winId) hud('The window was closed on the host.', true);
-  else if (m.t === 'error') { $('status').textContent = m.msg; hud(m.msg, true); }
+  else if (m.t === 'closed' && m.win === winId) overlay('closed');
+  else if (m.t === 'error') {
+    if (winId && m.win === winId && !opened) overlay('failed', m.msg);
+    else if (winId) toast(m.msg, true);
+    else { listError = m.msg; render(); }
+  }
 }
 
-function renderList(list) {
-  $('status').textContent = PC.pickerStatus(list.length);
+function gotList(list) {
+  windows = list;
+  if (winId) {
+    const w = list.find(x => x.id === winId);
+    if (w) { $('wtitle').textContent = PC.portalTitle(w); document.title = `${PC.portalTitle(w)} · Porthole`; }
+    return;
+  }
+  loaded = true;
+  if (list.length) listError = null;
+  render();
+  if (list.length) {
+    send({ t: 'thumb' });
+    for (const id of PC.iconRequests(list)) if (!icons.has(id)) send({ t: 'icon', win: id });
+  }
+}
+
+function iconFor(w) {
+  if (icons.has(w.id)) return icons.get(w.id);
+  const twin = windows.find(x => x.app === w.app && icons.has(x.id));
+  return twin ? icons.get(twin.id) : null;
+}
+
+function iconArrived(id) {
+  const w = windows.find(x => x.id === id);
+  if (!w) return;
+  for (const x of windows) if (x.app === w.app) paintCard(x.id);
+}
+
+function render() {
+  const shown = PC.filterWindows(windows, query);
+  const n = PC.pickerNotice(loaded, windows.length, shown.length, query, listError);
+  const notice = $('notice');
+  notice.hidden = !n;
+  if (n) {
+    notice.className = `notice ${n.kind}`;
+    const glyph = { locked: '\u{1F512}', error: '⚠︎', empty: '▢', nomatch: '⌕' }[n.kind];
+    notice.innerHTML = n.kind === 'loading' ? '<div class="spinner"></div>' : `<div class="glyph">${glyph}</div>`;
+    const h = document.createElement('h2'); h.textContent = n.title;
+    const p = document.createElement('p'); p.textContent = n.message;
+    notice.append(h, p);
+    if (n.kind !== 'loading' && n.kind !== 'nomatch') {
+      const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Refresh'; b.onclick = refresh;
+      notice.append(b);
+    }
+  }
+  $('searchbox').hidden = !windows.length;
+  $('refresh').hidden = !loaded && !listError;
+  if (loaded) setStatus(PC.countLabel(windows.length, shown.length), 'ok');
   const pw = sessionStorage.getItem('pw');
-  $('list').replaceChildren(...list.map(w => {
+  $('list').replaceChildren(...shown.map(w => {
     const a = document.createElement('a');
-    a.className = 'row'; a.target = '_blank';
+    a.className = 'card'; a.target = '_blank'; a.dataset.id = w.id;
     a.href = PC.windowLink(pw, w.id);
-    a.innerHTML = '<b></b><span></span><small></small>';
-    a.querySelector('small').textContent = PC.sizeLabel(w.w, w.h);
-    a.querySelector('b').textContent = w.app;
-    a.querySelector('span').textContent = w.title;
+    a.title = PC.portalTitle(w);
+    a.innerHTML = '<div class="shot"></div><div class="meta"><span class="blank"></span><div><b></b><span></span></div></div>';
+    a.querySelector('b').textContent = w.title || w.app;
+    a.querySelector('.meta div span').textContent = w.title ? `${w.app} · ${PC.sizeLabel(w.w, w.h)}` : PC.sizeLabel(w.w, w.h);
+    fillCard(a, w);
     return a;
   }));
 }
 
+function fillCard(a, w) {
+  const shot = a.querySelector('.shot');
+  const icon = iconFor(w);
+  const thumb = thumbs.get(w.id);
+  shot.replaceChildren();
+  if (thumb) { const i = new Image(); i.className = 'thumb'; i.alt = ''; i.src = thumb; shot.append(i); }
+  else if (icon) { const i = new Image(); i.className = 'big'; i.alt = ''; i.src = icon; shot.append(i); }
+  const slot = a.querySelector('.meta').firstElementChild;
+  if (icon) { const i = new Image(); i.alt = ''; i.src = icon; slot.replaceWith(i); }
+}
+
+function paintCard(id) {
+  const a = $('list').querySelector(`a[data-id="${id}"]`);
+  const w = windows.find(x => x.id === id);
+  if (a && w) fillCard(a, w);
+}
+
+function refresh() {
+  loaded = false; listError = null; render();
+  requestList();
+}
+$('refresh').addEventListener('click', refresh);
+$('q').addEventListener('input', e => { query = e.target.value; render(); });
+setInterval(() => { if (!winId && room && windows.length && document.visibilityState === 'visible') send({ t: 'thumb' }); }, 5000);
+window.addEventListener('keydown', e => {
+  if (winId || e.target.tagName === 'INPUT') return;
+  if (e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) { e.preventDefault(); $('q').focus(); }
+  else if (e.key === 'r' && !e.metaKey && !e.ctrlKey) refresh();
+});
+$('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { const first = $('list').querySelector('a'); if (first) first.click(); }
+  if (e.key === 'Escape') { e.target.value = ''; query = ''; render(); }
+});
+
+const phases = {
+  opening: () => ['Opening window…', 'Waiting for the first picture from the host.', true],
+  reconnecting: () => ['Reconnecting…', 'The connection to the host dropped. The picture comes back when it reconnects.', true],
+  disconnected: () => ['Disconnected', 'The connection to the host ended.', false],
+  closed: () => ['Window Closed', 'The window was closed on the host.', false],
+  failed: (why) => ["Can't Open This Window", why || 'The host did not answer.', false],
+};
+let phase = null;
+function overlay(kind, why) {
+  phase = kind;
+  $('overlay').classList.toggle('on', !!kind);
+  if (!kind) return;
+  const [title, text, busy] = phases[kind](why);
+  $('otitle').textContent = title; $('otext').textContent = text;
+  $('ospin').hidden = !busy;
+  $('oacts').hidden = busy;
+  $('oretry').textContent = kind === 'closed' ? 'Reload' : 'Try Again';
+}
+$('oretry').addEventListener('click', () => location.reload());
+
 function openWindow(id) {
   $('picker').style.display = 'none';
   $('stage').style.display = 'block';
-  hud('Opening window…');
+  overlay('opening');
+  showBar(4000);
   PC.retry(() => send({ t: 'open', win: id, sw: screen.width, sh: screen.height, ss: devicePixelRatio }), () => opened, PC.RETRY.open.every, PC.RETRY.open.times);
+  setTimeout(() => { if (!firstFrame && phase === 'opening') overlay('failed', 'No picture arrived from the host. It may be busy, asleep or locked.'); }, 20000);
 }
 
 function subscribe(trackName) {
@@ -118,12 +356,24 @@ function subscribe(trackName) {
   room.on(LK.RoomEvent.TrackSubscribed, (track, pub) => {
     if (pub.trackName !== trackName) return;
     track.attach($('video'));
-    document.title = `Porthole · window ${winId}`;
-    hud('Connected. Click to control.');
     $('video').focus();
   });
   if (!tryNow()) room.on(LK.RoomEvent.TrackPublished, () => tryNow());
 }
+$('video').addEventListener('loadeddata', () => {
+  firstFrame = true;
+  if (phase === 'opening' || phase === 'reconnecting') overlay(null);
+  toast('Connected. Click the window to control it.');
+});
+
+let barTimer;
+function showBar(ms = 2500) {
+  $('bar').classList.remove('hidden');
+  clearTimeout(barTimer);
+  barTimer = setTimeout(() => { if (!$('bar').matches(':hover')) $('bar').classList.add('hidden'); }, ms);
+}
+$('bar').addEventListener('pointerleave', () => showBar(1200));
+window.addEventListener('pointermove', e => { if (winId && e.clientY < 40) showBar(); });
 
 let soundMuted = false;
 const audioEls = new Set();
@@ -147,9 +397,10 @@ function listen(trackName) {
 }
 function showSound() {
   const b = $('snd');
-  b.style.display = audioEls.size ? 'block' : 'none';
+  b.style.display = audioEls.size ? 'inline-block' : 'none';
   b.textContent = PC.soundLabel(room.canPlaybackAudio, soundMuted);
   b.classList.toggle('ask', !room.canPlaybackAudio);
+  if (!room.canPlaybackAudio && audioEls.size) showBar(6000);
 }
 function unlockSound() {
   if (room && audioEls.size && !room.canPlaybackAudio) room.startAudio().then(showSound, () => {});
@@ -162,11 +413,11 @@ $('snd').addEventListener('click', e => {
   video.focus();
 });
 
-let hudTimer;
-function hud(text, sticky) {
-  const h = $('hud'); h.textContent = text; h.style.opacity = 1;
-  clearTimeout(hudTimer);
-  if (!sticky) hudTimer = setTimeout(() => h.style.opacity = 0, 2500);
+let toastTimer;
+function toast(text, sticky) {
+  const t = $('toast'); t.textContent = text; t.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.style.opacity = 0, sticky ? 6000 : 2500);
 }
 
 const geom = () => { const v = $('video'); return { rect: v.getBoundingClientRect(), vw: v.videoWidth, vh: v.videoHeight }; };
@@ -214,9 +465,10 @@ let hostClip = null;
 async function clipFromHost(text) {
   if (!PC.clipFits(text)) return;
   hostClip = text;
-  try { await navigator.clipboard.writeText(text); hud('Copied from the Mac.'); return; } catch (_) {}
-  $('clip').style.display = 'block';
-  hud('The Mac copied something. Click "Copy here" to get it on this computer.');
+  try { await navigator.clipboard.writeText(text); toast('Copied from the Mac.'); return; } catch (_) {}
+  $('clip').style.display = 'inline-block';
+  showBar(6000);
+  toast('The Mac copied something. Click "Copy here" to get it on this computer.', true);
 }
 $('clip').addEventListener('click', e => {
   e.stopPropagation();
@@ -226,13 +478,14 @@ $('clip').addEventListener('click', e => {
   const ok = document.execCommand('copy');
   ta.remove();
   $('clip').style.display = 'none';
-  hud(ok ? 'Copied to this computer.' : 'Copy failed.');
+  toast(ok ? 'Copied to this computer.' : 'Copy failed.');
   video.focus();
 });
 window.addEventListener('paste', async e => {
+  if (!winId) return;
   e.preventDefault();
   const s = e.clipboardData.getData('text');
-  if (!winId || !room || !PC.clipFits(s)) return;
+  if (!room || !PC.clipFits(s)) return;
   if (s !== hostClip) {
     await room.localParticipant.sendText(s, { topic: PC.CLIP_TOPIC, destinationIdentities: ['host'] });
     hostClip = s;
@@ -241,14 +494,17 @@ window.addEventListener('paste', async e => {
   for (const m of PC.pasteKeys(winId)) send(m);
 });
 
-function fitToTab() { if (winId && room) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); hud('Resized the window to fit this tab.'); } }
+function fitToTab() { if (winId && room) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); toast('Resized the window to fit this tab.'); } }
 $('fit').addEventListener('click', e => { e.stopPropagation(); fitToTab(); video.focus(); });
 
 function showPassword(msg) {
-  $('status').textContent = msg || 'Enter the host password (from the Porthole menu-bar icon on the host).';
+  $('notice').hidden = true;
+  if (msg) $('pwhint').textContent = msg;
+  setStatus('Not connected');
   $('pwform').hidden = false;
+  $('pw').focus();
 }
-$('pwform').addEventListener('submit', e => { e.preventDefault(); $('pwform').hidden = true; connect($('pw').value); });
+$('pwform').addEventListener('submit', e => { e.preventDefault(); $('pwform').hidden = true; $('notice').hidden = false; connect($('pw').value); });
 
 const pw = params.get('pw') || sessionStorage.getItem('pw');
 if (pw) connect(pw).catch(err => showPassword('Could not connect: ' + err.message)); else showPassword();

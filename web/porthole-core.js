@@ -108,6 +108,8 @@
 
   const windowLink = (pw, id) => `?pw=${encodeURIComponent(pw)}&win=${id}`;
 
+  const pickerLink = (pw) => `?pw=${encodeURIComponent(pw)}`;
+
   const sizeLabel = (w, h) => `${Math.round(w)}\u00d7${Math.round(h)}`;
 
   function randomUUID(cryptoObj) {
@@ -146,6 +148,52 @@
 
   const soundLabel = (canPlay, muted) => !canPlay ? 'Click for sound' : muted ? 'Sound off' : 'Sound on';
 
-  return { randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
-    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel };
+  const THUMB_TOPIC = 'porthole-thumb';
+  const ICON_TOPIC = 'porthole-icon';
+  const LOCKED_LIST = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it (for example with Screen Sharing), then refresh.";
+
+  const fold = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+  function filterWindows(list, query) {
+    const tokens = String(query || '').split(/\s+/).filter(Boolean).map(fold);
+    if (!tokens.length) return list.slice();
+    return list.filter(w => { const hay = fold(`${w.app} ${w.title}`); return tokens.every(t => hay.includes(t)); });
+  }
+
+  function pickerNotice(loaded, total, shown, query, error) {
+    if (total === 0 && error) return error === LOCKED_LIST
+      ? { kind: 'locked', title: 'Screen Is Locked', message: LOCKED_LIST }
+      : { kind: 'error', title: "Can't Show Windows", message: error };
+    if (!loaded) return { kind: 'loading', title: 'Connecting…', message: 'Asking the host for its windows.' };
+    if (total === 0) return { kind: 'empty', title: 'No Windows to Share', message: 'Open a window on the host, then refresh.' };
+    if (shown === 0) return { kind: 'nomatch', title: 'No Matches', message: `No window matches \u201C${String(query).trim()}\u201D.` };
+    return null;
+  }
+
+  function countLabel(total, shown) {
+    const all = `${total} window${total === 1 ? '' : 's'}`;
+    return shown === total ? all : `${shown} of ${all}`;
+  }
+
+  const portalTitle = (w) => w.title ? `${w.app} \u2014 ${w.title}` : w.app;
+
+  function streamWindow(attributes) {
+    const s = attributes && attributes.win;
+    if (typeof s !== 'string' || !/^\d+$/.test(s)) return null;
+    const n = Number(s);
+    return n <= 0xFFFFFFFF && String(n) === s ? n : null;
+  }
+
+  function iconRequests(list, limit = 24) {
+    const seen = new Set(), out = [];
+    for (const w of list) {
+      if (out.length >= limit) break;
+      if (seen.has(w.app)) continue;
+      seen.add(w.app); out.push(w.id);
+    }
+    return out;
+  }
+
+  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, portalTitle, streamWindow, iconRequests, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, sizeLabel };
 });
