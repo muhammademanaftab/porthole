@@ -106,6 +106,8 @@ final class HostRoom: NSObject, RoomDelegate {
         stage.unparkAll()
         stage.becameEmpty()
         input.releaseAllButtons()
+        wholeMacReset()
+        onChange?()
         var delay: UInt64 = 1
         while true {
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
@@ -142,6 +144,7 @@ final class HostRoom: NSObject, RoomDelegate {
             self.thumbAskedAt[who] = nil
             self.thumbTaskIDs[who] = nil
             self.input.releaseAllButtons()
+            self.wholeMacViewerLeft(who)
             for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
             for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
             self.applyPrefs()

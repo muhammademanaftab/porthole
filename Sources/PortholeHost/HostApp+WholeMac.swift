@@ -21,7 +21,10 @@ extension HostApp {
             self?.refresh()
         }
         host.wholeMac.settled = { key in ui.prompt.close(key) }
-        ui.screens.skip = { [weak room] in room?.stage.displayID }
+        ui.screens.skip = { [weak room] in
+            guard let stage = room?.stage, stage.matched.isEmpty else { return nil }
+            return stage.displayID
+        }
         ui.curtain.onEscape = { [weak self] in
             Log.info("curtain: taken back on this Mac with \(CurtainFilter.escapeHint)")
             ui.curtain.escape()

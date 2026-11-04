@@ -19,7 +19,7 @@ public enum PortholeEventTag {
 }
 
 public enum CurtainVerdict: Equatable, Sendable {
-    case pass, block, escape, reenable
+    case pass, block, escape, reenable, expired
 }
 
 public enum CurtainFilter {
@@ -32,14 +32,19 @@ public enum CurtainFilter {
         .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp,
         .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
         .scrollWheel, .tabletPointer, .tabletProximity,
-    ].map(\.rawValue))
+    ].map(\.rawValue)).union(extraBlocked)
+
+    public static let systemDefined: UInt32 = 14
+    public static let extraBlocked: Set<UInt32> = [systemDefined, 18, 19, 20, 29, 30, 31, 32, 34, 37]
 
     public static func isEscape(type: CGEventType, keyCode: UInt16, flags: CGEventFlags) -> Bool {
         type == .keyDown && keyCode == escapeKey && flags.intersection([.maskControl, .maskAlternate, .maskCommand]) == escapeFlags
     }
 
-    public static func verdict(type: CGEventType, keyCode: UInt16, flags: CGEventFlags, userData: Int64) -> CurtainVerdict {
+    public static func verdict(type: CGEventType, keyCode: UInt16, flags: CGEventFlags, userData: Int64,
+                               elapsed: Double = 0, limit: Double = CurtainController.safetySeconds) -> CurtainVerdict {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput { return .reenable }
+        if elapsed >= limit { return .expired }
         if userData == PortholeEventTag.value { return .pass }
         if isEscape(type: type, keyCode: keyCode, flags: flags) { return .escape }
         return blockedTypes.contains(type.rawValue) ? .block : .pass

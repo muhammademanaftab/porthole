@@ -360,6 +360,7 @@ final class SharingPane: NSViewController {
         let mode = WholeMacMode.allCases[max(0, wholeMac.indexOfSelectedItem)]
         UserDefaults.standard.set(mode.rawValue, forKey: WholeMac.settingKey)
         Log.info("settings: allow whole mac \(mode.rawValue)")
+        (NSApp.delegate as? HostApp)?.host.wholeMacModeChanged()
         refresh()
     }
 

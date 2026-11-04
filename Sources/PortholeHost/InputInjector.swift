@@ -74,6 +74,10 @@ final class InputInjector {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: bounds)
         let btn = m.btn ?? 0
         let kind = m.kind ?? .move
+        if kind != .move, WholeMac.blocksInjectedClick(at: p, guarded: WholeMacPrompt.guarded) {
+            Log.info("input: dropped a viewer click on the Whole Mac question")
+            return
+        }
         switch kind {
         case .down:
             focus()

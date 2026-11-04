@@ -28,7 +28,7 @@ final class FakeTap: CurtainTap {
     func feed(_ type: CGEventType, key: UInt16 = 0, flags: CGEventFlags = [], tag: Int64 = 0) {
         guard running else { delivered.append(type); return }
         switch CurtainFilter.verdict(type: type, keyCode: key, flags: flags, userData: tag) {
-        case .pass, .reenable: delivered.append(type)
+        case .pass, .reenable, .expired: delivered.append(type)
         case .block: break
         case .escape:
             running = false
@@ -69,6 +69,15 @@ func curtainTests() {
     expect("filter: key up of Escape is not the escape", CurtainFilter.verdict(type: .keyUp, keyCode: 53, flags: esc, userData: 0), .block)
     expect("filter: a disabled tap is switched back on", CurtainFilter.verdict(type: .tapDisabledByTimeout, keyCode: 0, flags: [], userData: 0), .reenable)
     expect("filter: other events pass", CurtainFilter.verdict(type: .null, keyCode: 0, flags: [], userData: 0), .pass)
+    for (raw, name) in [(UInt32(14), "media and system keys"), (29, "trackpad gestures"), (30, "magnify"), (31, "swipe"), (18, "rotate"), (32, "smart magnify"), (34, "pressure")] {
+        let t = CGEventType(rawValue: raw)!
+        expect("filter: local \(name) are blocked", CurtainFilter.verdict(type: t, keyCode: 0, flags: [], userData: 0), .block)
+        check("filter: the tap mask covers \(name)", CurtainFilter.mask & (CGEventMask(1) << CGEventMask(raw)) != 0)
+    }
+    expect("filter: the tap thread stops blocking by itself after the safety time",
+           CurtainFilter.verdict(type: .keyDown, keyCode: 0, flags: [], userData: 0, elapsed: 1800, limit: 1800), .expired)
+    expect("filter: still blocking just before the safety time",
+           CurtainFilter.verdict(type: .keyDown, keyCode: 0, flags: [], userData: 0, elapsed: 1799.9, limit: 1800), .block)
     check("filter: the tap mask covers keys, buttons, moves and scrolling",
           [CGEventType.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseUp, .mouseMoved, .leftMouseDragged, .scrollWheel]
             .allSatisfy { CurtainFilter.mask & (CGEventMask(1) << CGEventMask($0.rawValue)) != 0 })

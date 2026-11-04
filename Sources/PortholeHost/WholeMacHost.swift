@@ -17,7 +17,7 @@ enum ScreenCatalog {
         return Array(ids.prefix(Int(n)))
     }
 
-    static func isActive(_ id: CGDirectDisplayID) -> Bool { CGDisplayIsActive(id) != 0 || CGDisplayIsInMirrorSet(id) != 0 }
+    static func isActive(_ id: CGDirectDisplayID) -> Bool { CGDisplayIsOnline(id) != 0 || CGDisplayIsInMirrorSet(id) != 0 }
 
     static func scale(_ id: CGDirectDisplayID) -> Double {
         guard let mode = CGDisplayCopyDisplayMode(id), mode.width > 0 else { return 1 }
@@ -69,10 +69,11 @@ extension Stage {
 @MainActor
 final class WholeMacPrompt {
     private var panels: [String: NSPanel] = [:]
+    static var guarded: [CGRect] = []
 
     func ask(key: String, viewer: String, host: String, answer: @escaping (Bool) -> Void) {
         close(key)
-        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120), styleMask: [.titled, .nonactivatingPanel, .hudWindow, .utilityWindow],
+        let p = GuardedPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120), styleMask: [.titled, .nonactivatingPanel, .hudWindow, .utilityWindow],
                         backing: .buffered, defer: false)
         p.title = "Whole Mac"
         p.isFloatingPanel = true
@@ -83,7 +84,6 @@ final class WholeMacPrompt {
         text.preferredMaxLayoutWidth = 320
         let deny = ClosureButton(title: "Don't Allow") { [weak self] in answer(false); self?.close(key) }
         let allow = ClosureButton(title: "Allow") { [weak self] in answer(true); self?.close(key) }
-        allow.keyEquivalent = "\r"
         let buttons = NSStackView(views: [deny, allow])
         let stack = NSStackView(views: [text, buttons])
         stack.orientation = .vertical
@@ -97,10 +97,28 @@ final class WholeMacPrompt {
         Power.wakeDisplay()
         p.orderFrontRegardless()
         panels[key] = p
+        refreshGuard()
     }
 
     func close(_ key: String) {
         panels.removeValue(forKey: key)?.close()
+        refreshGuard()
+    }
+
+    func closeAll() {
+        for key in Array(panels.keys) { close(key) }
+    }
+
+    private func refreshGuard() {
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        Self.guarded = panels.values.map { f in CGRect(x: f.frame.minX, y: top - f.frame.maxY, width: f.frame.width, height: f.frame.height) }
+    }
+}
+
+final class GuardedPanel: NSPanel {
+    override func sendEvent(_ event: NSEvent) {
+        if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == PortholeEventTag.value { return }
+        super.sendEvent(event)
     }
 }
 

@@ -44,38 +44,59 @@ NEW="$HOME/porthole-deploy/new/Porthole Host.app"
 LABEL=io.github.muhammademanaftab.porthole.watchdog
 DOMAIN="gui/$(id -u)"
 hosts() { pgrep -f "Porthole Host.app/Contents/MacOS/porthole-host\$" || true; }
-[ -d "$NEW" ] || { echo "deploy-mini: the copied bundle is missing on the mini" >&2; exit 1; }
+die() { echo "deploy-mini: $*" >&2; exit 1; }
+[ -d "$NEW" ] || die "the copied bundle is missing on the mini"
+xattr -dr com.apple.quarantine "$NEW" 2>/dev/null || true
+codesign --verify --deep --strict "$NEW" || die "the copied bundle fails codesign --verify; nothing was changed"
+echo "signature ok"
 watched=0
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then watched=1; fi
 echo "watchdog agent loaded: $watched"
-if [ -n "$(hosts)" ]; then
+port=$(plutil -extract httpPort raw -o - "$HOME/Library/Application Support/Porthole/config.json" 2>/dev/null || echo 7878)
+stop_host() {
+  [ -n "$(hosts)" ] || return 0
   echo "quitting the running Porthole Host ($(hosts | tr '\n' ' '))"
   osascript -e 'tell application id "io.github.muhammademanaftab.porthole" to quit' >/dev/null 2>&1 || true
-  for _ in $(seq 1 40); do [ -z "$(hosts)" ] && break; sleep 0.25; done
+  for _ in $(seq 1 40); do [ -z "$(hosts)" ] && return 0; sleep 0.25; done
   for pid in $(hosts); do kill -TERM "$pid" 2>/dev/null || true; done
-  for _ in $(seq 1 20); do [ -z "$(hosts)" ] && break; sleep 0.25; done
-fi
-rm -rf "$APP.previous"
-[ -d "$APP" ] && mv "$APP" "$APP.previous"
-mv "$NEW" "$APP"
-xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-codesign --verify --deep --strict "$APP" && echo "signature ok"
-if [ "$watched" = 1 ]; then
-  echo "restarting the watchdog agent with the new binary"
-  launchctl kickstart -k "$DOMAIN/$LABEL"
-fi
-sleep 1
-[ -n "$(hosts)" ] || open "$APP"
-port=$(plutil -extract httpPort raw -o - "$HOME/Library/Application Support/Porthole/config.json" 2>/dev/null || echo 7878)
-for i in $(seq 1 60); do
-  if curl -fsS -m 2 "http://127.0.0.1:$port/hello" >/dev/null 2>&1; then echo "/hello answered after ${i}s"; break; fi
+  for _ in $(seq 1 20); do [ -z "$(hosts)" ] && return 0; sleep 0.25; done
+  echo "Porthole Host ignored SIGTERM; killing it"
+  for pid in $(hosts); do kill -KILL "$pid" 2>/dev/null || true; done
+  for _ in $(seq 1 20); do [ -z "$(hosts)" ] && return 0; sleep 0.25; done
+  die "could not stop Porthole Host"
+}
+start_host() {
+  if [ "$watched" = 1 ]; then
+    echo "restarting the watchdog agent with the installed binary"
+    launchctl kickstart -k "$DOMAIN/$LABEL"
+  fi
   sleep 1
-  [ "$i" = 60 ] && { echo "deploy-mini: Porthole Host did not answer /hello within 60 s" >&2; exit 1; }
-done
+  [ -n "$(hosts)" ] || open "$APP"
+  for i in $(seq 1 60); do
+    if curl -fsS -m 2 "http://127.0.0.1:$port/hello" >/dev/null 2>&1; then echo "/hello answered after ${i}s"; return 0; fi
+    sleep 1
+  done
+  return 1
+}
+stop_host
+rm -rf "$APP.rollback"
+if [ -d "$APP" ]; then mv "$APP" "$APP.rollback"; fi
+mv "$NEW" "$APP"
+if ! start_host; then
+  echo "deploy-mini: the new Porthole Host did not answer /hello within 60 s; rolling back" >&2
+  if [ -d "$APP.rollback" ]; then
+    stop_host
+    rm -rf "$APP"
+    mv "$APP.rollback" "$APP"
+    if start_host; then echo "rolled back to the previous Porthole Host" >&2; else echo "the previous Porthole Host did not answer either" >&2; fi
+  fi
+  exit 1
+fi
 sleep 3
 n=$(hosts | grep -c . || true)
 echo "Porthole Host instances running: $n"
-[ "$n" = 1 ] || { echo "deploy-mini: expected exactly one Porthole Host, found $n" >&2; exit 1; }
+[ "$n" = 1 ] || die "expected exactly one Porthole Host, found $n (the previous one is kept as $APP.rollback)"
+if [ -d "$APP.rollback" ]; then rm -rf "$APP.previous"; mv "$APP.rollback" "$APP.previous"; fi
 rm -rf "$HOME/porthole-deploy/new"
 echo
 "$APP/Contents/MacOS/porthole" doctor || true

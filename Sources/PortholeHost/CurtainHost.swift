@@ -8,6 +8,12 @@ final class EventTapCurtain: CurtainTap, @unchecked Sendable {
     private var runLoop: CFRunLoop?
     private var blocking = false
     private var escape: (() -> Void)?
+    private var startedAt: Double = 0
+    private let limit: Double
+
+    init(limit: Double = CurtainController.safetySeconds) { self.limit = limit }
+
+    private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
     func start(onEscape: @escaping () -> Void) -> Bool {
         stop()
@@ -21,7 +27,7 @@ final class EventTapCurtain: CurtainTap, @unchecked Sendable {
             Log.info("curtain: could not create the event tap, so local input is not blocked")
             return false
         }
-        lock.lock(); port = tap; blocking = true; escape = onEscape; lock.unlock()
+        lock.lock(); port = tap; blocking = true; escape = onEscape; startedAt = Self.now; lock.unlock()
         let ready = DispatchSemaphore(value: 0)
         let t = Thread { [weak self] in
             guard let self else { ready.signal(); return }
@@ -42,12 +48,16 @@ final class EventTapCurtain: CurtainTap, @unchecked Sendable {
     }
 
     private func filter(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
-        lock.lock(); let on = blocking; let tap = port; lock.unlock()
+        lock.lock(); let on = blocking; let tap = port; let since = startedAt; lock.unlock()
         guard on else { return Unmanaged.passUnretained(event) }
         let verdict = CurtainFilter.verdict(type: type, keyCode: UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode)),
-                                            flags: event.flags, userData: event.getIntegerValueField(.eventSourceUserData))
+                                            flags: event.flags, userData: event.getIntegerValueField(.eventSourceUserData),
+                                            elapsed: Self.now - since, limit: limit)
         switch verdict {
         case .pass: return Unmanaged.passUnretained(event)
+        case .expired:
+            lock.lock(); blocking = false; lock.unlock()
+            return Unmanaged.passUnretained(event)
         case .block: return nil
         case .reenable:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
@@ -161,7 +171,7 @@ final class CurtainWindows: @preconcurrency CurtainScreens {
             w.sharingType = .none
             w.isOpaque = false
             w.backgroundColor = .clear
-            w.ignoresMouseEvents = false
+            w.ignoresMouseEvents = true
             w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
             w.contentView = CurtainView(frame: NSRect(origin: .zero, size: screen.frame.size), notice: notice, frosted: true)
             w.setFrame(screen.frame, display: true)

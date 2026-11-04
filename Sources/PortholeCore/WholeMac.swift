@@ -152,6 +152,20 @@ public enum WholeMac {
         }
     }
 
+    public static func mayStart(mode: WholeMacMode, approved: Bool, viewerPresent: Bool) -> Bool {
+        mode != .off && viewerPresent && (mode == .always || approved)
+    }
+
+    public static func mayControl(mode: WholeMacMode) -> Bool { mode != .off }
+
+    public static func sessionsToEnd(mode: WholeMacMode, live: [UInt32]) -> [UInt32] {
+        mode == .off ? live.filter(isScreen).sorted() : []
+    }
+
+    public static func blocksInjectedClick(at p: CGPoint, guarded frames: [CGRect]) -> Bool {
+        frames.contains { $0.insetBy(dx: -8, dy: -8).contains(p) }
+    }
+
     public static func capturePixels(screen: CGRect, scale: Double, level: Double) -> CGSize {
         capturePixelSize(points: screen.size, scale: CGFloat(min(scale, level)))
     }
@@ -185,6 +199,15 @@ public struct WholeMacApprovals: Equatable, Sendable {
         return .ask(key: key)
     }
 
+    public func isApproved(mode: WholeMacMode, viewer: WholeMacViewer) -> Bool {
+        guard mode != .off, let key = viewer.approvalKey else { return false }
+        return mode == .always || granted.contains(key)
+    }
+
+    public mutating func cancel(_ key: String) {
+        pending[key] = nil
+    }
+
     @discardableResult
     public mutating func answer(_ key: String, allow: Bool) -> Bool {
         guard pending.removeValue(forKey: key) != nil else { return false }
@@ -206,5 +229,47 @@ public struct WholeMacApprovals: Equatable, Sendable {
     public mutating func reset() {
         granted.removeAll()
         pending.removeAll()
+    }
+}
+
+public struct WholeMacWaiter: Equatable, Sendable {
+    public var id: UInt32
+    public var who: String
+
+    public init(id: UInt32, who: String) { self.id = id; self.who = who }
+}
+
+public struct WholeMacQueue: Equatable, Sendable {
+    public private(set) var waiting: [String: [WholeMacWaiter]] = [:]
+
+    public init() {}
+
+    public var isEmpty: Bool { waiting.isEmpty }
+
+    @discardableResult
+    public mutating func add(_ key: String, _ w: WholeMacWaiter) -> Bool {
+        var list = waiting[key] ?? []
+        guard !list.contains(w) else { return false }
+        list.append(w)
+        waiting[key] = list
+        return true
+    }
+
+    public mutating func take(_ key: String) -> [WholeMacWaiter] {
+        waiting.removeValue(forKey: key) ?? []
+    }
+
+    public mutating func drop(who: String) -> [String] {
+        var emptied: [String] = []
+        for key in waiting.keys.sorted() {
+            let left = waiting[key]?.filter { $0.who != who } ?? []
+            if left.isEmpty { waiting[key] = nil; emptied.append(key) } else { waiting[key] = left }
+        }
+        return emptied
+    }
+
+    public mutating func removeAll() -> [String: [WholeMacWaiter]] {
+        defer { waiting.removeAll() }
+        return waiting
     }
 }
