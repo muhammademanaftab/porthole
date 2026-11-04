@@ -62,11 +62,13 @@ porthole share --list
 porthole share --revoke <id|all>
 ```
 
-- Each link carries its own random token (24 bytes, only its SHA-256 is kept in `share-links.json`, 0600), never the host password. It works for 24 hours unless `--ttl` (1 minute to 30 days) or the menu says otherwise, and is revoked from Shared Links… or `--revoke`; revoking or expiry disconnects its guests within 15 s (at once for a revoke).
+- Each link carries its own random token (24 bytes, only its SHA-256 is kept in `share-links.json`, 0600), never the host password. It works for 24 hours unless `--ttl` (1 minute to 30 days) or the menu says otherwise, and is revoked from Shared Links… or `--revoke`; revoking or expiry disconnects its guests at once (a timer fires at the exact expiry; a 15 s sweep backs it up).
 - Two links are printed: one for this Mac's Wi-Fi or local network address, which a phone on the same network can open, and one for its tailnet address. `--wifi` prints the Wi-Fi link alone.
 - A link is view only unless made with `--control` (Guests may type and click). Allow Remote Control, off by default, is one switch for every link: on, a control link may type and click at once and a view-only guest's Ask to Control is answered yes at once; off, every link watches and a guest's ask shows a prompt on the host (a floating panel, the menu's Asking to Control section and Shared Links…). `PORTHOLE_SHARE_ALLOW_CONTROL=0|1` sets it for one run without saving.
 - The host enforces all of it, whatever the page sends: a guest's LiveKit identity is `guest-<link>-<client>`; key, text, mouse, scroll and resize messages from a guest without control are dropped and logged (`[trust] guest …: dropped …`); a window link lists, opens, gets icons for and can subscribe to only its window and that window's dialogs (LiveKit track subscription permissions: while a guest is in the room only paired Macs and password viewers see every track); the mixed app sound reaches a window guest only while no other window is shared; guests never get the host clipboard, can set it only while controlling, get thumbnails only on picker links, can't pair, can't restart the host. The Mac viewer ignores data messages from anyone but the host.
-- The browser page in guest mode sends no input while view only and shows Ask to Control in its bar.
+- The browser page in guest mode sends no input while view only and shows Ask to Control in its bar. One Ask panel per link at a time, with a 30 s cooldown after it closes; further asks wait in the menu and Shared Links…. The Ask panel, Share and Shared Links windows and Paired Macs ignore events the host injected, so a controlling guest can never click Allow for itself.
+- While any link is live, and for 11 minutes after the last one is revoked or expires (the guest token lifetime plus a minute), LiveKit subscriptions are closed by default and granted per participant; paired Macs and password viewers keep every track.
+- Known limitation: guests can see the LiveKit identities in the room, which carry viewers' Mac names (and device IDs for paired Macs).
 
 ## Command line
 

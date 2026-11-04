@@ -108,6 +108,17 @@ public enum ViewerInput {
         f.intersection([.command, .option, .shift, .control]) == [.command, .option, .shift] && characters?.lowercased() == "v"
     }
 
+    public static let modifierKeyCodes: [(Modifiers, UInt16)] = [(.command, 55), (.option, 58), (.control, 59), (.shift, 56)]
+
+    public static func modifierReleases(win: UInt32, flags: NSEvent.ModifierFlags) -> [Message] {
+        let held = Modifiers(flags)
+        return modifierKeyCodes.filter { held.contains($0.0) }.map { _, code in
+            var m = Message(.key)
+            m.win = win; m.code = code; m.down = false; m.mods = 0
+            return m
+        }
+    }
+
     public static func routesThroughInputMethod(hasMarkedText: Bool, inputSourceIsInputMode: Bool, flags: NSEvent.ModifierFlags) -> Bool {
         if hasMarkedText { return true }
         guard inputSourceIsInputMode else { return false }

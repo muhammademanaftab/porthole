@@ -39,6 +39,7 @@ diagnosticsTests()
 soundTests()
 shareTests()
 recentPickerTests()
+guestGuardTests()
 wholeMacTests()
 curtainTests()
 

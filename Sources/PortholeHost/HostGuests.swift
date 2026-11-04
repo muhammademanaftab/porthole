@@ -45,9 +45,35 @@ final class HostGuests {
     private var shareWindow: ShareWindowPanel?
     private var linksWindow: SharedLinksWindow?
     private var prompts: [String: NSPanel] = [:]
+    private var promptLinks: [String: String] = [:]
+    private var throttle = AskThrottle()
+    private var gate = GuestRoomGate.restored(fileChanged: nil)
+    private var expiryTimer: Timer?
     var onChange: (() -> Void)?
 
-    init(config: HostConfig) { self.config = config }
+    init(config: HostConfig) {
+        self.config = config
+        let changed = (try? FileManager.default.attributesOfItem(atPath: store.url.path))?[.modificationDate] as? Date
+        gate = GuestRoomGate.restored(fileChanged: changed)
+    }
+
+    func roomClosed() -> Bool {
+        gate.closed(live: store.links(), now: Date())
+    }
+
+    private func scheduleExpiry() {
+        expiryTimer?.invalidate()
+        guard let wait = GuestRoomGate.nextExpiry(store.links(), now: Date()) else { return }
+        let t = Timer(timeInterval: wait + 0.1, repeats: false) { [weak self] _ in MainActor.assumeIsolated { self?.expired() } }
+        RunLoop.main.add(t, forMode: .common)
+        expiryTimer = t
+    }
+
+    private func expired() {
+        gate.linkEnded(now: Date())
+        sweep()
+        changed()
+    }
 
     var allowControl: Bool {
         RemoteControlSwitch.enabled(stored: UserDefaults.standard.object(forKey: RemoteControlSwitch.settingKey))
@@ -68,7 +94,7 @@ final class HostGuests {
         let store = store
         host.guestLink = { who in GuestIdentity.linkID(who).flatMap { store.link(id: $0) } }
         host.guestControlSwitch = { [weak self] in self?.allowControl ?? false }
-        host.shareLinksExist = { !store.links().isEmpty }
+        host.shareLinksExist = { [weak self] in self?.roomClosed() ?? !store.links().isEmpty }
         host.onGuestAsk = { [weak self] who, link in self?.ask(who, link) }
         host.onGuestRefused = { [weak self] who in self?.kick(who, why: "(its share link expired or was revoked)") }
         host.onGuestsChanged = { [weak self] in
@@ -84,6 +110,7 @@ final class HostGuests {
     private func changed() {
         linksWindow?.reload()
         onChange?()
+        scheduleExpiry()
         Task { await host?.updateTrackPermissions() }
     }
 
@@ -130,6 +157,7 @@ final class HostGuests {
     }
 
     private func revoked(_ link: ShareLink) {
+        gate.linkEnded(now: Date())
         Log.info("share link \(link.id) revoked", .trust)
         for who in host?.guestIdentities ?? [] where GuestIdentity.linkID(who) == link.id { kick(who, why: "(its share link was revoked)") }
     }
@@ -155,7 +183,13 @@ final class HostGuests {
     }
 
     private func ask(_ who: String, _ link: ShareLink) {
-        guard prompts[who] == nil else { prompts[who]?.orderFrontRegardless(); return }
+        guard prompts[who] == nil else { return }
+        guard throttle.mayShowPanel(link: link.id, now: Date()) else {
+            Log.info("guest \(who) asks to control; link \(link.id) already has a panel or had one in the last \(Int(AskThrottle.cooldown)) s, so the ask waits in the menu", .trust)
+            changed()
+            return
+        }
+        promptLinks[who] = link.id
         let panel = GuestAskPanel(link: link) { [weak self] allow in
             self?.host?.answerAsk(who, allow: allow)
             self?.closePrompt(who)
@@ -175,6 +209,7 @@ final class HostGuests {
 
     private func closePrompt(_ who: String) {
         prompts.removeValue(forKey: who)?.close()
+        if let link = promptLinks.removeValue(forKey: who) { throttle.panelClosed(link: link, now: Date()) }
     }
 
     func showShareWindow(picker: Bool) {
@@ -191,7 +226,7 @@ final class HostGuests {
 }
 
 @MainActor
-final class GuestAskPanel: NSPanel {
+final class GuestAskPanel: GuardedPanel {
     private var actions: [ClickAction] = []
 
     init(link: ShareLink, answer: @escaping (Bool) -> Void) {
@@ -234,7 +269,7 @@ final class GuestAskPanel: NSPanel {
 }
 
 @MainActor
-final class ShareWindowPanel: NSPanel {
+final class ShareWindowPanel: GuardedPanel {
     private unowned let guests: HostGuests
     private let target = NSPopUpButton(frame: .zero, pullsDown: false)
     private let control = NSButton(checkboxWithTitle: "Guests may type and click", target: nil, action: nil)
@@ -310,6 +345,7 @@ final class ShareWindowPanel: NSPanel {
     }
 
     @objc private func create() {
+        guard !GuardedPanel.currentEventInjected else { return }
         let tag = target.selectedTag()
         let window = tag >= 0 && tag < windows.count ? windows[tag] : nil
         let ttl = ShareLinks.ttlChoices[safe: expiry.indexOfSelectedItem] ?? ShareLinks.defaultTTL
@@ -341,7 +377,7 @@ final class ShareWindowPanel: NSPanel {
 }
 
 @MainActor
-final class SharedLinksWindow: NSPanel {
+final class SharedLinksWindow: GuardedPanel {
     private unowned let guests: HostGuests
     private let list = NSStackView()
     private let header = NSTextField(wrappingLabelWithString: "")

@@ -45,7 +45,8 @@ final class HostRoom: NSObject, RoomDelegate {
     private(set) var controlling: Set<String> = []
     private(set) var asking: [String: ShareLink] = [:]
     private var guestsSeen: Set<String> = []
-    private var trackPlan: TrackGrantPlan?
+    private var trackSender = TrackPlanSender()
+    private var trackRetry: Task<Void, Never>?
     private(set) var isConnected = false
 
     var openWindowCount: Int { parentIDs.count }
@@ -153,12 +154,11 @@ final class HostRoom: NSObject, RoomDelegate {
         let who = participant.identity?.stringValue ?? "?"
         Log.info("viewer joined: \(who)")
         Task { @MainActor in
+            await self.updateTrackPermissions()
             if GuestIdentity.isGuest(who), self.guestLink?(who) == nil {
                 Log.info("guest \(who) has no live share link; disconnecting it", .trust)
                 self.onGuestRefused?(who)
-                return
             }
-            await self.updateTrackPermissions()
         }
     }
 
@@ -538,6 +538,7 @@ final class HostRoom: NSObject, RoomDelegate {
         case .alreadyControlling: await sendControlState(who)
         case .granted: await setControl(who, true, why: "asked, and Allow Remote Control is on")
         case .prompt:
+            guard asking[who] == nil else { return }
             Log.info("guest \(who) asks to control (link \(link.id)); waiting for the host", .trust)
             asking[who] = link
             onGuestAsk?(who, link)
@@ -598,10 +599,8 @@ final class HostRoom: NSObject, RoomDelegate {
         let links = Dictionary(participants.map { ($0.identity, guestLink?($0.identity)) }, uniquingKeysWith: { a, _ in a })
         let plan = TrackGrantPlan.make(participants: participants, tracks: tracks, link: { links[$0] ?? nil },
                                        parent: { tracker.parent(of: $0) }, sharedParents: Set(parentIDs), linksExist: shareLinksExist())
-        guard plan != trackPlan else { return }
-        let first = trackPlan == nil
-        trackPlan = plan
-        if first && plan.allParticipantsAllowed { return }
+        guard trackSender.shouldSend(plan) else { return }
+        trackSender.sending(plan)
         let perms = plan.grants.map { ParticipantTrackPermission(participantSid: $0.participantSid, allTracksAllowed: $0.allTracks, allowedTrackSids: $0.trackSids) }
         do {
             try await room.localParticipant.setTrackSubscriptionPermissions(allParticipantsAllowed: plan.allParticipantsAllowed, trackPermissions: perms)
@@ -609,8 +608,14 @@ final class HostRoom: NSObject, RoomDelegate {
             Log.info(plan.allParticipantsAllowed ? "track permissions: every viewer may subscribe (no share links, no guests)"
                      : "track permissions: \(plan.grants.count - guests.count) viewer(s) see every track, \(guests.count) guest(s) see \(guests.map { String($0.trackSids.count) }.joined(separator: ",")) track(s)", .trust)
         } catch {
-            trackPlan = nil
-            Log.warn("track permissions update failed: \(error.localizedDescription)", .trust)
+            trackSender.failed()
+            Log.warn("track permissions update failed: \(error.localizedDescription); retrying in 1 s", .trust)
+            trackRetry?.cancel()
+            trackRetry = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.updateTrackPermissions()
+            }
         }
     }
 

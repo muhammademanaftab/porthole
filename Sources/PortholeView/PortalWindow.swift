@@ -571,6 +571,7 @@ final class InputCaptureView: NSView {
     private var imeEvent: NSEvent?
     private var imePassed = false
     private var imeSwallowedUps: Set<UInt16> = []
+    private var imeUsed = false
 
     static var inputSourceIsInputMode: Bool {
         guard let src = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
@@ -587,8 +588,13 @@ final class InputCaptureView: NSView {
         }
         imeEvent = e
         imePassed = false
-        _ = ctx.handleEvent(e)
+        imeUsed = false
+        let handled = ctx.handleEvent(e)
         imeEvent = nil
+        if !handled && !imePassed && !imeUsed {
+            imePassed = true
+            sendKey(e, down: true)
+        }
         if !imePassed { imeSwallowedUps.insert(e.keyCode) }
     }
 
@@ -612,6 +618,7 @@ final class InputCaptureView: NSView {
 
     @objc func pasteAsKeystrokes(_ sender: Any?) {
         guard let s = NSPasteboard.general.string(forType: .string) else { NSSound.beep(); return }
+        for m in ViewerInput.modifierReleases(win: windowID, flags: NSEvent.modifierFlags) { connection.send(m) }
         sendText(s, why: "paste as keystrokes")
     }
 
@@ -632,11 +639,12 @@ extension InputCaptureView: @preconcurrency NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
         let s = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
         marked = NSMutableAttributedString()
-        if imeEvent != nil { imePassed = false }
+        if imeEvent != nil { imePassed = false; imeUsed = true }
         sendText(s, why: imeEvent == nil ? "dictation or palette" : "input method")
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        if imeEvent != nil { imeUsed = true }
         if let a = string as? NSAttributedString { marked = NSMutableAttributedString(attributedString: a) }
         else { marked = NSMutableAttributedString(string: string as? String ?? "") }
     }

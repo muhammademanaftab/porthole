@@ -161,8 +161,8 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func shareWindow() { guests.showShareWindow(picker: false) }
     @objc func sharePicker() { guests.showShareWindow(picker: true) }
     @objc func showSharedLinks() { guests.showLinks() }
-    @objc func toggleAllowControl() { guests.setAllowControl(!guests.allowControl) }
-    @objc func allowAsk(_ item: NSMenuItem) { if let who = item.representedObject as? String { guests.answer(who, allow: true) } }
+    @objc func toggleAllowControl() { guard !GuardedPanel.currentEventInjected else { return }; guests.setAllowControl(!guests.allowControl) }
+    @objc func allowAsk(_ item: NSMenuItem) { guard !GuardedPanel.currentEventInjected else { return }; if let who = item.representedObject as? String { guests.answer(who, allow: true) } }
     @objc func denyAsk(_ item: NSMenuItem) { if let who = item.representedObject as? String { guests.answer(who, allow: false) } }
     @objc func openScreenSettings() { HostSystemSettings.openScreenRecording() }
     @objc func openAXSettings() { HostSystemSettings.openAccessibility() }

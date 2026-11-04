@@ -4,11 +4,7 @@ import PortholeCore
 
 @MainActor
 final class InputInjector {
-    private let source: CGEventSource? = {
-        let s = CGEventSource(stateID: .hidSystemState)
-        s?.userData = PortholeEventTag.value
-        return s
-    }()
+    private let source: CGEventSource? = PortholeEventTag.source()
     private var focusedWindow: UInt32?
     private var buttonsDown: Set<Int> = []
     private var axWindows: [UInt32: AXUIElement] = [:]
@@ -75,7 +71,7 @@ final class InputInjector {
         let p = globalPoint(nx: m.x ?? 0.5, ny: m.y ?? 0.5, windowBounds: bounds)
         let btn = m.btn ?? 0
         let kind = m.kind ?? .move
-        if kind != .move, WholeMac.blocksInjectedClick(at: p, guarded: WholeMacPrompt.guarded) {
+        if kind != .move, WholeMac.blocksInjectedClick(at: p, guarded: WholeMacPrompt.guarded + GuardedPanel.visibleFrames()) {
             Log.info("input: dropped a viewer click on the Whole Mac question")
             return
         }
@@ -130,18 +126,7 @@ final class InputInjector {
         guard let s = m.s, !s.isEmpty else { return }
         focus()
         let pieces = TextBatch.pieces(TextBatch.limited(s), maxUnits: textBatch)
-        for piece in pieces {
-            for down in [true, false] {
-                switch piece {
-                case .newline:
-                    CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: down)?.post(tap: .cghidEventTap)
-                case .text(let chunk):
-                    guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else { continue }
-                    chunk.withUnsafeBufferPointer { e.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: $0.baseAddress) }
-                    e.post(tap: .cghidEventTap)
-                }
-            }
-        }
+        for e in InjectedText.events(pieces, source: source) { e.post(tap: .cghidEventTap) }
         Log.debug("text: \(s.utf16.count) UTF-16 units typed as \(pieces.count) key pair(s), batch \(textBatch)")
     }
 
