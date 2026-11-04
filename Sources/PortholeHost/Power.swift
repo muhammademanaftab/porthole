@@ -15,12 +15,12 @@ enum Power {
                 assertions.append(id)
             }
         }
-        Log.info("power: keeping display and system awake (\(assertions.count) assertions)")
+        Log.info("power: keeping display and system awake (\(assertions.count) assertions)", .stage)
     }
 
     static func allowSleep() {
         for id in assertions { IOPMAssertionRelease(id) }
-        if !assertions.isEmpty { Log.info("power: display and system may sleep again") }
+        if !assertions.isEmpty { Log.info("power: display and system may sleep again", .stage) }
         assertions.removeAll()
     }
 

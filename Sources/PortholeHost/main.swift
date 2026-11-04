@@ -13,6 +13,8 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem?
     var settingsWindow: SettingsWindow?
     let heartbeats = Heartbeats()
+    let status = StatusBox()
+    var statusTimer: Timer?
     let settings = HostSettings(lookup: { UserDefaults.standard.object(forKey: $0) })
     var state = "Starting…"
     var isGallery = false
@@ -27,9 +29,11 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             HostGallery.show(screen, app: self)
             return
         }
+        let previous = HostFiles.readMarker()
         HostFiles.clearMarker()
         let env = ProcessInfo.processInfo.environment
-        if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)") }
+        Log.info("host started version=\(LocalStatus.version) launchedBy=\(env[WatchdogReason.envKey] == nil ? "user" : "watchdog") previousExit=\(previous?.rawValue ?? "none")", .host)
+        if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)", .watchdog) }
         let fromLegacy = LegacyAgent.launchedUs
         if !fromLegacy { LegacyAgent.bootOut() }
         LegacyAgent.removeFiles()
@@ -51,20 +55,33 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Log.info("launched by the old login agent but the watchdog is \(KeepRunning.describe(KeepRunning.status)); staying up")
         }
         setUpMenu()
-        Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), keep running \(keep) (watchdog \(KeepRunning.describe(KeepRunning.status)))")
+        Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), keep running \(keep) (watchdog \(KeepRunning.describe(KeepRunning.status)))", .host)
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
         host.onRestart = { [weak self] who, hasOpenWindow in self?.restartRequested(by: who, hasOpenWindow: hasOpenWindow, watched: keep) }
+        startStatus(watched: keep)
         Task { await start() }
+    }
+
+    func startStatus(watched: Bool) {
+        status.set(LocalStatus.snapshot(self, watched: watched))
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.status.set(LocalStatus.snapshot(self, watched: watched))
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        statusTimer = t
     }
 
     func restartRequested(by who: String, hasOpenWindow: Bool, watched: Bool) -> String? {
         switch restartDecision(hasOpenWindow: hasOpenWindow, agentEnabled: watched && KeepRunning.isEnabled) {
         case .refuse(let why):
-            Log.info("restart from \(who) refused: \(why)")
+            Log.info("restart from \(who) refused: \(why)", .host)
             return why
         case .restart:
-            Log.info("restart requested by \(who); quitting so the watchdog relaunches")
+            Log.info("restart requested by \(who); quitting so the watchdog relaunches", .host)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.quitHost(marker: .remote) }
             return nil
         }
@@ -75,7 +92,8 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try server.start()
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
-            let http = try HTTPServer(config: config, pairing: pairing, trust: trust)
+            let box = status
+            let http = try HTTPServer(config: config, pairing: pairing, trust: trust, status: { box.get() })
             http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
@@ -86,7 +104,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
             state = "Sharing"
-            Log.info("host ready"); print("Porthole host ready.\n  Browser: \(browserLink)\n  Mac viewer: porthole-view \(tailscaleAddress() ?? "<this-mac>") \(config.password)")
+            Log.info("host ready", .host); print("Porthole host ready.\n  Browser: \(browserLink)\n  Mac viewer: porthole-view \(tailscaleAddress() ?? "<this-mac>") \(config.password)")
             fflush(stdout)
         } catch {
             state = "Error: \(error.localizedDescription)"
@@ -145,7 +163,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func quitHost(marker: ExitMarker) {
         guard !isGallery else { NSApp.terminate(nil); return }
         HostFiles.writeMarker(marker)
-        Log.info("quitting (\(marker.rawValue))")
+        Log.info("quitting (\(marker.rawValue))", .host)
         host.stage.release()
         server.stop()
         NSApp.terminate(nil)
@@ -154,6 +172,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ note: Notification) {
         guard !isGallery else { return }
         HostFiles.writeMarker(.session, unlessPresent: true)
+        Log.info("terminating (\(HostFiles.readMarker()?.rawValue ?? ExitMarker.session.rawValue))", .host)
         host.stage.release()
         Log.flush()
     }
@@ -166,8 +185,8 @@ case .watchdog:
     WatchdogRunner.run()
 case .app:
     if let status = HostCLI.run(Array(CommandLine.arguments.dropFirst())) { exit(status) }
-    signal(SIGTERM) { _ in LiveKitServer.shared?.stop(); exit(0) }
-    signal(SIGINT) { _ in LiveKitServer.shared?.stop(); exit(0) }
+    signal(SIGTERM) { _ in Log.signalled("SIGTERM"); LiveKitServer.shared?.stop(); exit(0) }
+    signal(SIGINT) { _ in Log.signalled("SIGINT"); LiveKitServer.shared?.stop(); exit(0) }
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         let delegate = HostApp()

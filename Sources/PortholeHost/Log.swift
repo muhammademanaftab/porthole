@@ -2,29 +2,36 @@ import Foundation
 import PortholeCore
 
 enum Log {
-    static let url: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Porthole", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("host.log")
-    }()
-    private static let queue = DispatchQueue(label: "porthole.log")
-    private static let formatter = ISO8601DateFormatter()
-    nonisolated(unsafe) static var verbose = UserDefaults.standard.bool(forKey: HostSettings.verboseKey)
+    nonisolated(unsafe) static var writer = LogWriter(role: "host",
+                                                     verbose: UserDefaults.standard.bool(forKey: HostSettings.verboseKey)
+                                                        || verboseFromEnvironment(ProcessInfo.processInfo.environment))
+    static var url: URL { writer.url }
 
-    static func info(_ s: String) {
-        let line = Data("\(formatter.string(from: Date())) \(s)\n".utf8)
-        queue.async {
-            FileHandle.standardError.write(line)
-            let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
-            guard fd >= 0 else { return }
-            _ = line.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-            close(fd)
-        }
+    static var verbose: Bool {
+        get { writer.verbose }
+        set { writer.verbose = newValue || verboseFromEnvironment(ProcessInfo.processInfo.environment) }
     }
 
-    static func debug(_ s: @autoclosure () -> String) {
-        if verbose { info(s()) }
+    static func becomeWatchdog() {
+        writer = LogWriter(role: "watchdog", echo: writer.echo, verbose: writer.verbose)
     }
 
-    static func flush() { queue.sync {} }
+    static func info(_ s: String, _ category: LogCategory? = nil) {
+        writer.write(LogLevel.infer(s), category, s)
+    }
+
+    static func warn(_ s: String, _ category: LogCategory? = nil) { writer.write(.warn, category, s) }
+
+    static func error(_ s: String, _ category: LogCategory? = nil) { writer.write(.error, category, s) }
+
+    static func debug(_ s: @autoclosure () -> String, _ category: LogCategory? = nil) {
+        if writer.verbose { writer.write(.debug, category, s()) }
+    }
+
+    static func signalled(_ name: String) {
+        writer.flush()
+        writer.writeNow(.warn, .host, "caught \(name); stopping")
+    }
+
+    static func flush() { writer.flush() }
 }

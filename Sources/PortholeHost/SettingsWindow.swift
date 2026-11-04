@@ -224,7 +224,7 @@ final class GeneralPane: NSViewController {
     @objc private func toggleKeepRunning() {
         let on = keepRunning.state == .on
         UserDefaults.standard.set(on, forKey: HostSettings.keepRunningKey)
-        Log.info("settings: keep running \(on ? "on" : "off")")
+        Log.info("settings: keep running \(on ? "on" : "off")", .ui)
         lastError = KeepRunning.apply(on)
         refresh()
     }
@@ -373,7 +373,7 @@ final class HelpPane: NSViewController {
     @objc private func toggleVerbose() {
         Log.verbose = verbose.state == .on
         UserDefaults.standard.set(Log.verbose, forKey: HostSettings.verboseKey)
-        Log.info("settings: verbose logging \(Log.verbose ? "on" : "off")")
+        Log.info("settings: verbose logging \(Log.verbose ? "on" : "off")", .ui)
     }
 
     @objc private func openLogFolder() { NSWorkspace.shared.open(Log.url.deletingLastPathComponent()) }

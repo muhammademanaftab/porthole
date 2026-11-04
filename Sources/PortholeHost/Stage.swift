@@ -14,6 +14,9 @@ final class Stage {
 
     var bounds: CGRect? { displayID.map { CGDisplayBounds($0) } }
     var isReady: Bool { displayID != nil }
+    var parkedCount: Int { parked.count }
+    var idleSince: Date? { emptySince }
+    var idleLimit: Double { idleSeconds }
 
     func ensure(screenPoints: CGSize?) async {
         emptySince = nil
@@ -23,16 +26,16 @@ final class Stage {
             await createOnce(screenPoints: screenPoints)
             if isReady { startIdleTimer(); return }
             Power.wakeDisplay()
-            Log.info("stage: attempt \(attempt) failed")
+            Log.info("stage: attempt \(attempt) failed", .stage)
             try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        Log.info("stage: unavailable, sharing windows where they are")
+        Log.info("stage: unavailable, sharing windows where they are", .stage)
     }
 
     func becameEmpty() {
         guard display != nil, emptySince == nil else { return }
         emptySince = Date()
-        Log.info("stage: empty, released after \(Int(idleSeconds)) s unless a window is shared again")
+        Log.info("stage: empty, released after \(Int(idleSeconds)) s unless a window is shared again", .stage)
     }
 
     private func startIdleTimer() {
@@ -53,7 +56,7 @@ final class Stage {
         displayID = nil
         emptySince = nil
         Power.allowSleep()
-        Log.info("stage: released")
+        Log.info("stage: released", .stage)
     }
 
     private func makeDisplay(name: String, serial: UInt32, pixels: CGSize, modes: [CGSize]) async -> (CGVirtualDisplay, CGDirectDisplayID)? {
@@ -67,15 +70,15 @@ final class Stage {
         d.vendorID = 0x504F
         d.productID = 0x5448
         d.serialNum = serial
-        d.terminationHandler = { _, _ in Log.info("\(name) display was terminated") }
-        guard let v = CGVirtualDisplay(descriptor: d) else { Log.info("\(name): could not create the virtual display"); return nil }
+        d.terminationHandler = { _, _ in Log.info("\(name) display was terminated", .stage) }
+        guard let v = CGVirtualDisplay(descriptor: d) else { Log.info("\(name): could not create the virtual display", .stage); return nil }
         let s = CGVirtualDisplaySettings()
         s.hiDPI = 1
         s.modes = modes.map { CGVirtualDisplayMode(width: UInt($0.width), height: UInt($0.height), refreshRate: 60) }
-        guard v.apply(s) else { Log.info("\(name): applySettings failed"); return nil }
+        guard v.apply(s) else { Log.info("\(name): applySettings failed", .stage); return nil }
         let id = v.displayID
         for _ in 0..<30 where !onlineDisplays().contains(id) { try? await Task.sleep(nanoseconds: 100_000_000) }
-        guard onlineDisplays().contains(id) else { Log.info("\(name): display \(id) never came online"); return nil }
+        guard onlineDisplays().contains(id) else { Log.info("\(name): display \(id) never came online", .stage); return nil }
         return (v, id)
     }
 
@@ -88,7 +91,7 @@ final class Stage {
         displayID = id
         configure(id, besides: others)
         for _ in 0..<20 where !isHiDPI(id) { try? await Task.sleep(nanoseconds: 100_000_000) }
-        Log.info("stage ready for a \(Int(mode.points.width))x\(Int(mode.points.height)) viewer: display \(id) at \(CGDisplayBounds(id)), scale \(scale(of: id)), main \(CGDisplayIsMain(id) != 0)")
+        Log.info("stage ready for a \(Int(mode.points.width))x\(Int(mode.points.height)) viewer: display \(id) at \(CGDisplayBounds(id)), scale \(scale(of: id)), main \(CGDisplayIsMain(id) != 0)", .stage)
     }
 
     private func onlineDisplays() -> [CGDirectDisplayID] {
@@ -102,14 +105,14 @@ final class Stage {
         let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
         let modes = (CGDisplayCopyAllDisplayModes(id, opts) as? [CGDisplayMode]) ?? []
         let best = StageLayout.bestMode(modes.map { ($0.width, $0.height, $0.pixelWidth, $0.pixelHeight) }).map { modes[$0] }
-        Log.info("stage modes: \(modes.map { "\($0.width)x\($0.height)@\($0.pixelWidth)" }.joined(separator: " ")); picked \(best.map { "\($0.width)x\($0.height)" } ?? "none")")
+        Log.info("stage modes: \(modes.map { "\($0.width)x\($0.height)@\($0.pixelWidth)" }.joined(separator: " ")); picked \(best.map { "\($0.width)x\($0.height)" } ?? "none")", .stage)
         var cfg: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&cfg) == .success else { return }
         if let best { CGConfigureDisplayWithDisplayMode(cfg, id, best, nil) }
         let origin = StageLayout.origin(besides: others)
         CGConfigureDisplayOrigin(cfg, id, Int32(origin.x), Int32(origin.y))
         CGConfigureDisplayMirrorOfDisplay(cfg, id, kCGNullDirectDisplay)
-        if CGCompleteDisplayConfiguration(cfg, .forSession) != .success { Log.info("stage: display configuration failed") }
+        if CGCompleteDisplayConfiguration(cfg, .forSession) != .success { Log.info("stage: display configuration failed", .stage) }
     }
 
     private func isHiDPI(_ id: CGDirectDisplayID) -> Bool { scale(of: id) >= 2 }
@@ -125,18 +128,19 @@ final class Stage {
         if stage.intersects(live.bounds) { return }
         let target = StageLayout.slot(nextSlot, stage: stage, window: live.bounds.size)
         nextSlot += 1
-        guard AXWindows.setPosition(w, target) else { Log.info("stage: could not move window \(id)"); return }
+        guard AXWindows.setPosition(w, target) else { Log.info("stage: could not move window \(id)", .stage); return }
         parked[id] = (live.pid, home)
         for _ in 0..<20 {
             if let now = LiveWindow.lookup(id), stage.intersects(now.bounds), now.scale >= 2 { break }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        Log.info("stage: parked window \(id) at \(target), scale \(LiveWindow.lookup(id)?.scale ?? 0)")
+        Log.info("stage: parked window \(id) at \(target), scale \(LiveWindow.lookup(id)?.scale ?? 0)", .stage)
     }
 
     func unpark(_ id: UInt32) {
         guard let entry = parked.removeValue(forKey: id) else { return }
-        if let w = AXWindows.window(id: id, pid: entry.pid) { AXWindows.setPosition(w, entry.home) }
+        let moved = AXWindows.window(id: id, pid: entry.pid).map { AXWindows.setPosition($0, entry.home) } ?? false
+        Log.info(moved ? "stage: unparked window \(id) back to \(entry.home)" : "stage: could not move window \(id) back; it closed or moved", .stage)
         if parked.isEmpty { nextSlot = 0 }
     }
 

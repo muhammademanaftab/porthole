@@ -11,7 +11,7 @@ extension HostConfig {
 
     static func loadOrCreate() -> HostConfig {
         let (cfg, backup) = load(in: directory)
-        if let backup { Log.info("config.json was unreadable; kept it as \(backup.lastPathComponent) and wrote a new one") }
+        if let backup { Log.info("config.json was unreadable; kept it as \(backup.lastPathComponent) and wrote a new one", .host) }
         return cfg
     }
 }

@@ -36,7 +36,7 @@ final class HostTrust: NSObject, RoomDelegate {
     nonisolated func requested(by who: PairRequester, code: String) {
         print("Pairing request from \(who.name) (\(who.id)): code \(displayPairingCode(code))")
         fflush(stdout)
-        Log.info("pairing request from \(who.name) (\(who.id))")
+        Log.info("pairing request from \(who.name) (\(who.id))", .trust)
         guard showsPairingWindow() else { return }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
@@ -67,7 +67,7 @@ final class HostTrust: NSObject, RoomDelegate {
 
     private func revoke(_ device: PairedDevice) {
         revoked.revoke(device.id)
-        Log.info("unpaired \(device.name) (\(device.id))")
+        Log.info("unpaired \(device.name) (\(device.id))", .trust)
         pairedWindow?.reload()
         guard let host else { return }
         let ids = identities(host.room.remoteParticipants.keys.map(\.stringValue), of: device.id)
@@ -83,7 +83,7 @@ final class HostTrust: NSObject, RoomDelegate {
             let status = (try? await URLSession.shared.data(for: req)).flatMap { ($0.1 as? HTTPURLResponse)?.statusCode }
             attempt += 1
             guard let delay = removeRetryDelay(status: status, attempt: attempt) else {
-                Log.info("disconnected \(identity) after unpairing (status \(status.map(String.init) ?? "none"), \(attempt) \(attempt == 1 ? "try" : "tries"))")
+                Log.info("disconnected \(identity) after unpairing (status \(status.map(String.init) ?? "none"), \(attempt) \(attempt == 1 ? "try" : "tries"))", .trust)
                 return
             }
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -95,7 +95,7 @@ final class HostTrust: NSObject, RoomDelegate {
         Task { @MainActor in
             guard !self.store.isPaired(device) else { return }
             self.revoked.revoke(device)
-            Log.info("\(who) belongs to an unpaired Mac; disconnecting it")
+            Log.info("\(who) belongs to an unpaired Mac; disconnecting it", .trust)
             await self.remove(who)
         }
     }

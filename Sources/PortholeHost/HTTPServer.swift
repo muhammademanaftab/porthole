@@ -9,7 +9,9 @@ final class HTTPServer {
     private let routes: WebRoutes
     private let queue = DispatchQueue(label: "porthole.http")
 
-    init(config: HostConfig, pairing: PairingDesk? = nil, trust: HostTrust? = nil) throws {
+    private(set) var advertised: String?
+
+    init(config: HostConfig, pairing: PairingDesk? = nil, trust: HostTrust? = nil, status: (() -> [String: Any])? = nil) throws {
         self.config = config
         listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: config.httpPort)!)
         let name = HTTPServer.computerName
@@ -20,6 +22,7 @@ final class HTTPServer {
         routes.onPairRequest = { [weak trust] who, code in trust?.requested(by: who, code: code) }
         routes.onUnpair = { [weak trust] device in trust?.unpaired(device) }
         routes.localSecret = trust?.localSecret
+        routes.localStatus = status
         self.routes = routes
         let txt = BonjourTXT.make(name: name, tailscaleIP: tailscaleAddress(), localHost: HTTPServer.localHostName,
                                  port: Int(config.httpPort), id: trust?.identity.id)
@@ -46,14 +49,18 @@ final class HTTPServer {
 
     func start() {
         listener.stateUpdateHandler = { [weak self] state in
-            Log.info("web server state: \(state)")
+            Log.info("web server state: \(state)", .net)
             if case .failed(let err) = state {
-                Log.info("web server failed: \(err)")
+                Log.error("web server failed: \(err)", .net)
                 DispatchQueue.main.async { self?.onFailure?("Port \(self?.config.httpPort ?? 0) is busy or blocked") }
             }
         }
-        listener.serviceRegistrationUpdateHandler = { change in
-            if case .add(let endpoint) = change { Log.info("advertising \(endpoint) on Bonjour") }
+        listener.serviceRegistrationUpdateHandler = { [weak self] change in
+            if case .add(let endpoint) = change {
+                let name = "\(endpoint)"
+                DispatchQueue.main.async { self?.advertised = name }
+                Log.info("advertising \(endpoint) on Bonjour", .net)
+            }
         }
         listener.newConnectionHandler = { [weak self] conn in self?.serve(conn) }
         listener.start(queue: queue)

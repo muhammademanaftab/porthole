@@ -37,7 +37,7 @@ final class LiveKitServer {
         if let fh = try? FileHandle(forWritingTo: logURL) { p.standardOutput = fh; p.standardError = fh }
         let startedAt = Date()
         p.terminationHandler = { [weak self] proc in
-            Log.info("livekit-server exited with status \(proc.terminationStatus)")
+            Log.info("livekit-server exited with status \(proc.terminationStatus)", .net)
             guard let self, !self.stopping else { return }
             let delay = restartDelay(after: self.lastRestartDelay, uptime: Date().timeIntervalSince(startedAt))
             self.lastRestartDelay = delay
@@ -52,7 +52,7 @@ final class LiveKitServer {
     static func stopLeftovers(of bin: String) {
         let stale = Processes.running(executable: bin)
         guard !stale.isEmpty else { return }
-        for pid in stale { Log.info("stopping leftover livekit-server \(pid)") }
+        for pid in stale { Log.info("stopping leftover livekit-server \(pid)", .net) }
         Processes.stop(stale)
     }
 

@@ -40,6 +40,7 @@ public struct WebRoutes {
     public var onPairRequest: ((PairRequester, String) -> Void)?
     public var onUnpair: ((PairedDevice) -> Void)?
     public var localSecret: String?
+    public var localStatus: (() -> [String: Any])?
     public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
@@ -166,6 +167,8 @@ public struct WebRoutes {
             var body: [String: Any] = ["code": current.code, "seconds": current.secondsLeft]
             if let who = current.requester { body["for"] = who.name; body["device"] = who.id }
             return Self.json("200 OK", body)
+        case "/local/status":
+            return Self.json("200 OK", localStatus?() ?? [:])
         case "/local/unpair":
             let who = query["who"] ?? ""
             switch trust.unpair(who) {

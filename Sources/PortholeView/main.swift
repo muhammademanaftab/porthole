@@ -287,8 +287,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var autoOpenMatch = ProcessInfo.processInfo.environment["PORTHOLE_OPEN"]
 
     func autoOpen(_ list: [WindowInfo]) {
-        guard let match = autoOpenMatch?.lowercased(), !match.isEmpty,
-              let info = list.first(where: { "\($0.app) \($0.title)".lowercased().contains(match) }) else { return }
+        guard let info = autoOpenWindow(autoOpenMatch, in: list) else { return }
         autoOpenMatch = nil
         open(info)
     }
@@ -296,6 +295,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     func open(_ info: WindowInfo) {
         if let existing = portals[info.id] { existing.makeKeyAndOrderFront(nil); return }
         guard let c = connection else { return }
+        ViewerRecents.opened(info, host: c.hostAddress, name: hostName)
         icons[info.id] = nil
         c.requestIcon(info.id)
         let portal = PortalWindow(windowID: info.id, title: info.portalTitle, subtitle: hostName, app: info.app,

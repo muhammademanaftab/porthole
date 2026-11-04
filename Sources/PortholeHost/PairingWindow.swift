@@ -92,11 +92,11 @@ final class PairingWindow: NSPanel, NSWindowDelegate {
         case .used:
             let who = desk.requester?.name ?? "The viewer"
             detail.stringValue = "Paired. \(who) can view this Mac from now on."
-            Log.info("\(who) paired with a code")
+            Log.info("\(who) paired with a code", .trust)
         case .expired: detail.stringValue = "The code expired. Click New Code for another."
         case .locked:
             detail.stringValue = "Too many wrong tries, so the code was cancelled."
-            Log.info("pairing code cancelled after too many wrong tries")
+            Log.info("pairing code cancelled after too many wrong tries", .trust)
         case .idle: detail.stringValue = ""
         }
         codeLabel.textColor = .tertiaryLabelColor

@@ -40,6 +40,16 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func connect() async throws {
+        do {
+            try await connectOnce()
+            VLog.info("connected to \(hostAddress)")
+        } catch {
+            if !(error is CancellationError) { VLog.warn("connect to \(hostAddress) failed: \(error.localizedDescription)") }
+            throw error
+        }
+    }
+
+    private func connectOnce() async throws {
         guard let tokenAt = tokenURL(hostAddress: hostAddress, credential: credential,
                                  name: shortHostName(ProcessInfo.processInfo.hostName)) else {
             throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
@@ -99,6 +109,7 @@ final class Connection: NSObject, RoomDelegate {
         reconnecting = true
         defer { reconnecting = false }
         onLink?(.reconnecting)
+        VLog.info("lost the connection to \(hostAddress); reconnecting")
         onError?("Lost the connection to the host. Reconnecting…")
         attempt = nextReconnectAttempt(previous: attempt, upFor: connectedAt.map { Date().timeIntervalSince($0) })
         connectedAt = nil
@@ -112,6 +123,7 @@ final class Connection: NSObject, RoomDelegate {
                 pending = [:]
                 openedReplies = [:]
                 listening = SharedUse()
+                VLog.info("reconnected to \(hostAddress)")
                 onReconnected?()
                 for (id, then) in queued where pending[id] == nil { open(id, then: then) }
                 return
@@ -126,6 +138,7 @@ final class Connection: NSObject, RoomDelegate {
         }
         guard !closing else { return }
         let text = "Disconnected from host. Reconnect from the Porthole menu."
+        VLog.warn("gave up reconnecting to \(hostAddress)")
         onLink?(.disconnected(text))
         onError?(text)
     }
@@ -171,6 +184,7 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func open(_ id: UInt32, then: @escaping (VideoTrack, Message) -> Void) {
+        VLog.info("open window \(id) on \(hostAddress)")
         pending[id] = then
         var m = Message(.open); m.win = id
         if let screen = NSScreen.main?.frame.size { m.sw = screen.width; m.sh = screen.height; m.ss = NSScreen.main.map { Double($0.backingScaleFactor) } }
@@ -193,6 +207,7 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func close(_ id: UInt32) {
+        VLog.info("close window \(id) on \(hostAddress)")
         var m = Message(.close); m.win = id
         send(m)
         if let pub = publication(named: Message.trackName(for: id)) {
@@ -254,7 +269,10 @@ final class Connection: NSObject, RoomDelegate {
                 self.subscribeIfPublished(id)
             case .closed: if let id = m.win { self.onClosed?(id) }
             case .error:
-                if let id = m.win, self.pending.removeValue(forKey: id) != nil { self.onOpenError?(id, m.msg ?? "Unknown error") }
+                if let id = m.win, self.pending.removeValue(forKey: id) != nil {
+                    VLog.warn("host refused window \(id): \(m.msg ?? "unknown error")")
+                    self.onOpenError?(id, m.msg ?? "Unknown error")
+                }
                 self.onError?(m.msg ?? "Unknown error")
             default: break
             }
@@ -285,6 +303,7 @@ final class Connection: NSObject, RoomDelegate {
         let text = "Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")"
         Task { @MainActor in
             guard !self.closing else { return }
+            VLog.info("disconnected from \(self.hostAddress): \(kind)")
             if reconnectDelay(after: kind, attempt: 1) != nil { await self.reconnect(); return }
             self.onLink?(.disconnected(text))
             self.onError?(text)

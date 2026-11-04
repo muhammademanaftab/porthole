@@ -13,11 +13,11 @@ final class AudioTap: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sen
               let pcm = sampleBuffer.toAVAudioPCMBuffer() else { return }
         AudioManager.shared.mixer.capture(appAudio: pcm)
         lock.lock(); let first = !heard; heard = true; lock.unlock()
-        if first { Log.info("audio: first buffer, \(pcm.format.sampleRate) Hz, \(pcm.format.channelCount) ch") }
+        if first { Log.info("audio: first buffer, \(pcm.format.sampleRate) Hz, \(pcm.format.channelCount) ch", .audio) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        Log.info("audio capture stopped: \(error.localizedDescription)")
+        Log.info("audio capture stopped: \(error.localizedDescription)", .audio)
     }
 
     func rearm() { lock.lock(); heard = false; lock.unlock() }
@@ -36,7 +36,7 @@ final class AppAudio {
 
     static func prepare() {
         do { try AudioManager.shared.setManualRenderingMode(true) } catch {
-            Log.info("audio: manual rendering mode failed: \(error.localizedDescription)")
+            Log.info("audio: manual rendering mode failed: \(error.localizedDescription)", .audio)
         }
     }
 
@@ -110,9 +110,9 @@ final class AppAudio {
             try await s.startCapture()
             stream = s
             running = pids
-            Log.info("audio: capturing apps \(pids.sorted())")
+            Log.info("audio: capturing apps \(pids.sorted())", .audio)
         } catch {
-            Log.info("audio: start failed: \(error.localizedDescription)")
+            Log.info("audio: start failed: \(error.localizedDescription)", .audio)
             await teardown(in: room)
         }
     }
@@ -121,15 +121,15 @@ final class AppAudio {
         do {
             try await stream?.updateContentFilter(try await filter(for: pids))
             running = pids
-            Log.info("audio: capturing apps \(pids.sorted())")
+            Log.info("audio: capturing apps \(pids.sorted())", .audio)
         } catch {
-            Log.info("audio: filter update failed: \(error.localizedDescription)")
+            Log.info("audio: filter update failed: \(error.localizedDescription)", .audio)
         }
     }
 
     private func stop(in room: Room) async {
         await teardown(in: room)
-        Log.info("audio: stopped")
+        Log.info("audio: stopped", .audio)
     }
 
     private func teardown(in room: Room) async {
