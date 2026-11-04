@@ -13,6 +13,8 @@ make_app() {
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
   cp "assets/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
   cp "$BIN/$exe" "$app/Contents/MacOS/$exe"
+  cp "$BIN/porthole" "$app/Contents/MacOS/porthole"
+  codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$app/Contents/MacOS/porthole"
   for fw in "$BIN"/*.framework; do [ -e "$fw" ] && cp -R "$fw" "$app/Contents/Frameworks/"; done
   install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/$exe" 2>/dev/null || true
   for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$app/Contents/Resources/"; done

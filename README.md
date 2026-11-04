@@ -44,6 +44,26 @@ porthole-view pair <host> <code>
 
 Run them from the app bundles (`"/Applications/Porthole Host.app/Contents/MacOS/porthole-host" paircode`) so the Keychain recognises the binary. Pairing requests also print their code to the host's standard output; `PORTHOLE_PAIR_HEADLESS=1` prints it without opening the window. `PORTHOLE_HOME` moves the host's and viewer's state folder (for a second, isolated instance).
 
+## Command line
+
+Both app bundles carry the same `porthole` command in `Contents/MacOS`. `scripts/install-cli.sh` symlinks it into `~/bin` (or `/usr/local/bin`, or `--dir DIR`); nothing is installed unless you run it.
+
+```
+porthole doctor [--quick]            # roles, permissions (as the running host sees them), host, watchdog, ports 7878/7880,
+                                     # Tailscale, Bonjour, pairing, Stage, the last 20 warnings/errors by event
+porthole doctor --windows [--json]   # where WindowServer says windows are; flags off-display and on-Stage ones
+porthole log [tail|-f|grep RE|path|--stats] [-n N] [-c category] [-l level] [-r role] [--since 10m] [--json]
+porthole trail [minutes] [--since 2h] [--all]   # stage, park/unpark, open/close, resize, capture scale, budget, watchdog, reconnects
+porthole why-quit [n]                # last n host runs: start, end, uptime, pid, and why it ended
+porthole report [--out path] [--since 1d]       # ~/Desktop/Porthole-Report-<date>.zip, secrets scrubbed, nothing uploaded
+porthole env [--set] [--json]        # every PORTHOLE_* flag with meaning, default and current value
+porthole machines | ls <host> | open <host> <windowID|title> | recent [n]   # run through porthole-view
+porthole paircode | devices | unpair <who> | request <host> | pair <host> <code>
+porthole version
+```
+
+Logs live in `~/Library/Logs/Porthole/`: `host.log` (the host and its watchdog) and `viewer.log`, each rotated at 10 MB with three old generations. Lines read `<UTC time> <level> <role>:<pid> [<category>] <text>`; older lines without the prefix still parse. `PORTHOLE_LOG=debug` turns on debug lines for one process. The doctor asks the running host over `/local/status` on 127.0.0.1 with the local secret, so permissions are the host's, not the terminal's. The viewer records the last 20 portals in `recent-portals.json`; `recent n` reopens one, matching the window again by ID, or app and title.
+
 ## Keep running
 
 Porthole Host's Settings… (⌘, in its menu) has "Keep Porthole Host running on this Mac", on by default. It registers a launch agent with ServiceManagement (`Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist`, shown in System Settings > General > Login Items as Porthole Host). The agent runs the host binary with `watchdog`, a small loop with no UI that:

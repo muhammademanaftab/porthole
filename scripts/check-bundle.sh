@@ -64,6 +64,20 @@ else pass "porthole-tile links only system libraries"; fi
 expect "porthole-tile refuses to run without arguments" "$?" "2"
 
 for app in "$HOST" "$VIEW"; do
+  CLI="$app/Contents/MacOS/porthole"
+  if [ -x "$CLI" ]; then pass "$(basename "$app") bundles the porthole command"; else fail "$(basename "$app") bundles the porthole command"; fi
+  if codesign --verify --strict "$CLI" 2>/dev/null; then pass "$(basename "$app") porthole signature"; else fail "$(basename "$app") porthole signature"; fi
+  if otool -L "$CLI" 2>/dev/null | tail -n +2 | grep -qv -e '^[[:space:]]*/usr/lib/' -e '^[[:space:]]*/System/Library/'; then
+    fail "$(basename "$app") porthole links only system libraries"
+  else pass "$(basename "$app") porthole links only system libraries"; fi
+  version=$("$CLI" version 2>/dev/null | head -1)
+  if [[ "$version" == "porthole 0.1.0 "* ]]; then pass "$(basename "$app") porthole version runs"; else fail "$(basename "$app") porthole version runs ($version)"; fi
+  "$CLI" bogus >/dev/null 2>&1
+  rc=$?
+  expect "$(basename "$app") porthole refuses an unknown command" "$rc" "2"
+done
+
+for app in "$HOST" "$VIEW"; do
   if codesign --verify --deep --strict "$app" 2>/dev/null; then pass "codesign --verify --deep --strict $app"; else fail "codesign --verify --deep --strict $app"; fi
 done
 
