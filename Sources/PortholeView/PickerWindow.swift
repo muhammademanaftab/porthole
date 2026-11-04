@@ -11,6 +11,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     private let notice = NoticeView()
     private let statusIcon = NSImageView()
     private let statusLabel = NSTextField(labelWithString: "")
+    private let hint = NSTextField(labelWithString: "Double-click or press Return to open")
     private var query = ""
     private var all: [WindowInfo] = []
     private var shown: [WindowInfo] = []
@@ -65,7 +66,6 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let hint = NSTextField(labelWithString: "Double-click or press Return to open")
         hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         hint.textColor = .tertiaryLabelColor
         let bar = NSStackView(views: [statusIcon, statusLabel, NSView(), hint])
@@ -159,6 +159,12 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         apply()
     }
 
+    func search(for text: String) {
+        (toolbar?.items.first(where: { $0.itemIdentifier == Self.searchItem }) as? NSSearchToolbarItem)?.searchField.stringValue = text
+        query = text
+        apply()
+    }
+
     @objc func performFindPanelAction(_ sender: Any?) {
         guard let item = toolbar?.items.first(where: { $0.itemIdentifier == Self.searchItem }) as? NSSearchToolbarItem else { return }
         item.beginSearchInteraction()
@@ -180,7 +186,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         let selected = grid.selectionIndexPaths.first.map { shown[$0.item].id }
         all = list
         loaded = true
-        error = nil
+        if !list.isEmpty { error = nil }
         let live = Set(list.map(\.id))
         thumbs = thumbs.filter { live.contains($0.key) }
         for info in list where icons[info.id] == nil {
@@ -230,6 +236,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         let n = pickerNotice(loaded: loaded, total: all.count, shown: shown.count, query: query, error: error)
         notice.isHidden = n == nil
         scroll.isHidden = n != nil
+        hint.isHidden = n != nil
         if let n { notice.show(n) }
         subtitle = loaded ? pickerCountLabel(total: all.count, shown: shown.count) : "Connecting…"
         if let error, !all.isEmpty {

@@ -360,6 +360,7 @@ usage: porthole-view [command]
   <host> [password]   open Porthole and connect to host
   request <host>      ask the host to show a pairing code for this Mac
   pair <host> <code>  pair with the host using the code it shows; this Mac may view it from then on
+  gallery [screen]    show one screen with sample data and no network, for design review
 """
 
 public func viewerCommand(_ args: [String]) -> ViewerCommand {

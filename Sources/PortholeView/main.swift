@@ -23,6 +23,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollClipboard() }
         }
+        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst())) {
+            Gallery.show(screen)
+            return
+        }
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
             connect(host: host, credential: .password(pw))
