@@ -17,21 +17,23 @@ enum Processes {
         }
     }
 
-    static func arguments(_ pid: pid_t) -> [String] {
+    static func arguments(_ pid: pid_t) -> ProcessArguments {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        let none = ProcessArguments(arguments: [], environment: [:])
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return none }
         var buf = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return [] }
-        return parseProcessArguments(Array(buf.prefix(size)))
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return none }
+        return ProcessArguments(procargs: Array(buf.prefix(size)))
     }
 
     static func isWatchdog(_ pid: pid_t) -> Bool {
-        HostCommand.parse(arguments: Array(arguments(pid).dropFirst()), environment: [:]) == .watchdog
+        arguments(pid).isWatchdog
     }
 
     static func hosts(executable path: String) -> [pid_t] {
-        running(executable: path).filter { !isWatchdog($0) }
+        let watchdog = HostFiles.readWatchdogPid()
+        return running(executable: path).filter { $0 != watchdog && !isWatchdog($0) }
     }
 
     static func stop(_ pids: [pid_t], timeout: TimeInterval = 3) {

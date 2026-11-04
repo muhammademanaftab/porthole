@@ -34,9 +34,10 @@ Porthole Host's Settings… (⌘, in its menu) has "Keep Porthole Host running o
 
 - opens the host at login,
 - relaunches it when it disappears without saying why (`crash`),
-- kills and relaunches it when its main thread stops writing `~/Library/Application Support/Porthole/heartbeat` for 30 s (`hang`; `PORTHOLE_WATCHDOG_HANG_SECS`, at least 15),
-- relaunches it right away after a paired Mac chooses Restart Host in Porthole's app menu (`remote`).
+- samples and then kills and relaunches it when its main thread stops writing `~/Library/Application Support/Porthole/heartbeat` for 60 s (`hang`; the sample goes to `~/Library/Logs/Porthole/hang-<time>.txt`; `PORTHOLE_WATCHDOG_HANG_SECS`, at least 15),
+- relaunches it right away after a Mac with one of its windows open chooses Restart Host in Porthole's app menu (`remote`),
+- relaunches it when it quit for a logout, shutdown or outside quit (Activity Monitor, `osascript`) and is still missing 45 s later (`missingAfterQuit`).
 
-Each launch is logged in `~/Library/Logs/Porthole/host.log` as `watchdog relaunch reason=<reason>`. Quit from the menu means stay quit: the watchdog leaves it stopped until you open it again or log in again. Turning the switch off unregisters the agent; the host keeps running. `PORTHOLE_WATCHDOG=0|1` overrides the switch for one run. The old `~/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist` is booted out and deleted on first launch.
+Each launch is logged in `~/Library/Logs/Porthole/host.log` as `watchdog relaunch reason=<reason>`. Quit from the menu means stay quit: the watchdog leaves it stopped until you open it again or restart the Mac. Turning the switch off unregisters the agent; the host keeps running. `PORTHOLE_WATCHDOG=0|1` decides for one run whether the watchdog watches this host, without registering, unregistering or changing the saved switch. The old `~/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist` is booted out and deleted on first launch.
 
 Ports: 7878 (web and tokens), 7880 to 7882 (LiveKit).

@@ -7,8 +7,10 @@ enum HostFiles {
     static var heartbeatURL: URL { HostConfig.directory.appendingPathComponent("heartbeat") }
     static var markerURL: URL { HostConfig.directory.appendingPathComponent("exit-marker") }
 
+    nonisolated(unsafe) static var watched = true
+
     static func writeHeartbeat() {
-        let beat = Heartbeat(pid: getpid(), time: Date().timeIntervalSince1970)
+        let beat = Heartbeat(pid: getpid(), time: Date().timeIntervalSince1970, watched: watched)
         try? FileManager.default.createDirectory(at: HostConfig.directory, withIntermediateDirectories: true)
         try? beat.text.write(to: heartbeatURL, atomically: true, encoding: .utf8)
     }
@@ -28,6 +30,17 @@ enum HostFiles {
     }
 
     static func clearMarker() { try? FileManager.default.removeItem(at: markerURL) }
+
+    static var watchdogPidURL: URL { HostConfig.directory.appendingPathComponent("watchdog.pid") }
+
+    static func writeWatchdogPid() {
+        try? FileManager.default.createDirectory(at: HostConfig.directory, withIntermediateDirectories: true)
+        try? "\(getpid())\n".write(to: watchdogPidURL, atomically: true, encoding: .utf8)
+    }
+
+    static func readWatchdogPid() -> pid_t? {
+        (try? String(contentsOf: watchdogPidURL, encoding: .utf8)).flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
 }
 
 @MainActor
@@ -35,7 +48,8 @@ final class Heartbeats {
     private var timer: Timer?
     private var activity: NSObjectProtocol?
 
-    func start() {
+    func start(watched: Bool) {
+        HostFiles.watched = watched
         activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep],
                                                          reason: "Porthole Host answers its watchdog")
         HostFiles.writeHeartbeat()
@@ -116,6 +130,11 @@ enum LegacyAgent {
         p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         p.arguments = ["bootout", target]
         try? p.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            Log.info("the old login agent was not booted out; exiting so the watchdog starts a fresh host")
+            Log.flush()
+            exit(0)
+        }
     }
 
     @discardableResult
@@ -140,16 +159,19 @@ enum WatchdogRunner {
         let app = Bundle.main.bundleURL
         let limit = WatchdogMonitor.hangLimit(from: ProcessInfo.processInfo.environment[WatchdogMonitor.hangEnvKey])
         var monitor = WatchdogMonitor(hangLimit: limit)
+        HostFiles.writeWatchdogPid()
         Log.info("watchdog started (pid \(getpid()), app \(app.path), hang limit \(Int(limit)) s)")
         while true {
             let beat = HostFiles.readHeartbeat()
             let host = WatchdogMonitor.pickHost(Processes.hosts(executable: exe), heartbeat: beat)
-            switch monitor.step(now: Date().timeIntervalSince1970, host: host, heartbeat: beat, marker: HostFiles.readMarker()) {
+            switch monitor.step(now: Date().timeIntervalSince1970, host: host, heartbeat: beat, marker: HostFiles.readMarker(),
+                                uptime: ProcessInfo.processInfo.systemUptime) {
             case .none:
                 break
             case .kill(let pid):
                 let silent = beat.map { Int(Date().timeIntervalSince1970 - $0.time) }.map { "\($0) s" } ?? "since launch"
-                Log.info("watchdog: host \(pid) has not answered for \(silent); killing it")
+                Log.info("watchdog: host \(pid) has not answered for \(silent); sampling it, then killing it")
+                sample(pid)
                 kill(pid, SIGKILL)
             case .launch(let reason):
                 Log.info(reason == .login ? "watchdog launch reason=login" : "watchdog relaunch reason=\(reason.rawValue)")
@@ -157,6 +179,22 @@ enum WatchdogRunner {
             }
             Thread.sleep(forTimeInterval: WatchdogMonitor.tick)
         }
+    }
+
+    static func sample(_ pid: pid_t) {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
+        let out = Log.url.deletingLastPathComponent().appendingPathComponent("hang-\(stamp).txt")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+        p.arguments = [String(pid), String(WatchdogMonitor.sampleSeconds), "-file", out.path]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { Log.info("watchdog: could not run sample: \(error.localizedDescription)"); return }
+        let deadline = Date().addingTimeInterval(Double(WatchdogMonitor.sampleSeconds) + 12)
+        while p.isRunning && Date() < deadline { usleep(200_000) }
+        if p.isRunning { p.terminate() }
+        if FileManager.default.fileExists(atPath: out.path) { Log.info("watchdog: hang sample written to \(out.path)") }
+        else { Log.info("watchdog: sample of \(pid) failed (status \(p.isRunning ? -1 : p.terminationStatus)); no hang sample") }
     }
 
     static func launch(_ app: URL, reason: WatchdogReason) {

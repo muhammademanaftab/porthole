@@ -18,7 +18,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private var clipTimer: Timer?
     private var lockWarnedAt: [String: Date] = [:]
     var onChange: (() -> Void)?
-    var onRestart: ((String) -> String?)?
+    var onRestart: ((String, Bool) -> String?)?
     private(set) var isConnected = false
 
     var openWindowCount: Int { sessions.count }
@@ -154,7 +154,7 @@ final class HostRoom: NSObject, RoomDelegate {
             input.handle(m)
             if m.t == .resize { sessions[id]?.followSizeSoon() }
         case .restart:
-            let refusal = onRestart.map { $0(who) } ?? "This host can't restart itself."
+            let refusal = onRestart.map { $0(who, registry.activeViewers.contains(who)) } ?? "This host can't restart itself."
             guard let refusal else { return }
             var reply = Message(.error); reply.msg = refusal
             await send(reply, to: who)

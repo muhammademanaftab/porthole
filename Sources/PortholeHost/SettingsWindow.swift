@@ -23,7 +23,7 @@ final class SettingsWindow: NSWindow, NSWindowDelegate {
 
         keepRunning.target = self
         keepRunning.action = #selector(toggleKeepRunning)
-        let keepNote = note("Starts it at login, relaunches it after a crash or a hang, and lets your paired Macs restart it. Quit keeps it stopped until you open it again or log in again.")
+        let keepNote = note("Starts it at login, relaunches it after a crash or a hang, and lets a Mac viewing one of its windows restart it. Quit from the menu keeps it stopped until you open it again or restart this Mac.")
         keepStatus.textColor = .systemOrange
         approve.target = self
         approve.action = #selector(openLoginItems)

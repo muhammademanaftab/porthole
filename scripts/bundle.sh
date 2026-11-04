@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-release}
 SIGN_ID=${SIGN_ID:-$(security find-identity -p codesigning 2>/dev/null | awk '/"Porthole Dev"/{print $2; exit}')}
 SIGN_ID=${SIGN_ID:-"-"}
-swift build -c "$CONFIG" --arch arm64
+swift build ${SWIFT_JOBS:+-j "$SWIFT_JOBS"} -c "$CONFIG" --arch arm64
 BIN=.build/arm64-apple-macosx/$CONFIG
 rm -rf dist && mkdir -p dist
 

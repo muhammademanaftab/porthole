@@ -31,9 +31,11 @@ final class HostApp: NSObject, NSApplicationDelegate {
             let others = Processes.hosts(executable: exe)
             if !others.isEmpty { Log.info("stopping older host instance(s) \(others)"); Processes.stop(others) }
         }
-        heartbeats.start()
         let keep = settings.keepRunningThisRun(environment: env)
-        KeepRunning.apply(keep)
+        let overridden = ["0", "1"].contains(env[HostSettings.overrideEnvKey] ?? "")
+        heartbeats.start(watched: keep)
+        if overridden { Log.info("\(HostSettings.overrideEnvKey)=\(env[HostSettings.overrideEnvKey] ?? "") for this run: the watchdog \(keep ? "watches" : "ignores") this host; the saved switch is unchanged") }
+        else { KeepRunning.apply(keep) }
         if fromLegacy {
             if KeepRunning.isEnabled {
                 HostFiles.writeMarker(.migrate)
@@ -46,12 +48,12 @@ final class HostApp: NSObject, NSApplicationDelegate {
         Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), keep running \(keep) (watchdog \(KeepRunning.describe(KeepRunning.status)))")
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
-        host.onRestart = { [weak self] who in self?.restartRequested(by: who) }
+        host.onRestart = { [weak self] who, hasOpenWindow in self?.restartRequested(by: who, hasOpenWindow: hasOpenWindow, watched: keep) }
         Task { await start() }
     }
 
-    func restartRequested(by who: String) -> String? {
-        switch restartDecision(from: who, agentEnabled: KeepRunning.isEnabled) {
+    func restartRequested(by who: String, hasOpenWindow: Bool, watched: Bool) -> String? {
+        switch restartDecision(hasOpenWindow: hasOpenWindow, agentEnabled: watched && KeepRunning.isEnabled) {
         case .refuse(let why):
             Log.info("restart from \(who) refused: \(why)")
             return why

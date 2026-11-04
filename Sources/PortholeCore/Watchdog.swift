@@ -14,7 +14,7 @@ public enum HostCommand: Equatable, Sendable {
 }
 
 public enum WatchdogReason: String, Sendable {
-    case login, crash, hang, remote, migrate
+    case login, crash, hang, remote, migrate, missingAfterQuit
 
     public static let envKey = "PORTHOLE_WATCHDOG_RELAUNCH"
 }
@@ -38,15 +38,19 @@ public enum ExitMarker: String, Sendable {
 public struct Heartbeat: Equatable, Sendable {
     public var pid: Int32
     public var time: Double
+    public var watched: Bool
 
-    public init(pid: Int32, time: Double) { self.pid = pid; self.time = time }
+    public static let unwatchedWord = "unwatched"
 
-    public var text: String { "\(pid) \(String(format: "%.3f", time))\n" }
+    public init(pid: Int32, time: Double, watched: Bool = true) { self.pid = pid; self.time = time; self.watched = watched }
+
+    public var text: String { "\(pid) \(String(format: "%.3f", time))\(watched ? "" : " " + Self.unwatchedWord)\n" }
 
     public init?(text: String) {
         let parts = text.split(whereSeparator: { $0 == " " || $0 == "\n" })
-        guard parts.count == 2, let pid = Int32(parts[0]), pid > 0, let time = Double(parts[1]), time.isFinite else { return nil }
-        self.init(pid: pid, time: time)
+        guard parts.count == 2 || (parts.count == 3 && parts[2] == Self.unwatchedWord),
+              let pid = Int32(parts[0]), pid > 0, let time = Double(parts[1]), time.isFinite else { return nil }
+        self.init(pid: pid, time: time, watched: parts.count == 2)
     }
 }
 
@@ -59,13 +63,16 @@ public enum WatchdogAction: Equatable, Sendable {
 public struct WatchdogMonitor: Sendable {
     public static let tick: Double = 2
     public static let heartbeatEvery: Double = 5
-    public static let defaultHangLimit: Double = 30
+    public static let defaultHangLimit: Double = 60
     public static let minimumHangLimit: Double = 15
     public static let wakeGap: Double = 15
     public static let launchGap: Double = 10
     public static let crashLoopGap: Double = 120
     public static let crashLoopLaunches = 5
     public static let crashLoopWindow: Double = 600
+    public static let missingAfterQuitDelay: Double = 45
+    public static let honourQuitAfterUptime: Double = 300
+    public static let sampleSeconds = 3
     public static let hangEnvKey = "PORTHOLE_WATCHDOG_HANG_SECS"
 
     public let hangLimit: Double
@@ -74,6 +81,8 @@ public struct WatchdogMonitor: Sendable {
     public private(set) var pending: WatchdogReason?
     private var lastTick: Double?
     private var hungPid: Int32?
+    private var optedOut = false
+    private var sessionEndedAt: Double?
     private var launches: [Double] = []
 
     public init(hangLimit: Double = defaultHangLimit) {
@@ -99,13 +108,15 @@ public struct WatchdogMonitor: Sendable {
         launches.filter { now - $0 < Self.crashLoopWindow }.count >= Self.crashLoopLaunches ? Self.crashLoopGap : Self.launchGap
     }
 
-    public mutating func step(now: Double, host: Int32?, heartbeat: Heartbeat?, marker: ExitMarker?) -> WatchdogAction {
+    public mutating func step(now: Double, host: Int32?, heartbeat: Heartbeat?, marker: ExitMarker?, uptime: Double = 0) -> WatchdogAction {
         let first = lastTick == nil
         if let last = lastTick, now - last > Self.wakeGap { since = now }
         lastTick = now
         if let pid = host {
-            if pid != watched { watched = pid; since = now; pending = nil; hungPid = nil }
-            if hungPid == pid { return .none }
+            if pid != watched { watched = pid; since = now; pending = nil; hungPid = nil; optedOut = false }
+            sessionEndedAt = nil
+            if let hb = heartbeat, hb.pid == pid { optedOut = !hb.watched }
+            if hungPid == pid || optedOut { return .none }
             if Self.isHung(heartbeat: heartbeat, pid: pid, watchingSince: since, now: now, limit: hangLimit) {
                 hungPid = pid
                 return .kill(pid)
@@ -114,10 +125,18 @@ public struct WatchdogMonitor: Sendable {
         }
         if watched != nil {
             watched = nil
-            if hungPid != nil { pending = .hang } else if let marker { pending = marker.relaunch } else { pending = .crash }
+            if hungPid != nil { pending = .hang }
+            else if optedOut { pending = nil }
+            else if let marker { pending = marker.relaunch; if marker == .session { sessionEndedAt = now } }
+            else { pending = .crash }
             hungPid = nil
+            optedOut = false
         } else if first {
-            pending = .login
+            pending = marker == .quit && uptime > Self.honourQuitAfterUptime ? nil : .login
+        }
+        if let ended = sessionEndedAt, now - ended >= Self.missingAfterQuitDelay {
+            sessionEndedAt = nil
+            pending = .missingAfterQuit
         }
         guard let reason = pending else { return .none }
         if let last = launches.last, now - last < launchGap(at: now) { return .none }
@@ -185,28 +204,45 @@ public enum RestartDecision: Equatable, Sendable {
     case refuse(String)
 }
 
-public func restartDecision(from who: String, agentEnabled: Bool) -> RestartDecision {
-    guard !who.isEmpty, who != "host" else { return .refuse("Only a connected viewer can restart the host.") }
+public func restartDecision(hasOpenWindow: Bool, agentEnabled: Bool) -> RestartDecision {
+    guard hasOpenWindow else { return .refuse("Open a window from that Mac first: only a viewer with a window open can restart its host.") }
     guard agentEnabled else {
         return .refuse("Keep Porthole Host running is off on that Mac, so it can't restart itself. Turn it on in Porthole Host Settings.")
     }
     return .restart
 }
 
-public func parseProcessArguments(_ bytes: [UInt8]) -> [String] {
-    let head = MemoryLayout<Int32>.size
-    guard bytes.count > head else { return [] }
-    let argc = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
-    guard argc > 0, argc < 4096 else { return [] }
-    var i = head
-    while i < bytes.count && bytes[i] != 0 { i += 1 }
-    while i < bytes.count && bytes[i] == 0 { i += 1 }
-    var args: [String] = []
-    while args.count < argc && i < bytes.count {
-        let start = i
+public struct ProcessArguments: Equatable, Sendable {
+    public var arguments: [String]
+    public var environment: [String: String]
+
+    public init(arguments: [String], environment: [String: String]) { self.arguments = arguments; self.environment = environment }
+
+    public init(procargs bytes: [UInt8]) {
+        self.init(arguments: [], environment: [:])
+        let head = MemoryLayout<Int32>.size
+        guard bytes.count > head else { return }
+        let argc = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
+        guard argc > 0, argc < 4096 else { return }
+        var i = head
         while i < bytes.count && bytes[i] != 0 { i += 1 }
-        args.append(String(decoding: bytes[start..<i], as: UTF8.self))
-        i += 1
+        while i < bytes.count && bytes[i] == 0 { i += 1 }
+        var strings: [String] = []
+        while i < bytes.count {
+            let start = i
+            while i < bytes.count && bytes[i] != 0 { i += 1 }
+            if start == i && strings.count >= argc { break }
+            strings.append(String(decoding: bytes[start..<i], as: UTF8.self))
+            i += 1
+        }
+        arguments = Array(strings.prefix(argc))
+        for pair in strings.dropFirst(argc) {
+            guard let eq = pair.firstIndex(of: "="), eq != pair.startIndex else { continue }
+            environment[String(pair[..<eq])] = String(pair[pair.index(after: eq)...])
+        }
     }
-    return args
+
+    public var isWatchdog: Bool {
+        HostCommand.parse(arguments: Array(arguments.dropFirst()), environment: environment) == .watchdog
+    }
 }
