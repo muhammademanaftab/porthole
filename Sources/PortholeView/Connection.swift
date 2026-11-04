@@ -16,6 +16,7 @@ final class Connection: NSObject, RoomDelegate {
     var onThumb: ((UInt32, Data) -> Void)?
     var onOpenError: ((UInt32, String) -> Void)?
     var onSized: ((Message) -> Void)?
+    var onCompanion: ((Message) -> Void)?
     var onLink: ((LinkState) -> Void)?
     var streamSettings: () -> ViewerSettings = { ViewerSettings() }
 
@@ -255,6 +256,7 @@ final class Connection: NSObject, RoomDelegate {
                 self.subscribeIfPublished(id)
             case .closed: if let id = m.win { self.onClosed?(id) }
             case .sized: self.onSized?(m)
+            case .companion: self.onCompanion?(m)
             case .error:
                 if let id = m.win, self.pending.removeValue(forKey: id) != nil { self.onOpenError?(id, m.msg ?? "Unknown error") }
                 self.onError?(m.msg ?? "Unknown error")

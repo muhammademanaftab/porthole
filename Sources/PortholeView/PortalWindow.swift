@@ -17,16 +17,22 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     private var throttle = LiveResizeThrottle()
     private var limits = PortalSizing.Limits()
     private var resizeEndedAt: Double?
+    let isCompanion: Bool
+    var companionOf: UInt32?
+    var companionOffer: Message?
+    var closedByHost = false
+    var onLayout: (() -> Void)?
 
-    init(windowID: UInt32, title: String, subtitle: String, app: String, size: CGSize, connection: Connection) {
+    init(windowID: UInt32, title: String, subtitle: String, app: String, size: CGSize, connection: Connection, companion: Bool = false) {
         self.windowID = windowID
         self.connection = connection
         self.appName = app
+        self.isCompanion = companion
         inputView = InputCaptureView(windowID: windowID, connection: connection)
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let fitted = portalContentSize(remote: size, screen: screen.size)
         super.init(contentRect: CGRect(origin: .zero, size: fitted),
-                   styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+                   styleMask: companion ? [.borderless] : [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         self.title = title
         self.subtitle = subtitle
         isReleasedWhenClosed = false
@@ -55,7 +61,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         contentView = content
         contentMinSize = CGSize(width: 100, height: 80)
         show(.opening(app))
-        center()
+        if companion { hasShadow = true } else { center() }
         makeFirstResponder(inputView)
     }
 
@@ -95,7 +101,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     }
 
     func show(_ next: PortalPhase?) {
-        if case .opening = next, track?.dimensions != nil { phase = nil } else { phase = next }
+        if case .opening = next, track?.dimensions != nil || isCompanion { phase = nil } else if isCompanion, next == .reconnecting { phase = nil } else { phase = next }
         overlay.show(phase)
     }
 
@@ -145,6 +151,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        onLayout?()
         guard inLiveResize, let size = pictureSize else { return }
         if let s = throttle.during(size, now: Self.now) { sendResize(s) }
     }
@@ -179,6 +186,23 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         let layout: VideoView.LayoutMode = mode == .fill ? .fill : .fit
         if videoView.layoutMode != layout { videoView.layoutMode = layout }
         inputView.fill = mode == .fill
+        onLayout?()
+    }
+
+    var pictureOnScreen: CGRect? {
+        guard let content = contentView else { return nil }
+        let px = inputView.contentPixels
+        let r = px == .zero ? content.bounds : fittedRect(content: px, in: content.bounds)
+        return convertToScreen(content.convert(r, to: nil))
+    }
+
+    func place(companion m: Message, over parent: PortalWindow) {
+        guard let picture = parent.pictureOnScreen, let w = m.w, let h = m.h else { return }
+        companionOffer = m
+        let screen = parent.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let r = CompanionRules.placement(offset: CGPoint(x: m.x ?? 0, y: m.y ?? 0), size: CGSize(width: w, height: h),
+                                         parentSize: CGSize(width: m.pw ?? 0, height: m.ph ?? 0), picture: picture, screen: screen)
+        if r != frame { setFrame(r, display: true) }
     }
 
     func windowWillClose(_ notification: Notification) {
