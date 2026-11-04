@@ -238,3 +238,25 @@ public func routeInfo(remote: IceCandidateFacts?, local: IceCandidateFacts?, tai
     let kind = classifyRoute(remoteAddress: address, remoteType: remote.type, localType: local?.type, tailscale: tailscale)
     return RouteInfo(kind: kind, address: bareHost(address))
 }
+
+public func helloURL(hostAddress: String) -> URL? {
+    guard let (host, port) = splitHostAddress(hostAddress) else { return nil }
+    var comps = URLComponents()
+    comps.scheme = "http"
+    comps.host = host
+    comps.port = port
+    comps.path = "/hello"
+    return comps.url
+}
+
+public func signalingRoute(address: String) -> RouteInfo? {
+    guard let (host, _) = splitHostAddress(address) else { return nil }
+    let kind: RouteKind
+    switch addressScope(host) {
+    case .loopback: kind = .thisMac
+    case .local: kind = .sameNetwork
+    case .tailscale: kind = .tailscale
+    case .other: kind = .internet
+    }
+    return RouteInfo(kind: kind, address: bareHost(host))
+}

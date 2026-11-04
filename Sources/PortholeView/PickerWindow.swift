@@ -25,6 +25,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     private var scrollTopBelowRecent: NSLayoutConstraint?
     var recents: () -> [RecentPortal] = { [] }
     var hostAddress = ""
+    var route: String? { didSet { if route != oldValue { render() } } }
     var onThumbsWanted: (() -> Void)?
     var onIconWanted: ((UInt32) -> Void)?
 
@@ -275,7 +276,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
             statusIcon.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7, weight: .regular))
             statusIcon.contentTintColor = loaded ? .systemGreen : .tertiaryLabelColor
-            statusLabel.stringValue = loaded ? "Connected to \(hostName)" : "Connecting to \(hostName)…"
+            statusLabel.stringValue = loaded ? "Connected to \(hostName)\(route.map { " · \($0)" } ?? "")" : "Connecting to \(hostName)…"
             statusLabel.toolTip = nil
         }
     }

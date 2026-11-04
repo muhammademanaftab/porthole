@@ -7,6 +7,13 @@ import PortholeCore
 final class Connection: NSObject, RoomDelegate {
     let hostAddress: String
     let credential: ViewerCredential
+    let hostID: String?
+    private(set) var activeAddress: String?
+    private(set) var route: RouteInfo?
+    var onRoute: ((RouteInfo?) -> Void)?
+    private var activeScope: AddressScope?
+    private var sdkReconnecting = false
+    private var routeTask: Task<Void, Never>?
     let room = Room()
     var onWindows: (([WindowInfo]) -> Void)?
     var onError: ((String) -> Void)?
@@ -33,9 +40,10 @@ final class Connection: NSObject, RoomDelegate {
     private var attempt = 0
     private var connectedAt: Date?
 
-    init(hostAddress: String, credential: ViewerCredential) {
+    init(hostAddress: String, credential: ViewerCredential, hostID: String? = nil) {
         self.hostAddress = hostAddress
         self.credential = credential
+        self.hostID = hostID
     }
 
     var hostParticipant: RemoteParticipant? {
@@ -45,7 +53,7 @@ final class Connection: NSObject, RoomDelegate {
     func connect() async throws {
         do {
             try await connectOnce()
-            VLog.info("connected to \(hostAddress)")
+            VLog.info("connected to \(hostAddress)\(activeAddress.map { $0 == hostAddress ? "" : " via \($0)" } ?? "")")
         } catch {
             if !(error is CancellationError) { VLog.warn("connect to \(hostAddress) failed: \(error.localizedDescription)") }
             throw error
@@ -53,12 +61,49 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     private func connectOnce() async throws {
-        guard let tokenAt = tokenURL(hostAddress: hostAddress, credential: credential,
-                                 name: shortHostName(ProcessInfo.processInfo.hostName)) else {
-            throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
-                "\"\(hostAddress)\" isn't a host address. Use a name or IP, optionally with :port."])
+        let mode = RouteFinder.mode()
+        let plan = await RouteFinder.plan(saved: hostAddress, hostID: hostID, mode: mode)
+        guard !closing else { throw CancellationError() }
+        guard !plan.isEmpty else {
+            throw NSError(domain: "Porthole", code: 404, userInfo: [NSLocalizedDescriptionKey: RoutePlan.noRouteMessage(mode: mode, hostName: hostAddress)])
         }
-        let (data, resp) = try await URLSession.shared.data(from: tokenAt)
+        VLog.info("route: \(mode.rawValue) mode, trying \(plan.map(\.address).joined(separator: ", "))")
+        var lastError: Error?
+        for (i, candidate) in plan.enumerated() {
+            guard !closing else { throw CancellationError() }
+            let next = i + 1 < plan.count ? plan[i + 1].address : nil
+            if let expected = candidate.expectedID {
+                let hello = await RouteFinder.hello(candidate.address, budget: candidate.budget ?? RoutePlan.fallbackBudget)
+                guard RoutePlan.helloConfirms(hello, expectedID: expected) else {
+                    VLog.info("route: \(candidate.address) \(hello == nil ? "didn't answer" : "is a different host")\(next.map { "; trying \($0)" } ?? "")")
+                    continue
+                }
+            }
+            do {
+                try await connect(via: candidate)
+                return
+            } catch let err as NSError where err.domain == "Porthole" && (err.code == 401 || err.code == 403 || err.code == 400) {
+                throw err
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                guard let next else { throw error }
+                VLog.info("route: \(candidate.address) failed (\(error.localizedDescription)); trying \(next)")
+            }
+        }
+        throw lastError ?? NSError(domain: "Porthole", code: 404, userInfo: [NSLocalizedDescriptionKey: RoutePlan.noRouteMessage(mode: mode, hostName: hostAddress)])
+    }
+
+    private func connect(via candidate: RouteCandidate) async throws {
+        guard let tokenAt = tokenURL(hostAddress: candidate.address, credential: credential,
+                                     name: shortHostName(ProcessInfo.processInfo.hostName)) else {
+            throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
+                "\"\(candidate.address)\" isn't a host address. Use a name or IP, optionally with :port."])
+        }
+        var req = URLRequest(url: tokenAt)
+        if let budget = candidate.budget { req.timeoutInterval = budget }
+        let (data, resp) = try await URLSession.shared.data(for: req)
         let url: String, token: String
         switch parseTokenReply(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data) {
         case .ok(let u, let t): url = u; token = t
@@ -68,9 +113,57 @@ final class Connection: NSObject, RoomDelegate {
         try await setUpOnce()
         guard !closing else { throw CancellationError() }
         try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
-                               roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
+                               roomOptions: RoomOptions(adaptiveStream: false, dynacast: false, reportRemoteTrackStatistics: true))
         if closing { await room.disconnect(); throw CancellationError() }
         connectedAt = Date()
+        activeAddress = candidate.address
+        activeScope = candidate.scope
+        VLog.info("route: signaling via \(candidate.address) (\(signalingRoute(address: candidate.address)?.kind.label ?? "unknown"))")
+        if candidate.expectedID != nil, case .device = credential { RouteFinder.learn(hostID: hostID, address: candidate.address) }
+        setRoute(signalingRoute(address: candidate.address), media: false)
+        watchRoute()
+    }
+
+    private var mediaRouteKnown = false
+
+    private func setRoute(_ info: RouteInfo?, media: Bool) {
+        if !media && mediaRouteKnown { return }
+        if media { mediaRouteKnown = true }
+        guard info != route else { return }
+        route = info
+        if media, let info { VLog.info("route: \(info.text), signaling via \(activeAddress ?? hostAddress)") }
+        onRoute?(info)
+    }
+
+    private func watchRoute() {
+        guard routeTask == nil else { return }
+        routeTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let wait = await self?.checkRoute() else { return }
+                try? await Task.sleep(nanoseconds: wait * 1_000_000_000)
+            }
+        }
+    }
+
+    private func checkRoute() async -> UInt64? {
+        guard !closing else { return nil }
+        await refreshMediaRoute()
+        return mediaRouteKnown ? 15 : 2
+    }
+
+    private func refreshMediaRoute() async {
+        guard !sdkReconnecting, !reconnecting else { return }
+        let tracks = hostParticipant?.trackPublications.values.compactMap { ($0 as? RemoteTrackPublication)?.track as? RemoteVideoTrack } ?? []
+        guard let stats = tracks.lazy.compactMap(\.statistics).first(where: { $0.remoteIceCandidate?.address != nil }),
+              let info = await RouteFinder.mediaRoute(stats) else { return }
+        setRoute(info, media: true)
+    }
+
+    private func forgetRoute() {
+        mediaRouteKnown = false
+        activeAddress = nil
+        activeScope = nil
+        setRoute(nil, media: false)
     }
 
     private func setUpOnce() async throws {
@@ -107,10 +200,12 @@ final class Connection: NSObject, RoomDelegate {
         }
     }
 
-    private func reconnect() async {
+    private func reconnect(dropFirst: Bool = false) async {
         guard !reconnecting else { return }
         reconnecting = true
         defer { reconnecting = false }
+        if dropFirst { await room.disconnect() }
+        forgetRoute()
         onLink?(.reconnecting)
         VLog.info("lost the connection to \(hostAddress); reconnecting")
         onError?("Lost the connection to the host. Reconnecting…")
@@ -170,6 +265,7 @@ final class Connection: NSObject, RoomDelegate {
 
     func disconnect() async {
         closing = true
+        routeTask?.cancel()
         outbox.finish()
         await room.disconnect()
     }
@@ -312,7 +408,7 @@ final class Connection: NSObject, RoomDelegate {
         let kind = Self.kind(of: error)
         let text = "Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")"
         Task { @MainActor in
-            guard !self.closing else { return }
+            guard !self.closing, !self.reconnecting else { return }
             VLog.info("disconnected from \(self.hostAddress): \(kind)")
             if reconnectDelay(after: kind, attempt: 1) != nil { await self.reconnect(); return }
             self.onLink?(.disconnected(text))
@@ -321,10 +417,31 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, didStartReconnectWithMode reconnectMode: ReconnectMode) {
-        Task { @MainActor in if !self.closing { self.onLink?(.reconnecting) } }
+        Task { @MainActor in
+            guard !self.closing else { return }
+            self.sdkReconnecting = true
+            self.onLink?(.reconnecting)
+            self.checkLocalRouteStillThere()
+        }
     }
 
     nonisolated func room(_ room: Room, didCompleteReconnectWithMode reconnectMode: ReconnectMode) {
-        Task { @MainActor in if !self.closing { self.onLink?(.connected) } }
+        Task { @MainActor in
+            self.sdkReconnecting = false
+            if !self.closing { self.onLink?(.connected) }
+        }
+    }
+
+    private func checkLocalRouteStillThere() {
+        guard let address = activeAddress, activeScope == .local else { return }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self, self.sdkReconnecting, !self.closing, !self.reconnecting, self.activeAddress == address else { return }
+            if await RouteFinder.hello(address, budget: RoutePlan.localBudget) != nil { return }
+            guard self.sdkReconnecting, !self.closing, !self.reconnecting, self.activeAddress == address else { return }
+            VLog.info("route: \(address) stopped answering while reconnecting; picking a route again")
+            self.sdkReconnecting = false
+            await self.reconnect(dropFirst: true)
+        }
     }
 }

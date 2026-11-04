@@ -138,6 +138,7 @@ class ViewerPane: NSViewController {
 final class ViewerGeneralPane: ViewerPane {
     private let sound = NSButton(checkboxWithTitle: "Play sound from shared windows", target: nil, action: nil)
     private let effects = NSButton(checkboxWithTitle: "Play sound effects", target: nil, action: nil)
+    private var route: NSPopUpButton!
 
     override func loadView() {
         title = "General"
@@ -147,20 +148,29 @@ final class ViewerGeneralPane: ViewerPane {
         effects.target = self
         effects.action = #selector(toggleEffects)
         effects.state = ViewerSettingsWindow.current.soundEffects ? .on : .off
+        route = ViewerForm.popUp(RouteMode.allCases, label: \.label, selected: ViewerSettingsWindow.current.route,
+                                 target: self, action: #selector(changeRoute))
         let grid = ViewerForm.grid([
             [NSTextField(labelWithString: "Sound:"),
              ViewerForm.column([sound, ViewerForm.note("Same as Mute Host Sound in the Porthole menu. The host only sends sound while one of its windows is open here.")])],
             [NSTextField(labelWithString: "Sound Effects:"),
              ViewerForm.column([effects, ViewerForm.note("A quiet sound when a shared window opens or closes, and when pairing works or fails. macOS's \"Play user interface sound effects\" being off silences them too.")])],
+            [NSTextField(labelWithString: "Connection:"),
+             ViewerForm.column([route, ViewerForm.note("Automatic tries the host on this network first and falls back to its saved or Tailscale address. Used from the next connect or reconnect. The route in use is in the Window menu.")])],
         ])
         view = ViewerForm.pane(grid)
     }
 
     @objc private func toggleSound() { update { $0.playSound = sound.state == .on } }
     @objc private func toggleEffects() { update { $0.soundEffects = effects.state == .on } }
+    @objc private func changeRoute() { update { $0.route = RouteMode.allCases[route.selectedTag()] } }
 
     func reflect(_ s: ViewerSettings) {
-        if isViewLoaded { sound.state = s.playSound ? .on : .off; effects.state = s.soundEffects ? .on : .off }
+        if isViewLoaded {
+            sound.state = s.playSound ? .on : .off
+            effects.state = s.soundEffects ? .on : .off
+            route.selectItem(withTag: RouteMode.allCases.firstIndex(of: s.route) ?? 0)
+        }
     }
 }
 
