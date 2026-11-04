@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { addressScope, routeKind, selectedRoute, ROUTE_LABELS } = require('../porthole-core.js');
+const { addressScope, routeKind, selectedRoute, sameIPv6Subnet, ROUTE_LABELS } = require('../porthole-core.js');
 
 test('addressScope sorts LAN, Tailscale, loopback and the rest like the Swift side', () => {
   const cases = {
@@ -69,4 +69,25 @@ test('index.html shows the route in the bar from the video track stats', () => {
   assert.match(html, /getRTCStatsReport/);
   assert.match(html, /PC\.selectedRoute\(/);
   assert.match(html, /watchRoute\(track\)/);
+});
+
+test('global IPv6 host candidates on the same /64 are the same network', () => {
+  assert.equal(routeKind('2a01:4f8:1:2::52', 'host', 'host', '2a01:4f8:1:2:aaaa::9'), 'sameNetwork');
+  assert.equal(routeKind('2a01:4f8:1:2::52', 'host', 'host', '2a01:4f8:1:3::9'), 'internet');
+  assert.equal(routeKind('2a01:4f8:1:2::52', 'srflx', 'host', '2a01:4f8:1:2::9'), 'internet');
+  assert.equal(routeKind('2a01:4f8:1:2::52', 'host', 'host', 'abcd.local'), 'internet');
+  assert.equal(sameIPv6Subnet('2a01:04f8:0001:0002:0:0:0:52', '[2a01:4f8:1:2::9%en0]'), true);
+  assert.equal(sameIPv6Subnet('::ffff:8.8.8.8', '::ffff:8.8.4.4'), false);
+  assert.equal(sameIPv6Subnet('1:2:3:4:5:6:7:8:9', '1:2:3:4::1'), false);
+  assert.equal(sameIPv6Subnet('1::2::3', '1::3'), false);
+});
+
+test('selectedRoute passes the local candidate address for the /64 check', () => {
+  const r = selectedRoute([
+    { id: 'T', type: 'transport', selectedCandidatePairId: 'P' },
+    { id: 'P', type: 'candidate-pair', localCandidateId: 'L', remoteCandidateId: 'R' },
+    { id: 'L', type: 'local-candidate', address: '2a01:4f8:1:2::9', candidateType: 'host' },
+    { id: 'R', type: 'remote-candidate', address: '2a01:4f8:1:2::52', candidateType: 'host' },
+  ]);
+  assert.equal(r.kind, 'sameNetwork');
 });

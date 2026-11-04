@@ -36,6 +36,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             return
         }
         listenForOpenRequests()
+        RouteFinder.startBrowsingUnlessTailscaleOnly()
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
             connect(host: host, credential: .password(pw))

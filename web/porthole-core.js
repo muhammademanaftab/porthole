@@ -309,9 +309,31 @@
 
   const ROUTE_LABELS = { thisMac: 'This Mac', sameNetwork: 'Same network', tailscale: 'Tailscale', relayed: 'Relayed', internet: 'Internet' };
 
-  function routeKind(remoteAddress, remoteType, localType) {
+  function ipv6Groups(host) {
+    const h = bareHost(host);
+    if (!h.includes(':') || /[^0-9a-f:]/.test(h)) return null;
+    const halves = h.split('::');
+    if (halves.length > 2) return null;
+    const head = halves[0] ? halves[0].split(':') : [];
+    const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    const fill = 8 - head.length - tail.length;
+    if (halves.length === 1 ? fill !== 0 : fill < 1) return null;
+    const groups = [...head, ...Array(halves.length === 2 ? fill : 0).fill('0'), ...tail];
+    if (groups.length !== 8 || !groups.every(g => /^[0-9a-f]{1,4}$/.test(g))) return null;
+    return groups.map(g => parseInt(g, 16));
+  }
+
+  function sameIPv6Subnet(a, b) {
+    const x = ipv6Groups(a), y = ipv6Groups(b);
+    if (!x || !y || x.slice(0, 5).every(g => g === 0)) return false;
+    return x.slice(0, 4).every((g, i) => g === y[i]);
+  }
+
+  function routeKind(remoteAddress, remoteType, localType, localAddress) {
     if (remoteType === 'relay' || localType === 'relay') return 'relayed';
-    return { loopback: 'thisMac', local: 'sameNetwork', tailscale: 'tailscale', other: 'internet' }[addressScope(remoteAddress)];
+    const kind = { loopback: 'thisMac', local: 'sameNetwork', tailscale: 'tailscale', other: 'internet' }[addressScope(remoteAddress)];
+    if (kind === 'internet' && remoteType === 'host' && localType === 'host' && sameIPv6Subnet(remoteAddress, localAddress)) return 'sameNetwork';
+    return kind;
   }
 
   function selectedRoute(report) {
@@ -324,11 +346,11 @@
     const remote = byId.get(pair.remoteCandidateId), local = byId.get(pair.localCandidateId);
     const address = remote && (remote.address || remote.ip);
     if (!address) return null;
-    const kind = routeKind(address, remote.candidateType, local && local.candidateType);
+    const kind = routeKind(address, remote.candidateType, local && local.candidateType, local && (local.address || local.ip));
     const host = bareHost(address);
     return { kind, address: host, label: ROUTE_LABELS[kind], text: `${ROUTE_LABELS[kind]} (${host})` };
   }
 
-  return { addressScope, routeKind, selectedRoute, ROUTE_LABELS, THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  return { addressScope, routeKind, sameIPv6Subnet, selectedRoute, ROUTE_LABELS, THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });

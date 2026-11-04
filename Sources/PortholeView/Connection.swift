@@ -12,6 +12,7 @@ final class Connection: NSObject, RoomDelegate {
     private(set) var route: RouteInfo?
     var onRoute: ((RouteInfo?) -> Void)?
     private var activeScope: AddressScope?
+    private var activeProven = false
     private var sdkReconnecting = false
     private var routeTask: Task<Void, Never>?
     let room = Room()
@@ -72,15 +73,20 @@ final class Connection: NSObject, RoomDelegate {
         for (i, candidate) in plan.enumerated() {
             guard !closing else { throw CancellationError() }
             let next = i + 1 < plan.count ? plan[i + 1].address : nil
-            if let expected = candidate.expectedID {
-                let hello = await RouteFinder.hello(candidate.address, budget: candidate.budget ?? RoutePlan.fallbackBudget)
-                guard RoutePlan.helloConfirms(hello, expectedID: expected) else {
-                    VLog.info("route: \(candidate.address) \(hello == nil ? "didn't answer" : "is a different host")\(next.map { "; trying \($0)" } ?? "")")
-                    continue
+            var confirmed = candidate.trustedWithoutProof
+            if candidate.shouldChallenge {
+                switch await RouteFinder.challenge(candidate.address, credential: credential, expectedID: candidate.expectedID, budget: candidate.budget) {
+                case .confirmed: confirmed = true
+                case .unconfirmed(let hello):
+                    if candidate.mustProve {
+                        VLog.info("route: \(candidate.address) \(hello == nil ? "didn't answer" : "couldn't prove it is this host")\(next.map { "; trying \($0)" } ?? "")")
+                        continue
+                    }
+                    VLog.info("route: saved address \(candidate.address) couldn't prove it is this host; trying it, but a refusal from it won't count")
                 }
             }
             do {
-                try await connect(via: candidate)
+                try await connect(via: candidate, confirmed: confirmed)
                 return
             } catch let err as NSError where err.domain == "Porthole" && (err.code == 401 || err.code == 403 || err.code == 400) {
                 throw err
@@ -95,32 +101,35 @@ final class Connection: NSObject, RoomDelegate {
         throw lastError ?? NSError(domain: "Porthole", code: 404, userInfo: [NSLocalizedDescriptionKey: RoutePlan.noRouteMessage(mode: mode, hostName: hostAddress)])
     }
 
-    private func connect(via candidate: RouteCandidate) async throws {
+    private func connect(via candidate: RouteCandidate, confirmed: Bool) async throws {
         guard let tokenAt = tokenURL(hostAddress: candidate.address, credential: credential,
                                      name: shortHostName(ProcessInfo.processInfo.hostName)) else {
             throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
                 "\"\(candidate.address)\" isn't a host address. Use a name or IP, optionally with :port."])
         }
-        var req = URLRequest(url: tokenAt)
-        if let budget = candidate.budget { req.timeoutInterval = budget }
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (status, data) = try await RouteFinder.fetch(tokenAt, budget: candidate.budget)
         let url: String, token: String
-        switch parseTokenReply(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data) {
+        switch parseTokenReply(status: status, body: data) {
         case .ok(let u, let t): url = u; token = t
-        case .unpaired(let why): throw NSError(domain: "Porthole", code: 403, userInfo: [NSLocalizedDescriptionKey: why])
-        case .refused(let why): throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: why])
+        case .unpaired(let why) where RoutePlan.stops(status: status, confirmed: confirmed):
+            throw NSError(domain: "Porthole", code: 403, userInfo: [NSLocalizedDescriptionKey: why])
+        case .refused(let why) where RoutePlan.stops(status: status, confirmed: confirmed):
+            throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: why])
+        case .unpaired, .refused:
+            throw NSError(domain: "Porthole", code: 502, userInfo: [NSLocalizedDescriptionKey:
+                "\(candidate.address) answered HTTP \(status) and couldn't be confirmed as this host."])
         }
         try await setUpOnce()
         guard !closing else { throw CancellationError() }
         try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
-                               roomOptions: RoomOptions(adaptiveStream: false, dynacast: false, reportRemoteTrackStatistics: true))
+                               roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
         if closing { await room.disconnect(); throw CancellationError() }
         connectedAt = Date()
         sdkReconnecting = false
         activeAddress = candidate.address
         activeScope = candidate.scope
-        VLog.info("route: signaling via \(candidate.address) (\(signalingRoute(address: candidate.address)?.kind.label ?? "unknown"))")
-        if candidate.expectedID != nil, case .device = credential { RouteFinder.learn(hostID: hostID, address: candidate.address) }
+        activeProven = confirmed && candidate.shouldChallenge
+        VLog.info("route: signaling via \(candidate.address) (\(signalingRoute(address: candidate.address)?.kind.label ?? "unknown"))\(confirmed ? "" : ", unconfirmed")")
         setRoute(signalingRoute(address: candidate.address), media: false)
         watchRoute()
     }
@@ -155,8 +164,7 @@ final class Connection: NSObject, RoomDelegate {
     private func refreshMediaRoute() async {
         guard !sdkReconnecting, !reconnecting else { return }
         let tracks = hostParticipant?.trackPublications.values.compactMap { ($0 as? RemoteTrackPublication)?.track as? RemoteVideoTrack } ?? []
-        guard let stats = tracks.lazy.compactMap(\.statistics).first(where: { $0.remoteIceCandidate?.address != nil }),
-              let info = await RouteFinder.mediaRoute(stats) else { return }
+        guard let track = tracks.first, let info = await RouteFinder.mediaRoute(of: track) else { return }
         setRoute(info, media: true)
     }
 
@@ -164,6 +172,7 @@ final class Connection: NSObject, RoomDelegate {
         mediaRouteKnown = false
         activeAddress = nil
         activeScope = nil
+        activeProven = false
         setRoute(nil, media: false)
     }
 
@@ -434,11 +443,12 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     private func checkLocalRouteStillThere() {
-        guard let address = activeAddress, activeScope == .local else { return }
+        guard let address = activeAddress, activeScope == .local, activeProven else { return }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard let self, self.sdkReconnecting, !self.closing, !self.reconnecting, self.activeAddress == address else { return }
-            if await RouteFinder.hello(address, budget: RoutePlan.localBudget) != nil { return }
+            if case .confirmed = await RouteFinder.challenge(address, credential: self.credential, expectedID: self.hostID.flatMap { DeviceIdentity.isValidID($0) ? $0 : nil },
+                                                             budget: RoutePlan.localBudget) { return }
             guard self.sdkReconnecting, !self.closing, !self.reconnecting, self.activeAddress == address else { return }
             VLog.info("route: \(address) stopped answering while reconnecting; picking a route again")
             self.sdkReconnecting = false
