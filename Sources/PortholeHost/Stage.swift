@@ -119,6 +119,21 @@ final class Stage {
         return NSScreen.screens.first { ($0.deviceDescription[key] as? NSNumber)?.uint32Value == id }?.backingScaleFactor ?? 1
     }
 
+    static let fullscreenPolicy = FullscreenPolicy(environment: ProcessInfo.processInfo.environment)
+
+    func leaveFullscreen(_ id: UInt32) async {
+        guard let live = LiveWindow.lookup(id), let w = AXWindows.window(id: id, pid: live.pid),
+              Self.fullscreenPolicy.shouldExit(isFullscreen: AXWindows.isFullscreen(w) == true) else { return }
+        guard AXWindows.setFullscreen(w, false) else { Log.info("fullscreen: could not take window \(id) out of full screen"); return }
+        let deadline = Date().addingTimeInterval(FullscreenPolicy.exitTimeout)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if FullscreenPolicy.exitDone(stillFullscreen: AXWindows.isFullscreen(w), before: live.bounds, now: LiveWindow.lookup(id)?.bounds) { break }
+        }
+        try? await Task.sleep(nanoseconds: UInt64(FullscreenPolicy.settleSeconds * 1_000_000_000))
+        Log.info("fullscreen: window \(id) left full screen, now \(LiveWindow.lookup(id)?.bounds ?? .zero)")
+    }
+
     func park(_ id: UInt32) async {
         guard let stage = bounds, parked[id] == nil, let live = LiveWindow.lookup(id),
               let w = AXWindows.window(id: id, pid: live.pid), let home = AXWindows.position(w) else { return }

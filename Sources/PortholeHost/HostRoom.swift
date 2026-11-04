@@ -226,6 +226,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 let stage = stage, room = room
                 let task = starting.begin(id) { @MainActor in
                     if !companion {
+                        await stage.leaveFullscreen(id)
                         await stage.ensure(screenPoints: screen)
                         await stage.park(id)
                     }

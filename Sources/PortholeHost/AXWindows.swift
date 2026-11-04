@@ -1,4 +1,5 @@
 import ApplicationServices
+import Foundation
 
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
@@ -35,6 +36,17 @@ enum AXWindows {
             out.insert(id)
         }
         return out
+    }
+
+    static func isFullscreen(_ w: AXUIElement) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(w, "AXFullScreen" as CFString, &value) == .success else { return nil }
+        return (value as? NSNumber)?.boolValue
+    }
+
+    @discardableResult
+    static func setFullscreen(_ w: AXUIElement, _ on: Bool) -> Bool {
+        AXUIElementSetAttributeValue(w, "AXFullScreen" as CFString, (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef) == .success
     }
 
     static func string(_ e: AXUIElement, _ attribute: String) -> String? {

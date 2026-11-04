@@ -53,3 +53,32 @@ public enum StageLayout {
             .max { modes[$0].width * modes[$0].height < modes[$1].width * modes[$1].height }
     }
 }
+
+public enum FullscreenPolicy: String, Equatable, Sendable {
+    case stage, leave
+
+    public static let envKey = "PORTHOLE_FULLSCREEN_POLICY"
+    public static let exitTimeout: Double = 3
+    public static let settleSeconds: Double = 0.3
+
+    public init(environment: [String: String]) {
+        self = environment[Self.envKey].flatMap { FullscreenPolicy(rawValue: $0.lowercased()) } ?? .stage
+    }
+
+    public func shouldExit(isFullscreen: Bool) -> Bool { self == .stage && isFullscreen }
+
+    public static func looksFullscreen(_ bounds: CGRect, displays: [CGRect]) -> Bool {
+        displays.contains { abs($0.minX - bounds.minX) < 1 && abs($0.minY - bounds.minY) < 1
+            && abs($0.width - bounds.width) < 1 && abs($0.height - bounds.height) < 1 }
+    }
+
+    public static func listed(onScreen: Bool, bounds: CGRect, displays: [CGRect]) -> Bool {
+        onScreen || looksFullscreen(bounds, displays: displays)
+    }
+
+    public static func exitDone(stillFullscreen: Bool?, before: CGRect, now: CGRect?) -> Bool {
+        guard stillFullscreen == false else { return false }
+        guard let now else { return true }
+        return now != before
+    }
+}
