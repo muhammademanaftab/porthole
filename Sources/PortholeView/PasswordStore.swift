@@ -96,8 +96,7 @@ enum PasswordStore {
         return password(for: address).map { (.password($0), nil) }
     }
 
-    static func hasAccess(_ host: DiscoveredHost) -> Bool {
-        if let paired = trust.host(for: host), secret(forHost: paired.id) != nil { return true }
-        return host.addresses.contains { password(for: $0) != nil }
+    static func hasAccess(_ host: DiscoveredHost, address: String) -> Bool {
+        credential(for: address) != nil
     }
 }

@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'ensureRandomUUID', 'isAudioTrack', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'ensureRandomUUID', 'isAudioTrack', 'keyMessages', 'mods', 'norm', 'pasteKeys', 'pickerStatus', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
     assert.equal(html.includes(copy), false, copy);
@@ -431,4 +431,24 @@ test('ensureRandomUUID fills in randomUUID only where the browser lacks it (plai
   core.ensureRandomUUID(secure);
   assert.equal(secure.randomUUID, native);
   assert.equal(core.ensureRandomUUID(undefined), undefined);
+});
+
+test('reconnectDelay retries a lost connection with backoff and gives up after the last delay', () => {
+  assert.equal(core.reconnectDelay(0, 1), 1000);
+  assert.equal(core.reconnectDelay(14, 2), 2000);
+  assert.equal(core.reconnectDelay(undefined, 3), 4000);
+  assert.equal(core.reconnectDelay(3, core.RECONNECT_DELAYS.length), 30000);
+  assert.equal(core.reconnectDelay(0, core.RECONNECT_DELAYS.length + 1), null);
+  assert.equal(core.reconnectDelay(0, 0), null);
+});
+
+test('reconnectDelay never reconnects after the viewer left, was removed, replaced, or the room ended', () => {
+  for (const reason of [1, 2, 4, 5, 10]) assert.equal(core.reconnectDelay(reason, 1), null, `reason ${reason}`);
+});
+
+test('index.html reconnects by reloading after a lost connection and clears the count once connected', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /PC\.reconnectDelay\(reason, attempt\)/);
+  assert.match(html, /location\.reload\(\)/);
+  assert.ok(html.indexOf("sessionStorage.removeItem('reconnects')") > html.indexOf('await room.connect(url, token'));
 });

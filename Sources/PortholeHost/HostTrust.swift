@@ -76,10 +76,18 @@ final class HostTrust: NSObject, RoomDelegate {
 
     private func remove(_ identity: String) async {
         let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
-        let token = keys.make(identity: "host-admin", room: "porthole", canPublish: false, ttl: 60, roomAdmin: true)
-        guard let req = removeParticipantRequest(livekitPort: config.livekitPort, token: token, room: "porthole", identity: identity) else { return }
-        let status = (try? await URLSession.shared.data(for: req)).flatMap { ($0.1 as? HTTPURLResponse)?.statusCode }
-        Log.info("disconnected \(identity) after unpairing (status \(status.map(String.init) ?? "none"))")
+        var attempt = 0
+        while true {
+            let token = keys.make(identity: "host-admin", room: "porthole", canPublish: false, ttl: 60, roomAdmin: true)
+            guard let req = removeParticipantRequest(livekitPort: config.livekitPort, token: token, room: "porthole", identity: identity) else { return }
+            let status = (try? await URLSession.shared.data(for: req)).flatMap { ($0.1 as? HTTPURLResponse)?.statusCode }
+            attempt += 1
+            guard let delay = removeRetryDelay(status: status, attempt: attempt) else {
+                Log.info("disconnected \(identity) after unpairing (status \(status.map(String.init) ?? "none"), \(attempt) \(attempt == 1 ? "try" : "tries"))")
+                return
+            }
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
     }
 
     nonisolated func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {

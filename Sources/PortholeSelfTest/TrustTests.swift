@@ -37,6 +37,8 @@ func trustTests() {
     viewerSideTests()
     commandTests()
     budgetTests()
+    lockoutTests()
+    privateFileTests()
 }
 
 private func identityTests() {
@@ -185,8 +187,9 @@ private func requestStateTests() {
            codes.request(from: a, now: t0.addingTimeInterval(5), random: { 222_222 }), .same("111111"))
     expect("request: asking again does not extend the code", codes.state(now: t0.addingTimeInterval(60)),
            .active(code: "111111", secondsLeft: 60))
-    expect("request: another Mac's code does not redeem from here", codes.redeem("111111", device: viewerB, now: t0), .wrong(left: 4))
-    expect("request: no device id does not redeem a bound code", codes.redeem("111111", now: t0), .wrong(left: 3))
+    expect("request: another Mac's code does not redeem from here", codes.redeem("111111", device: viewerB, now: t0), .wrong(left: 5))
+    expect("request: no device id does not redeem a bound code", codes.redeem("111111", now: t0), .wrong(left: 5))
+    expect("request: guesses from other Macs touch neither the tries nor the budget", codes.budget, GuessBudget())
     expect("request: the requester redeems its code", codes.redeem("111111", device: viewerA, now: t0), .accepted)
     expect("request: requester is kept after use for the host's message", codes.requester, a)
 
@@ -512,33 +515,40 @@ private func budgetTests() {
     }
     check("budget: a month of nonstop guessing gets at most 400 tries (\(guesses), at most 0.04% of the codes)", guesses <= 400)
 
+    let c = "cccccccccccccccc"
     var codes = PairingCodes()
-    _ = codes.issue(now: t0, random: { 123_456 })
-    for _ in 0..<4 { _ = codes.redeem("000000", now: t0) }
-    _ = codes.issue(now: t0, random: { 123_456 })
-    for _ in 0..<4 { _ = codes.redeem("000000", now: t0) }
-    _ = codes.issue(now: t0, random: { 123_456 })
-    _ = codes.redeem("000000", now: t0)
-    expect("budget: wrong guesses add up across codes", codes.redeem("000000", now: t0), .wrong(left: 3))
-    expect("budget: when paused even the right code is refused", codes.redeem("123456", now: t0), .paused(seconds: 60))
+    _ = codes.request(from: PairRequester(id: viewerA, name: "A"), now: t0, random: { 123_456 })
+    for _ in 0..<4 { _ = codes.redeem("000000", device: viewerA, now: t0) }
+    codes.cancel()
+    _ = codes.request(from: PairRequester(id: viewerB, name: "B"), now: t0, random: { 123_456 })
+    for _ in 0..<4 { _ = codes.redeem("000000", device: viewerB, now: t0) }
+    codes.cancel()
+    _ = codes.request(from: PairRequester(id: c, name: "C"), now: t0, random: { 123_456 })
+    _ = codes.redeem("000000", device: c, now: t0)
+    expect("budget: wrong guesses add up across requested codes", codes.redeem("000000", device: c, now: t0), .wrong(left: 3))
+    expect("budget: when paused even the right requested code is refused", codes.redeem("123456", device: c, now: t0), .paused(seconds: 60))
     expect("budget: a paused try does not burn the code", codes.state(now: t0), .active(code: "123456", secondsLeft: 120))
-    expect("budget: after the pause the right code works", codes.redeem("123456", now: t0.addingTimeInterval(60)), .accepted)
+    expect("budget: after the pause the right code works", codes.redeem("123456", device: c, now: t0.addingTimeInterval(60)), .accepted)
     expect("pair message: paused", pairMessage(.paused(seconds: 61)), "Too many wrong codes on this host. Pairing is paused for 2 minutes.")
 
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
     let file = dir.appendingPathComponent("pairing-budget.json")
     let desk = PairingDesk(clock: { t0 }, random: { 5 }, budgetFile: file)
-    for _ in 0..<GuessBudget.wrongPerPause {
-        if desk.state() == .locked || desk.state() == .idle { _ = desk.issue() }
-        _ = desk.redeem("999999")
+    for who in [viewerA, viewerB] {
+        _ = desk.request(from: PairRequester(id: who, name: "x"))
+        for _ in 0..<PairingCodes.maxWrongTries { _ = desk.redeem("999999", device: who) }
     }
     expect("budget file: written 0600", mode(file), 0o600)
     let restarted = PairingDesk(clock: { t0.addingTimeInterval(10) }, random: { 5 }, budgetFile: file)
-    _ = restarted.issue()
-    expect("budget file: a restarted host is still paused", restarted.redeem("000005"), .paused(seconds: 50))
+    expect("budget file: a restarted host still refuses remote requests",
+           restarted.request(from: PairRequester(id: c, name: "C")), .paused(seconds: 50))
     expect("budget: garbage file starts fresh", GuessBudget.decode(Data("x".utf8)), GuessBudget())
     expect("budget: encode round trip", GuessBudget.decode(restarted.budget.encoded), restarted.budget)
+    _ = restarted.issue()
+    expect("budget file: the owner's new code clears the pause on disk",
+           GuessBudget.decode(try? Data(contentsOf: file)).secondsPaused(now: t0.addingTimeInterval(10)), nil)
+    expect("budget file: and that code pairs at once", restarted.redeem("000005", device: c), .accepted)
 
     var revoked = RevokedDevices()
     let ident = pairedIdentity(name: "air", suffix: "s", device: viewerA)
@@ -558,4 +568,151 @@ private func budgetTests() {
     expect("local secret: file is 0600", mode(sdir.appendingPathComponent(LocalSecret.fileName)), 0o600)
     _ = LocalSecret.create(in: sdir, secret: "short")
     expect("local secret: a short value is not trusted", LocalSecret.read(in: sdir), nil)
+}
+
+private func pausedCodes(_ t0: Date) -> PairingCodes {
+    var codes = PairingCodes()
+    let ids = ["1111111111111111", "2222222222222222", "3333333333333333"]
+    for id in ids.prefix(2) {
+        _ = codes.request(from: PairRequester(id: id, name: "x"), now: t0, random: { 424_242 })
+        for _ in 0..<PairingCodes.maxWrongTries { _ = codes.redeem("000000", device: id, now: t0) }
+    }
+    return codes
+}
+
+private func lockoutTests() {
+    let t0 = Date(timeIntervalSince1970: 300_000)
+    let a = PairRequester(id: viewerA, name: "Air")
+    let b = PairRequester(id: viewerB, name: "Studio")
+
+    var attacked = pausedCodes(t0)
+    expect("lockout: ten wrong guesses pause remote requests", attacked.request(from: a, now: t0, random: { 1 }), .paused(seconds: 60))
+    expect("lockout: a paused request issues no code", attacked.state(now: t0), .locked)
+    expect("lockout: the owner's menu code is issued while paused", attacked.issue(now: t0, random: { 777_000 }), "777000")
+    expect("lockout: the owner's code clears the pause", attacked.budget.secondsPaused(now: t0), nil)
+    expect("lockout: the owner's code clears the strikes", attacked.budget.strikes, 0)
+    check("lockout: the escalation count is kept for the next attacker", attacked.budget.pauses == 1)
+    expect("lockout: the owner's code pairs at once", attacked.redeem("777000", device: viewerA, now: t0), .accepted)
+
+    var hammered = pausedCodes(t0)
+    _ = hammered.issue(now: t0, random: { 555_000 })
+    for _ in 0..<4 { _ = hammered.redeem("000000", device: viewerB, now: t0) }
+    hammered.budget.pausedUntil = t0.addingTimeInterval(86_400)
+    expect("lockout: an owner code is never refused by the pause", hammered.redeem("555000", device: viewerA, now: t0), .accepted)
+
+    var cli = pausedCodes(t0)
+    expect("lockout: porthole-host paircode issues a code while paused", cli.currentOrIssue(now: t0, random: { 808_080 }), "808080")
+    expect("lockout: porthole-host paircode clears the pause", cli.budget.secondsPaused(now: t0), nil)
+    expect("lockout: the paircode code pairs", cli.redeem("808080", device: viewerB, now: t0), .accepted)
+
+    var requested = PairingCodes()
+    _ = requested.request(from: a, now: t0, random: { 919_191 })
+    requested.budget.pausedUntil = t0.addingTimeInterval(600)
+    expect("lockout: a requested code is subject to the pause", requested.redeem("919191", device: viewerA, now: t0), .paused(seconds: 600))
+    expect("lockout: paircode shows that pending code and lifts the pause for it",
+           requested.currentOrIssue(now: t0, random: { 1 }), "919191")
+    expect("lockout: then the requester pairs", requested.redeem("919191", device: viewerA, now: t0), .accepted)
+
+    var stranger = PairingCodes()
+    _ = stranger.request(from: a, now: t0, random: { 343_434 })
+    for _ in 0..<50 { _ = stranger.redeem("000000", device: viewerB, now: t0) }
+    expect("lockout: fifty guesses from another Mac leave the budget alone", stranger.budget, GuessBudget())
+    expect("lockout: and do not lock the requester's code", stranger.state(now: t0), .active(code: "343434", secondsLeft: 120))
+    expect("lockout: the requester still pairs", stranger.redeem("343434", device: viewerA, now: t0), .accepted)
+
+    var flood = PairingCodes()
+    var mine: [PairingCodes.RequestOutcome] = []
+    for i in 0..<4 {
+        mine.append(flood.request(from: a, now: t0.addingTimeInterval(Double(i)), random: { UInt32(i) }))
+        flood.cancel()
+    }
+    expect("per-device limit: one Mac gets at most 3 codes per 10 minutes", mine.last, .throttled)
+    check("per-device limit: its first 3 were issued", mine.prefix(3).allSatisfy { if case .issued = $0 { return true }; return false })
+    expect("per-device limit: another Mac can still ask", flood.request(from: b, now: t0.addingTimeInterval(5), random: { 9 }), .issued("000009"))
+    flood.cancel()
+    expect("per-device limit: the Mac may ask again after 10 minutes",
+           flood.request(from: a, now: t0.addingTimeInterval(PairingCodes.requestWindow), random: { 8 }), .issued("000008"))
+
+    let keys = AccessToken(apiKey: "key", apiSecret: "secret")
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var clock = t0
+    let desk = PairingDesk(clock: { clock }, random: { 246_246 })
+    let routes = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: keys, webRoot: nil, pairing: desk, hostName: "Mini",
+                           trust: TrustStore(directory: dir))
+    _ = routes.respond(to: get("/pair/request?device=\(viewerA)&name=A"))
+    let busy = routes.respond(to: get("/pair/request?device=\(viewerB)&name=B"))
+    expect("busy reply: tells the owner how to get past it", body(busy)?["error"] as? String,
+           "Another Mac is pairing with Mini right now. Try again in 120 s, or choose Pair a New Viewer… on the host and enter that code.")
+    let before = desk.budget
+    let foreign = routes.respond(to: get("/pair?code=246246&device=\(viewerB)&name=B"))
+    check("pair route: another Mac's guess is refused", foreign.status == "403 Forbidden" && body(foreign)?["secret"] == nil)
+    expect("pair route: another Mac's guess leaves the budget alone", desk.budget, before)
+    desk.cancel()
+    for who in ["1111111111111111", "2222222222222222"] {
+        _ = desk.request(from: PairRequester(id: who, name: "x"))
+        for _ in 0..<PairingCodes.maxWrongTries { _ = desk.redeem("000000", device: who) }
+    }
+    clock = t0.addingTimeInterval(1)
+    let paused = routes.respond(to: get("/pair/request?device=\(viewerA)&name=A"))
+    check("paused request route: 429 that names the way out", paused.status == "429 Too Many Requests"
+          && body(paused)?["error"] as? String == "Too many wrong codes on Mini. Pairing requests are paused for 1 minute, or choose Pair a New Viewer… on the host and enter that code.")
+    _ = desk.issue()
+    let owner = routes.respond(to: get("/pair?code=246246&device=\(viewerB)&name=B"))
+    check("pair route: the owner's menu code works while remote requests are paused", owner.status == "200 OK" && body(owner)?["secret"] != nil)
+
+    expect("token auth: right password", authorizeToken(query: ["pw": "pw-123"], password: "pw-123", verify: { _, _ in nil }), .password)
+    expect("token auth: a longer password is refused", authorizeToken(query: ["pw": "pw-1234"], password: "pw-123", verify: { _, _ in nil }), .refused)
+    expect("token auth: same length, wrong password", authorizeToken(query: ["pw": "pw-124"], password: "pw-123", verify: { _, _ in nil }), .refused)
+    expect("token auth: device with the password fallback",
+           authorizeToken(query: ["device": viewerA, "pw": "pw-123"], password: "pw-123", verify: { _, _ in nil }), .password)
+    expect("token auth: device with a wrong password fallback",
+           authorizeToken(query: ["device": viewerA, "pw": "pw-12"], password: "pw-123", verify: { _, _ in nil }), .unpaired)
+
+    expect("remove retry: success stops", removeRetryDelay(status: 200, attempt: 1), nil)
+    expect("remove retry: already gone stops", removeRetryDelay(status: 404, attempt: 1), nil)
+    expect("remove retry: no answer retries soon", removeRetryDelay(status: nil, attempt: 1), 0.5)
+    expect("remove retry: server error backs off", removeRetryDelay(status: 500, attempt: 3), 2)
+    expect("remove retry: gives up after 5 tries", removeRetryDelay(status: 500, attempt: 5), nil)
+
+    expect("reconnect: a lost connection retries after 1 s", reconnectDelay(after: .lost, attempt: 1), 1)
+    expect("reconnect: backs off to 30 s", reconnectDelay(after: .lost, attempt: 6), 30)
+    expect("reconnect: gives up after the last delay", reconnectDelay(after: .lost, attempt: reconnectDelays.count + 1), nil)
+    check("reconnect: keeps trying for over 2 minutes after a wake", reconnectDelays.reduce(0, +) >= 120)
+    for kind in [DisconnectKind.byViewer, .removed, .replaced, .roomGone] {
+        expect("reconnect: never after \(kind)", reconnectDelay(after: kind, attempt: 1), nil)
+    }
+    expect("viewer tokens: still 10 minutes", WebRoutes.viewerTokenTTL, 600)
+}
+
+private func privateFileTests() {
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent(LocalSecret.fileName)
+    FileManager.default.createFile(atPath: url.path, contents: Data("old".utf8), attributes: [.posixPermissions: 0o644])
+    let made = LocalSecret.create(in: dir)
+    expect("private file: replacing a 0644 file leaves it 0600", mode(url), 0o600)
+    expect("private file: the new secret is what is read back", LocalSecret.read(in: dir), made)
+    let left = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+    expect("private file: no temporary files are left behind", left, [LocalSecret.fileName])
+    let blocked = dir.appendingPathComponent("not-a-dir")
+    FileManager.default.createFile(atPath: blocked.path, contents: Data())
+    expect("private file: a failed write reports failure", LocalSecret.create(in: blocked), nil)
+
+    let store = TrustStore(directory: dir)
+    _ = store.pair(id: viewerA, name: "Air", secret: "s1")
+    let reads = store.fileReads
+    for _ in 0..<100 { _ = store.isPaired(viewerA) }
+    expect("trust cache: a hundred checks read the file at most once", store.fileReads - reads <= 1, true)
+    let other = TrustStore(directory: dir)
+    _ = other.unpair(viewerA)
+    check("trust cache: a change written by another store is seen", !store.isPaired(viewerA))
+    _ = store.pair(id: viewerB, name: "Studio", secret: "s2")
+    check("trust cache: its own writes are seen at once", store.isPaired(viewerB) && store.verify(id: viewerB, secret: "s2") != nil)
+    var revoked = RevokedDevices()
+    revoked.revoke(viewerA)
+    let ident = pairedIdentity(name: "air", suffix: "s", device: viewerA)
+    let before = store.fileReads
+    for _ in 0..<200 { _ = revoked.accepts(ident, isPaired: store.isPaired) }
+    expect("revoked: messages from a revoked Mac do not re-read the trust file", store.fileReads - before <= 1, true)
 }

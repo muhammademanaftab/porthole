@@ -147,7 +147,10 @@ public struct WebRoutes {
         case .throttled:
             return Self.json("429 Too Many Requests", ["error": "Too many pairing requests. Wait a few minutes and try again."])
         case .busy(let seconds):
-            return Self.json("409 Conflict", ["error": "Another Mac is pairing with \(hostName) right now. Try again in \(seconds) s."])
+            return Self.json("409 Conflict", ["error": "Another Mac is pairing with \(hostName) right now. Try again in \(seconds) s, or choose Pair a New Viewer… on the host and enter that code."])
+        case .paused(let seconds):
+            let minutes = (seconds + 59) / 60
+            return Self.json("429 Too Many Requests", ["error": "Too many wrong codes on \(hostName). Pairing requests are paused for \(minutes) \(minutes == 1 ? "minute" : "minutes"), or choose Pair a New Viewer… on the host and enter that code."])
         case .issued(let code), .same(let code):
             onPairRequest?(who, code)
             return Self.json("200 OK", ["requested": true, "host": hostName])

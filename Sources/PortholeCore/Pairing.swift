@@ -33,6 +33,11 @@ public struct GuessBudget: Codable, Equatable, Sendable {
         pausedUntil = now.addingTimeInterval(min(Self.longestPause, Self.firstPause * pow(2, Double(min(pauses - 1, 20)))))
     }
 
+    public mutating func ownerReset() {
+        strikes = 0
+        pausedUntil = nil
+    }
+
     public mutating func paired() {
         strikes = 0
         pauses = 0
@@ -61,8 +66,9 @@ public struct PairingCodes: Sendable {
     public static let maxWrongTries = 5
     public static let requestWindow: TimeInterval = 600
     public static let maxRequests = 6
+    public static let maxRequestsPerDevice = 3
 
-    public enum RequestOutcome: Equatable, Sendable { case issued(String), same(String), busy(seconds: Int), throttled }
+    public enum RequestOutcome: Equatable, Sendable { case issued(String), same(String), busy(seconds: Int), throttled, paused(seconds: Int) }
 
     private var code: String?
     private var expires = Date.distantPast
@@ -70,18 +76,26 @@ public struct PairingCodes: Sendable {
     private var ended: State = .idle
     public private(set) var requester: PairRequester?
     private var requestTimes: [Date] = []
+    private var deviceRequestTimes: [String: [Date]] = [:]
+    private var fromOwner = false
     public var budget = GuessBudget()
 
     public init(budget: GuessBudget = GuessBudget()) { self.budget = budget }
 
     public mutating func issue(now: Date, random: () -> UInt32 = { UInt32.random(in: 0..<1_000_000) },
                                for requester: PairRequester? = nil) -> String {
+        budget.ownerReset()
+        return makeCode(now: now, random: random, for: requester, fromOwner: true)
+    }
+
+    private mutating func makeCode(now: Date, random: () -> UInt32, for requester: PairRequester?, fromOwner: Bool) -> String {
         let c = String(format: "%06u", random() % 1_000_000)
         code = c
         expires = now.addingTimeInterval(Self.lifetime)
         wrong = 0
         ended = .idle
         self.requester = requester
+        self.fromOwner = fromOwner
         return c
     }
 
@@ -99,15 +113,21 @@ public struct PairingCodes: Sendable {
             return .same(code)
         }
         if code != nil { return .busy(seconds: Int(expires.timeIntervalSince(now).rounded(.up))) }
-        requestTimes = requestTimes.filter { now.timeIntervalSince($0) < Self.requestWindow }
-        guard requestTimes.count < Self.maxRequests else { return .throttled }
+        if let paused = budget.secondsPaused(now: now) { return .paused(seconds: paused) }
+        let recent = { (times: [Date]) in times.filter { now.timeIntervalSince($0) < Self.requestWindow } }
+        requestTimes = recent(requestTimes)
+        deviceRequestTimes = deviceRequestTimes.compactMapValues { let kept = recent($0); return kept.isEmpty ? nil : kept }
+        let mine = deviceRequestTimes[who.id] ?? []
+        guard mine.count < Self.maxRequestsPerDevice, requestTimes.count < Self.maxRequests else { return .throttled }
         requestTimes.append(now)
-        return .issued(issue(now: now, random: random, for: who))
+        deviceRequestTimes[who.id] = mine + [now]
+        return .issued(makeCode(now: now, random: random, for: who, fromOwner: false))
     }
 
     public mutating func currentOrIssue(now: Date, random: () -> UInt32 = { UInt32.random(in: 0..<1_000_000) }) -> String {
         expireIfDue(now)
-        if let code { return code }
+        budget.ownerReset()
+        if let code { fromOwner = true; return code }
         return issue(now: now, random: random)
     }
 
@@ -126,9 +146,9 @@ public struct PairingCodes: Sendable {
             default: return .noCode
             }
         }
-        if let paused = budget.secondsPaused(now: now) { return .paused(seconds: paused) }
-        let forThisDevice = requester.map { $0.id == device } ?? true
-        if Self.sameDigits(normalizePairingCode(input), code) && forThisDevice {
+        if let requester, requester.id != device { return .wrong(left: Self.maxWrongTries - wrong) }
+        if !fromOwner, let paused = budget.secondsPaused(now: now) { return .paused(seconds: paused) }
+        if Self.sameDigits(normalizePairingCode(input), code) {
             self.code = nil
             ended = .used
             budget.paired()
@@ -191,14 +211,21 @@ public final class PairingDesk: @unchecked Sendable {
         return codes.budget
     }
 
+    private func saving<T>(_ body: (inout PairingCodes) -> T) -> T {
+        let before = codes.budget
+        let result = body(&codes)
+        if let budgetFile, codes.budget != before { _ = writePrivately(codes.budget.encoded, to: budgetFile) }
+        return result
+    }
+
     public func issue() -> String {
         lock.lock(); defer { lock.unlock() }
-        return codes.issue(now: clock(), random: random)
+        return saving { $0.issue(now: clock(), random: random) }
     }
 
     public func reissue() -> String {
         lock.lock(); defer { lock.unlock() }
-        return codes.issue(now: clock(), random: random, for: codes.requester)
+        return saving { $0.issue(now: clock(), random: random, for: $0.requester) }
     }
 
     public func request(from who: PairRequester) -> PairingCodes.RequestOutcome {
@@ -208,7 +235,7 @@ public final class PairingDesk: @unchecked Sendable {
 
     public func currentOrIssue() -> (code: String, requester: PairRequester?, secondsLeft: Int) {
         lock.lock(); defer { lock.unlock() }
-        let c = codes.currentOrIssue(now: clock(), random: random)
+        let c = saving { $0.currentOrIssue(now: clock(), random: random) }
         if case .active(_, let left) = codes.state(now: clock()) { return (c, codes.requester, left) }
         return (c, codes.requester, Int(PairingCodes.lifetime))
     }
@@ -230,10 +257,7 @@ public final class PairingDesk: @unchecked Sendable {
 
     public func redeem(_ code: String, device: String? = nil) -> PairingCodes.Outcome {
         lock.lock(); defer { lock.unlock() }
-        let before = codes.budget
-        let outcome = codes.redeem(code, device: device, now: clock())
-        if let budgetFile, codes.budget != before { _ = writePrivately(codes.budget.encoded, to: budgetFile) }
-        return outcome
+        return saving { $0.redeem(code, device: device, now: clock()) }
     }
 }
 

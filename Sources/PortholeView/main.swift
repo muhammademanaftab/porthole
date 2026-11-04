@@ -186,6 +186,12 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
         c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
         c.onIcon = { [weak self] id, png in self?.icons[id] = png }
+        c.onReconnected = { [weak self, weak c, weak picker] in
+            guard let self, let c, self.connection === c else { return }
+            picker?.showError("Reconnected.")
+            c.requestList()
+            for (id, portal) in self.portals { c.open(id) { track, _ in portal.attach(track) } }
+        }
         Task {
             do {
                 try await c.connect()

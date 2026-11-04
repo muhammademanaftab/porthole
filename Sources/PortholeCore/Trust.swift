@@ -8,10 +8,23 @@ public func portholeSupportDirectory(environment: [String: String] = ProcessInfo
 }
 
 func writePrivately(_ data: Data, to url: URL) -> Bool {
-    let fm = FileManager.default
-    try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    guard (try? data.write(to: url, options: .atomic)) != nil else { return false }
-    try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    let dir = url.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+    let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+    guard fd >= 0 else { return false }
+    let written = data.withUnsafeBytes { buf -> Bool in
+        var offset = 0
+        while offset < buf.count {
+            let n = write(fd, buf.baseAddress! + offset, buf.count - offset)
+            if n <= 0 { return false }
+            offset += n
+        }
+        return true
+    }
+    let synced = fsync(fd) == 0
+    close(fd)
+    guard written, synced, rename(temp.path, url.path) == 0 else { unlink(temp.path); return false }
     return true
 }
 
@@ -118,15 +131,34 @@ public final class TrustStore: @unchecked Sendable {
     public let url: URL
     private let lock = NSLock()
     private let clock: () -> Date
+    private var cache: (stamp: FileStamp?, devices: [PairedDevice])?
+    public private(set) var fileReads = 0
+
+    struct FileStamp: Equatable { var sec: Int; var nsec: Int; var size: Int64; var inode: UInt64 }
 
     public init(directory: URL, clock: @escaping () -> Date = Date.init) {
         url = directory.appendingPathComponent(Self.fileName)
         self.clock = clock
     }
 
+    private func stamp() -> FileStamp? {
+        var st = stat()
+        guard stat(url.path, &st) == 0 else { return nil }
+        return FileStamp(sec: st.st_mtimespec.tv_sec, nsec: st.st_mtimespec.tv_nsec, size: Int64(st.st_size), inode: UInt64(st.st_ino))
+    }
+
     private func read() -> [PairedDevice] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
-        return PairedDevices.decode(data) ?? []
+        let now = stamp()
+        if let cache, cache.stamp == now { return cache.devices }
+        fileReads += 1
+        let devices = (try? Data(contentsOf: url)).flatMap(PairedDevices.decode) ?? []
+        cache = (now, devices)
+        return devices
+    }
+
+    private func store(_ devices: [PairedDevice]) -> Bool {
+        cache = nil
+        return writePrivately(PairedDevices.encode(devices), to: url)
     }
 
     public func devices() -> [PairedDevice] {
@@ -138,7 +170,7 @@ public final class TrustStore: @unchecked Sendable {
         guard DeviceIdentity.isValidID(id) else { return nil }
         lock.lock(); defer { lock.unlock() }
         let device = PairedDevice(id: id, name: cleanDeviceName(name), secretHash: secretDigest(secret), pairedAt: clock())
-        return writePrivately(PairedDevices.encode(PairedDevices.adding(device, to: read())), to: url) ? secret : nil
+        return store(PairedDevices.adding(device, to: read())) ? secret : nil
     }
 
     public func verify(id: String, secret: String) -> PairedDevice? {
@@ -155,7 +187,7 @@ public final class TrustStore: @unchecked Sendable {
         let list = read()
         let match = findPaired(who, in: list)
         guard case .found(let device) = match else { return match }
-        guard writePrivately(PairedDevices.encode(list.filter { $0.id != device.id }), to: url) else { return .none }
+        guard store(list.filter { $0.id != device.id }) else { return .none }
         return match
     }
 }
@@ -171,10 +203,10 @@ public func authorizeToken(query: [String: String], password: String, verify: (S
     let device = query["device"] ?? ""
     if !device.isEmpty {
         if let found = verify(device, query["secret"] ?? "") { return .device(found) }
-        if let pw = query["pw"], pw == password { return .password }
+        if let pw = query["pw"], constantTimeEqual(pw, password) { return .password }
         return .unpaired
     }
-    return query["pw"] == password ? .password : .refused
+    return query["pw"].map { constantTimeEqual($0, password) } == true ? .password : .refused
 }
 
 public func pairedIdentity(name: String?, suffix: String, device: String) -> String {
@@ -403,6 +435,12 @@ public func showsPairingWindow(environment: [String: String] = ProcessInfo.proce
 
 public func localURL(port: UInt16, path: String, _ query: KeyValuePairs<String, String> = [:]) -> URL? {
     hostURL("127.0.0.1:\(port)", path: path, query)
+}
+
+public func removeRetryDelay(status: Int?, attempt: Int) -> TimeInterval? {
+    if let status, (200..<300).contains(status) || status == 404 { return nil }
+    let delays: [TimeInterval] = [0.5, 1, 2, 4]
+    return attempt <= delays.count ? delays[attempt - 1] : nil
 }
 
 public func removeParticipantRequest(livekitPort: Int, token: String, room: String, identity: String) -> URLRequest? {

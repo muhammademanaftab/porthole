@@ -84,6 +84,15 @@ public enum RetryPolicy {
     public static let open = (times: 5, every: 2.0)
 }
 
+public enum DisconnectKind: Equatable, Sendable { case byViewer, removed, replaced, roomGone, lost }
+
+public let reconnectDelays: [TimeInterval] = [1, 2, 4, 8, 15, 30, 30, 30]
+
+public func reconnectDelay(after kind: DisconnectKind, attempt: Int) -> TimeInterval? {
+    guard kind == .lost, attempt >= 1, attempt <= reconnectDelays.count else { return nil }
+    return reconnectDelays[attempt - 1]
+}
+
 public func liveKitConfigYAML(port: Int, apiKey: String, apiSecret: String) -> String {
     """
     port: \(port)

@@ -96,7 +96,7 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
         return b
     }
 
-    func show(_ hosts: [DiscoveredHost], scanning: Bool, preferTailscale: Bool, hasAccess: (DiscoveredHost) -> Bool = { _ in true }) {
+    func show(_ hosts: [DiscoveredHost], scanning: Bool, preferTailscale: Bool, hasAccess: (DiscoveredHost, String) -> Bool = { _, _ in true }) {
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         targets.removeAll { $0.tag >= 0 }
         rows = []
@@ -111,7 +111,7 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
             b.alignment = .left
             b.lineBreakMode = .byTruncatingTail
             b.attributedTitle = rowTitle(host, address: addr)
-            let trusted = hasAccess(host)
+            let trusted = hasAccess(host, addr)
             let symbol = host.status == .notFound ? "desktopcomputer.trianglebadge.exclamationmark" : trusted ? "desktopcomputer" : "lock.fill"
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: trusted ? nil : "Not paired")
             b.imagePosition = .imageLeading

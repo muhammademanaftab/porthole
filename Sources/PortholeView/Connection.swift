@@ -17,6 +17,10 @@ final class Connection: NSObject, RoomDelegate {
     private var openedReplies: [UInt32: Message] = [:]
     private var listening = SharedUse<String, UInt32>()
     var muted = false { didSet { applyVolume() } }
+    var onReconnected: (() -> Void)?
+    private var closing = false
+    private var reconnecting = false
+    private var handlersReady = false
 
     init(hostAddress: String, credential: ViewerCredential) {
         self.hostAddress = hostAddress
@@ -40,6 +44,13 @@ final class Connection: NSObject, RoomDelegate {
         case .unpaired(let why): throw NSError(domain: "Porthole", code: 403, userInfo: [NSLocalizedDescriptionKey: why])
         case .refused(let why): throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: why])
         }
+        try await setUpOnce()
+        try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
+                               roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
+    }
+
+    private func setUpOnce() async throws {
+        guard !handlersReady else { return }
         room.add(delegate: self)
         try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
             guard identity.stringValue == "host" else { return }
@@ -52,8 +63,44 @@ final class Connection: NSObject, RoomDelegate {
             guard AppIcon.isAcceptable(png) else { return }
             Task { @MainActor [weak self] in self?.onIcon?(win, png) }
         }
-        try await room.connect(url: url, token: token, connectOptions: ConnectOptions(autoSubscribe: false),
-                               roomOptions: RoomOptions(adaptiveStream: false, dynacast: false))
+        handlersReady = true
+    }
+
+    nonisolated private static func kind(of error: LiveKitError?) -> DisconnectKind {
+        guard let error else { return .byViewer }
+        switch error.type {
+        case .cancelled: return .byViewer
+        case .participantRemoved: return .removed
+        case .duplicateIdentity: return .replaced
+        case .roomDeleted: return .roomGone
+        default: return .lost
+        }
+    }
+
+    private func reconnect() async {
+        guard !reconnecting else { return }
+        reconnecting = true
+        defer { reconnecting = false }
+        onError?("Lost the connection to the host. Reconnecting…")
+        var attempt = 1
+        while !closing, let delay = reconnectDelay(after: .lost, attempt: attempt) {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !closing else { return }
+            do {
+                try await connect()
+                pending = [:]
+                openedReplies = [:]
+                listening = SharedUse()
+                onReconnected?()
+                return
+            } catch let err as NSError where err.domain == "Porthole" && (err.code == 401 || err.code == 403) {
+                onError?(err.localizedDescription)
+                return
+            } catch {
+                attempt += 1
+            }
+        }
+        if !closing { onError?("Disconnected from host. Reconnect from the Porthole menu.") }
     }
 
     private lazy var outbox: AsyncStream<(Data, Bool)>.Continuation = {
@@ -79,6 +126,7 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func disconnect() async {
+        closing = true
         outbox.finish()
         await room.disconnect()
     }
@@ -201,6 +249,11 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
-        Task { @MainActor in self.onError?("Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")") }
+        let kind = Self.kind(of: error)
+        Task { @MainActor in
+            guard !self.closing else { return }
+            if reconnectDelay(after: kind, attempt: 1) != nil { await self.reconnect(); return }
+            self.onError?("Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")")
+        }
     }
 }

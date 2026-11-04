@@ -146,6 +146,13 @@
 
   const soundLabel = (canPlay, muted) => !canPlay ? 'Click for sound' : muted ? 'Sound off' : 'Sound on';
 
+  const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000, 30000, 30000];
+  const FINAL_DISCONNECTS = new Set([1, 2, 4, 5, 10]);
+  function reconnectDelay(reason, attempt) {
+    if (FINAL_DISCONNECTS.has(reason) || !(attempt >= 1) || attempt > RECONNECT_DELAYS.length) return null;
+    return RECONNECT_DELAYS[attempt - 1];
+  }
+
   return { randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
-    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel };
+    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, sizeLabel, reconnectDelay, RECONNECT_DELAYS };
 });

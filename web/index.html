@@ -69,8 +69,16 @@ async function connect(pw) {
     clipFromHost(await reader.readAll());
   });
   room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSound);
-  room.on(LK.RoomEvent.Disconnected, () => hud('Disconnected from host', true));
+  room.on(LK.RoomEvent.Disconnected, (reason) => {
+    const attempt = Number(sessionStorage.getItem('reconnects') || 0) + 1;
+    const wait = PC.reconnectDelay(reason, attempt);
+    if (wait === null) { hud('Disconnected from host', true); return; }
+    sessionStorage.setItem('reconnects', String(attempt));
+    hud('Lost the connection to the host. Reconnecting…', true);
+    setTimeout(() => location.reload(), wait);
+  });
   await room.connect(url, token, { autoSubscribe: false });
+  sessionStorage.removeItem('reconnects');
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
   hostP = room.remoteParticipants.get('host');
   if (!hostP) { $('status').textContent = 'Connected, but the host is not in the room. Is Porthole Host running?'; return; }
