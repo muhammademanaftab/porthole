@@ -41,3 +41,9 @@ Porthole Host's Settings… (⌘, in its menu) has "Keep Porthole Host running o
 Each launch is logged in `~/Library/Logs/Porthole/host.log` as `watchdog relaunch reason=<reason>`. Quit from the menu means stay quit: the watchdog leaves it stopped until you open it again or restart the Mac. Turning the switch off unregisters the agent; the host keeps running. `PORTHOLE_WATCHDOG=0|1` decides for one run whether the watchdog watches this host, without registering, unregistering or changing the saved switch. The old `~/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist` is booted out and deleted on first launch.
 
 Ports: 7878 (web and tokens), 7880 to 7882 (LiveKit).
+
+## Picture
+
+Windows are published as H.265 with an H.264 backup. LiveKit hands the backup to viewers that can't decode H.265; while one of them watches a window, every viewer of that window gets H.264 until it is opened again. The capture scale steps down 2, 1.5, 1.25, 1 when encoding a moving window costs more than 30 ms a frame or the encoder falls behind, never within 10 s of input, and climbs back after 45 s. While a window moves or receives input the last frame is re-sent at the stream rate, and once it goes quiet it gets one refresh after 3 s and a keepalive every second.
+
+The open message may carry `bitrate` (kbps, 1000 to 100000), `fps` (30, 60 or 120) and `level` (top capture scale: 1, 1.25, 1.5 or 2); the viewer that starts a window's stream sets them. `PORTHOLE_ENCODE_LOG=1` logs each encoder sample and `PORTHOLE_ENCODE_BUDGET_MS` changes the budget.

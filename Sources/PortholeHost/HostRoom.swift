@@ -60,7 +60,7 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func join() async throws {
-        let opts = RoomOptions(adaptiveStream: false, dynacast: false, suspendLocalVideoTracksInBackground: false)
+        let opts = RoomOptions(adaptiveStream: false, dynacast: true, suspendLocalVideoTracksInBackground: false)
         try await room.connect(url: url, token: makeToken?() ?? "", roomOptions: opts)
         isConnected = true
         onChange?()
@@ -141,7 +141,7 @@ final class HostRoom: NSObject, RoomDelegate {
         case .open:
             guard let id = m.win else { return }
             let screen = (m.sw ?? 0) >= 1 && (m.sh ?? 0) >= 1 ? CGSize(width: m.sw!, height: m.sh!) : nil
-            await open(id, by: who, screen: screen)
+            await open(id, by: who, screen: screen, prefs: StreamPrefs(open: m))
         case .close:
             guard let id = m.win else { return }
             await release(id, by: who)
@@ -152,6 +152,7 @@ final class HostRoom: NSObject, RoomDelegate {
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
             await warnIfLocked(who)
             input.handle(m)
+            sessions[id]?.noteInput()
             if m.t == .resize { sessions[id]?.followSizeSoon() }
         case .restart:
             let refusal = onRestart.map { $0(who, registry.activeViewers.contains(who)) } ?? "This host can't restart itself."
@@ -163,7 +164,7 @@ final class HostRoom: NSObject, RoomDelegate {
         }
     }
 
-    private func open(_ id: UInt32, by who: String, screen: CGSize?) async {
+    private func open(_ id: UInt32, by who: String, screen: CGSize?, prefs: StreamPrefs) async {
         let allowed = (try? await WindowCatalog.shareable(onScreenOnly: false).contains { $0.windowID == id }) ?? false
         guard allowed else {
             var reply = Message(.error); reply.win = id; reply.msg = "That window can't be shared."
@@ -179,7 +180,7 @@ final class HostRoom: NSObject, RoomDelegate {
             case .start:
                 await stage.ensure(screenPoints: screen)
                 await stage.park(id)
-                let session = WindowSession(windowID: id)
+                let session = WindowSession(windowID: id, prefs: prefs)
                 let task = Task { try await session.start(in: room) }
                 starting[id] = task
                 do { try await task.value } catch {
