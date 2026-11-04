@@ -292,6 +292,13 @@ private func trailTests() {
            Trail.select(more, since: .distantPast).count, 9)
     check("trail: renders one row per event with the role", Trail.render(Array(more.prefix(2))).contains("host:1"))
     expect("trail: an empty window says so", Trail.render([]), "Nothing happened in that window.")
+    let unlock = lines([
+        line("2026-11-04T10:00:00Z", .info, "host", 1, .trust, "unlock: typed into the lock screen"),
+        line("2026-11-04T10:00:03Z", .info, "host", 1, .trust, "unlock: the screen is unlocked (asked by view-a)"),
+        line("2026-11-04T10:00:04Z", .info, "host", 1, .host, "unlock from view-a"),
+    ].joined(separator: "\n"))
+    expect("trail: unlock outcomes are events, the bare request line is not", Trail.select(unlock, since: .distantPast).map(\.text),
+           ["unlock: typed into the lock screen", "unlock: the screen is unlocked (asked by view-a)"])
     let burst = lines([
         line("2026-11-04T10:00:00Z", .info, "host", 1, .resize, "resize from view-a"),
         line("2026-11-04T10:00:01Z", .info, "host", 1, .resize, "resize from view-a"),

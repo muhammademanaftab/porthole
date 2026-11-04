@@ -130,6 +130,14 @@ final class InputInjector {
         Log.debug("text: \(s.utf16.count) UTF-16 units typed as \(pieces.count) key pair(s), batch \(textBatch)")
     }
 
+    func typeIntoLockScreen(_ password: String) async {
+        releaseAllButtons()
+        for e in LockScreenTyping.events(password, source: source) {
+            e.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 6_000_000)
+        }
+    }
+
     func resize(_ m: Message) -> (asked: CGSize, actual: CGSize)? {
         guard let id = m.win, let live = LiveWindow.lookup(id), let asked = resizeTarget(w: m.w, h: m.h) else { return nil }
         let plan = ResizePlan.make(window: live.bounds, asked: asked, areas: Self.usableAreas())

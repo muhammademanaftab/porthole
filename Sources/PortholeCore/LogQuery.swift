@@ -103,7 +103,7 @@ extension String {
 public enum Trail {
     static let hostEvents = ["host started", "host ready", "quitting", "terminating", "caught sig", "open from", "close from",
                              "restart", "screen is locked", "launched by the watchdog"]
-    static let netEvents = ["viewer joined", "viewer left", "host left the room", "rejoin", "web server failed", "unpaired", "disconnected"]
+    static let netEvents = ["viewer joined", "viewer left", "host left the room", "rejoin", "web server failed", "unpaired", "disconnected", "unlock: "]
     static let encodeEvents = ["stream now", "encoder drops", "encoding "]
     static let captureEvents = ["capture scale", "capture of", "resize capture"]
 

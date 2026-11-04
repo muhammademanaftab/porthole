@@ -27,6 +27,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private var companionTimer: Timer?
     private var resizes = LatestWins<UInt32, ResizeJob>()
     let wholeMac = WholeMacState()
+    var unlockLimiter = UnlockLimiter()
 
     struct ResizeJob: Sendable {
         var message: Message
@@ -265,6 +266,8 @@ final class HostRoom: NSObject, RoomDelegate {
                     await Task.yield()
                 }
             }
+        case .unlock:
+            await unlockRequested(m, from: who)
         case .restart:
             let refusal = onRestart.map { $0(who, registry.activeViewers.contains(who)) } ?? "This host can't restart itself."
             guard let refusal else { return }
