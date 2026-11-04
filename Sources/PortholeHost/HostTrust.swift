@@ -7,6 +7,8 @@ final class HostTrust: NSObject, RoomDelegate {
     let desk: PairingDesk
     let store = TrustStore(directory: HostConfig.directory)
     let identity = DeviceIdentity.loadOrCreate(in: HostConfig.directory)
+    let localSecret = LocalSecret.create(in: HostConfig.directory)
+    private var revoked = RevokedDevices()
     private let config: HostConfig
     private weak var host: HostRoom?
     private var pairingWindow: PairingWindow?
@@ -20,6 +22,7 @@ final class HostTrust: NSObject, RoomDelegate {
     func attach(to host: HostRoom) {
         self.host = host
         host.room.add(delegate: self)
+        host.accepts = { [weak self] who in self?.accepts(who) ?? false }
     }
 
     private var window: PairingWindow {
@@ -58,7 +61,12 @@ final class HostTrust: NSObject, RoomDelegate {
         revoke(gone)
     }
 
+    func accepts(_ identity: String) -> Bool {
+        revoked.accepts(identity, isPaired: store.isPaired)
+    }
+
     private func revoke(_ device: PairedDevice) {
+        revoked.revoke(device.id)
         Log.info("unpaired \(device.name) (\(device.id))")
         pairedWindow?.reload()
         guard let host else { return }
@@ -78,6 +86,7 @@ final class HostTrust: NSObject, RoomDelegate {
         guard let who = participant.identity?.stringValue, let device = deviceID(fromIdentity: who) else { return }
         Task { @MainActor in
             guard !self.store.isPaired(device) else { return }
+            self.revoked.revoke(device)
             Log.info("\(who) belongs to an unpaired Mac; disconnecting it")
             await self.remove(who)
         }

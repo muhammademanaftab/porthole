@@ -19,6 +19,7 @@ final class HTTPServer {
                                trust: trust?.store, hostID: trust?.identity.id)
         routes.onPairRequest = { [weak trust] who, code in trust?.requested(by: who, code: code) }
         routes.onUnpair = { [weak trust] device in trust?.unpaired(device) }
+        routes.localSecret = trust?.localSecret
         self.routes = routes
         let txt = BonjourTXT.make(name: name, tailscaleIP: tailscaleAddress(), localHost: HTTPServer.localHostName,
                                  port: Int(config.httpPort), id: trust?.identity.id)

@@ -36,6 +36,7 @@ func trustTests() {
     localRouteTests()
     viewerSideTests()
     commandTests()
+    budgetTests()
 }
 
 private func identityTests() {
@@ -196,27 +197,30 @@ private func requestStateTests() {
 
     var swap = PairingCodes()
     _ = swap.request(from: a, now: t0, random: { 444_444 })
-    expect("request: another Mac asking replaces the code", swap.request(from: b, now: t0.addingTimeInterval(1), random: { 555_555 }), .issued("555555"))
-    expect("request: the replaced code no longer works", swap.redeem("444444", device: viewerA, now: t0.addingTimeInterval(2)), .wrong(left: 4))
-    expect("request: a new request resets wrong tries", { () -> PairingCodes.Outcome in
-        var c = swap
-        _ = c.request(from: a, now: t0.addingTimeInterval(3), random: { 666_666 })
-        return c.redeem("000000", device: viewerA, now: t0.addingTimeInterval(3))
+    expect("request: another Mac cannot replace a pending code", swap.request(from: b, now: t0.addingTimeInterval(20), random: { 555_555 }),
+           .busy(seconds: 100))
+    expect("request: the pending code still works for its Mac", swap.redeem("444444", device: viewerA, now: t0.addingTimeInterval(21)), .accepted)
+    expect("request: once it is used another Mac may ask", swap.request(from: b, now: t0.addingTimeInterval(22), random: { 555_555 }),
+           .issued("555555"))
+    var menuFirst = PairingCodes()
+    _ = menuFirst.issue(now: t0, random: { 1 })
+    expect("request: a code from the host's menu is not replaced either", menuFirst.request(from: a, now: t0, random: { 2 }), .busy(seconds: 120))
+    expect("request: a new request after expiry resets wrong tries", { () -> PairingCodes.Outcome in
+        var c = PairingCodes()
+        _ = c.request(from: a, now: t0, random: { 1 })
+        _ = c.redeem("000000", device: viewerA, now: t0)
+        _ = c.request(from: a, now: t0.addingTimeInterval(PairingCodes.lifetime), random: { 666_666 })
+        return c.redeem("000000", device: viewerA, now: t0.addingTimeInterval(PairingCodes.lifetime))
     }(), .wrong(left: 4))
 
     var flood = PairingCodes()
     var outcomes: [PairingCodes.RequestOutcome] = []
     for i in 0..<7 {
         outcomes.append(flood.request(from: i % 2 == 0 ? a : b, now: t0.addingTimeInterval(Double(i)), random: { UInt32(i) }))
+        flood.cancel()
     }
     expect("request: at most 6 new codes per 10 minutes", outcomes.last, .throttled)
     expect("request: the first 6 were issued", outcomes.prefix(6).allSatisfy { if case .issued = $0 { return true }; return false }, true)
-    expect("request: the active code survives a throttled request", flood.state(now: t0.addingTimeInterval(7)),
-           .active(code: "000005", secondsLeft: 118))
-    expect("request: the same Mac's active code is still returned when throttled",
-           flood.request(from: b, now: t0.addingTimeInterval(8)), .same("000005"))
-    expect("request: allowed again once the window has passed",
-           flood.request(from: a, now: t0.addingTimeInterval(PairingCodes.requestWindow + 1), random: { 7 }), .issued("000007"))
 
     var expire = PairingCodes()
     _ = expire.request(from: a, now: t0, random: { 1 })
@@ -226,6 +230,8 @@ private func requestStateTests() {
     var current = PairingCodes()
     expect("paircode: with nothing active a fresh code is issued", current.currentOrIssue(now: t0, random: { 777_777 }), "777777")
     expect("paircode: that code is unbound", current.requester, nil)
+    expect("paircode: a pending menu code blocks requests", current.request(from: a, now: t0.addingTimeInterval(1)), .busy(seconds: 119))
+    current.cancel()
     _ = current.request(from: a, now: t0.addingTimeInterval(1), random: { 888_888 })
     expect("paircode: returns the code a Mac is waiting for", current.currentOrIssue(now: t0.addingTimeInterval(2), random: { 9 }), "888888")
     expect("paircode: does not unbind it", current.requester, a)
@@ -309,12 +315,26 @@ private func trustRouteTests() {
 
     _ = desk.issue()
     let legacy = routes.respond(to: get("/pair?code=135790"))
-    expect("pair: an old viewer without a device id still gets the password", body(legacy)?["password"] as? String, "pw-123")
+    check("pair: without a device id the code is refused and the password never sent",
+          legacy.status == "400 Bad Request" && !String(decoding: legacy.body, as: UTF8.self).contains("pw-123"))
+    check("pair: that refusal burned nothing", desk.state() == .active(code: "135790", secondsLeft: 120))
+    let busy = routes.respond(to: get("/pair/request?device=\(viewerB)&name=B"))
+    check("pair request: another Mac's pending code is not replaced (409)",
+          busy.status == "409 Conflict" && desk.state() == .active(code: "135790", secondsLeft: 120))
+    desk.cancel()
 
-    clock = clock.addingTimeInterval(1000)
     var statuses: [String] = []
-    for i in 0..<7 { statuses.append(routes.respond(to: get("/pair/request?device=\(i % 2 == 0 ? viewerA : viewerB)")).status) }
+    for i in 0..<7 {
+        desk.cancel()
+        statuses.append(routes.respond(to: get("/pair/request?device=\(i % 2 == 0 ? viewerA : viewerB)")).status)
+    }
     expect("pair request: flooding is answered with 429", statuses.last, "429 Too Many Requests")
+
+    let token = (body(routes.respond(to: get("/token?pw=pw-123")))?["token"] as? String).flatMap(claims)
+    check("token: viewer tokens last 10 minutes", {
+        guard let exp = token?["exp"] as? Int, let iat = token?["iat"] as? Int else { return false }
+        return exp - iat == 600
+    }())
 }
 
 private func localRouteTests() {
@@ -329,18 +349,23 @@ private func localRouteTests() {
                            trust: store, hostID: hostID)
     var gone: [PairedDevice] = []
     routes.onUnpair = { gone.append($0) }
-    let header = "\(localRouteHeader): 1"
+    let local = String(repeating: "k", count: 43)
+    routes.localSecret = local
+    let header = "\(localRouteHeader): \(local)"
 
     let okCode = routes.respond(to: get("/local/paircode", host: "127.0.0.1:7878", extra: [header]), fromLoopback: true)
     check("local paircode: loopback with the header gets a fresh code",
           okCode.status == "200 OK" && body(okCode)?["code"] as? String == "246802" && body(okCode)?["seconds"] as? Int == 120)
     expect("local paircode: that code is live", desk.state(), .active(code: "246802", secondsLeft: 120))
+    desk.cancel()
     _ = desk.request(from: PairRequester(id: viewerB, name: "Studio"))
     let waiting = routes.respond(to: get("/local/paircode", host: "localhost:7878", extra: [header]), fromLoopback: true)
     check("local paircode: names the Mac that is waiting", body(waiting)?["for"] as? String == "Studio" && body(waiting)?["device"] as? String == viewerB)
     let denied: [(String, String, [String], Bool)] = [
         ("from the network", "127.0.0.1:7878", [header], false),
         ("without the header", "127.0.0.1:7878", [], true),
+        ("with the old fixed header value", "127.0.0.1:7878", ["\(localRouteHeader): 1"], true),
+        ("with a wrong local secret", "127.0.0.1:7878", ["\(localRouteHeader): " + String(repeating: "j", count: 43)], true),
         ("with another Host (DNS rebinding)", "evil.example:7878", [header], true),
         ("to the Tailscale address", "100.101.102.103:7878", [header], true),
     ]
@@ -412,7 +437,7 @@ private func viewerSideTests() {
     expect("viewer trust: an address moves to the Mac that now answers there", t.host(forAddress: "mini.local")?.id, "1111222233334444")
     expect("viewer trust: the old Mac keeps its other address", t.host(forAddress: "100.101.102.103")?.id, hostID)
     let byID = DiscoveredHost(name: "Mini", lanHost: "other.local", status: .online, hostID: hostID)
-    expect("viewer trust: a discovered host matches by its id", t.host(for: byID)?.id, hostID)
+    expect("viewer trust: an advertised host id alone never earns the secret", t.host(for: byID), nil)
     let byAddr = DiscoveredHost(name: "x", tailscaleIP: "100.101.102.103", status: .online)
     expect("viewer trust: or by any of its addresses", t.host(for: byAddr)?.id, hostID)
     expect("viewer trust: unknown host", t.host(for: DiscoveredHost(name: "y", lanHost: "y.local", status: .online)), nil)
@@ -429,14 +454,14 @@ private func viewerSideTests() {
     expect("bonjour host: id is read back", BonjourTXT.host(serviceName: "s", txt: txt)?.hostID, hostID)
     let merged = mergeHosts([DiscoveredHost(name: "Mini", lanHost: "mini.local", status: .online, viaBonjour: true, hostID: hostID),
                              DiscoveredHost(name: "mini-ts", tailscaleIP: "100.1.2.3", status: .online, viaTailscale: true, hostID: hostID)])
-    check("merge: two sightings with one device id are one host", merged.count == 1 && merged[0].viaBonjour && merged[0].viaTailscale)
+    expect("merge: a shared device id alone does not merge two sightings", merged.count, 2)
     let split = mergeHosts([DiscoveredHost(name: "Mac", tailscaleIP: "100.1.2.3", status: .online, hostID: hostID),
                             DiscoveredHost(name: "Mac", tailscaleIP: "100.1.2.3", status: .online, hostID: "1111222233334444")])
     expect("merge: different device ids stay apart", split.count, 2)
 }
 
 private func commandTests() {
-    let host: [([String], HostCommand)] = [
+    let host: [([String], HostPairCommand)] = [
         ([], .app), (["-psn_0_12345"], .app), (["-NSDocumentRevisionsDebugMode", "YES"], .app),
         (["paircode"], .paircode), (["devices"], .devices), (["unpair", "Renée's", "Air"], .unpair("Renée's Air")),
         (["unpair", viewerA], .unpair(viewerA)), (["unpair"], .usage(error: "unpair needs a name or device ID")),
@@ -457,4 +482,80 @@ private func commandTests() {
     ]
     for (args, want) in viewer { expect("viewer command: \(args)", viewerCommand(args), want) }
     expect("viewer command: pair with extra words is left to the app", viewerCommand(["pair", "a", "123456", "x"]), .app)
+}
+
+private func budgetTests() {
+    let t0 = Date(timeIntervalSince1970: 200_000)
+    var b = GuessBudget()
+    for _ in 0..<9 { b.wrongGuess(now: t0) }
+    expect("budget: nine wrong guesses do not pause", b.secondsPaused(now: t0), nil)
+    b.wrongGuess(now: t0)
+    expect("budget: the tenth pauses pairing for a minute", b.secondsPaused(now: t0), 60)
+    expect("budget: the pause ends", b.secondsPaused(now: t0.addingTimeInterval(60)), nil)
+    var pauses: [Int] = []
+    for i in 0..<14 {
+        let at = t0.addingTimeInterval(Double(i) * 200_000)
+        for _ in 0..<GuessBudget.wrongPerPause { b.wrongGuess(now: at) }
+        pauses.append(b.secondsPaused(now: at) ?? 0)
+    }
+    expect("budget: each pause doubles, up to a day", pauses,
+           [120, 240, 480, 960, 1920, 3840, 7680, 15360, 30720, 61440, 86400, 86400, 86400, 86400])
+    b.paired()
+    expect("budget: a real pairing resets it", b, GuessBudget())
+    var worst = GuessBudget()
+    var guesses = 0
+    var now = t0
+    let month = t0.addingTimeInterval(30 * 86_400)
+    while now < month {
+        if let p = worst.secondsPaused(now: now) { now = now.addingTimeInterval(Double(p)); continue }
+        worst.wrongGuess(now: now); guesses += 1
+    }
+    check("budget: a month of nonstop guessing gets at most 400 tries (\(guesses), at most 0.04% of the codes)", guesses <= 400)
+
+    var codes = PairingCodes()
+    _ = codes.issue(now: t0, random: { 123_456 })
+    for _ in 0..<4 { _ = codes.redeem("000000", now: t0) }
+    _ = codes.issue(now: t0, random: { 123_456 })
+    for _ in 0..<4 { _ = codes.redeem("000000", now: t0) }
+    _ = codes.issue(now: t0, random: { 123_456 })
+    _ = codes.redeem("000000", now: t0)
+    expect("budget: wrong guesses add up across codes", codes.redeem("000000", now: t0), .wrong(left: 3))
+    expect("budget: when paused even the right code is refused", codes.redeem("123456", now: t0), .paused(seconds: 60))
+    expect("budget: a paused try does not burn the code", codes.state(now: t0), .active(code: "123456", secondsLeft: 120))
+    expect("budget: after the pause the right code works", codes.redeem("123456", now: t0.addingTimeInterval(60)), .accepted)
+    expect("pair message: paused", pairMessage(.paused(seconds: 61)), "Too many wrong codes on this host. Pairing is paused for 2 minutes.")
+
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("pairing-budget.json")
+    let desk = PairingDesk(clock: { t0 }, random: { 5 }, budgetFile: file)
+    for _ in 0..<GuessBudget.wrongPerPause {
+        if desk.state() == .locked || desk.state() == .idle { _ = desk.issue() }
+        _ = desk.redeem("999999")
+    }
+    expect("budget file: written 0600", mode(file), 0o600)
+    let restarted = PairingDesk(clock: { t0.addingTimeInterval(10) }, random: { 5 }, budgetFile: file)
+    _ = restarted.issue()
+    expect("budget file: a restarted host is still paused", restarted.redeem("000005"), .paused(seconds: 50))
+    expect("budget: garbage file starts fresh", GuessBudget.decode(Data("x".utf8)), GuessBudget())
+    expect("budget: encode round trip", GuessBudget.decode(restarted.budget.encoded), restarted.budget)
+
+    var revoked = RevokedDevices()
+    let ident = pairedIdentity(name: "air", suffix: "s", device: viewerA)
+    check("revoked: a paired viewer's messages count", revoked.accepts(ident, isPaired: { _ in false }))
+    revoked.revoke(viewerA)
+    check("revoked: after unpairing its messages are ignored", !revoked.accepts(ident, isPaired: { _ in false }))
+    check("revoked: password viewers are unaffected", revoked.accepts("view-browser-abcd", isPaired: { _ in false }))
+    check("revoked: other devices are unaffected", revoked.accepts(pairedIdentity(name: "b", suffix: "s", device: viewerB), isPaired: { _ in false }))
+    check("revoked: pairing again lifts it", revoked.accepts(ident, isPaired: { $0 == viewerA }) && revoked.ids.isEmpty)
+
+    let sdir = tempDir()
+    defer { try? FileManager.default.removeItem(at: sdir) }
+    expect("local secret: none before the host runs", LocalSecret.read(in: sdir), nil)
+    let made = LocalSecret.create(in: sdir)
+    check("local secret: long and random", (made?.count ?? 0) >= 40 && made != LocalSecret.create(in: tempDir()))
+    expect("local secret: the CLI reads what the host wrote", LocalSecret.read(in: sdir), made)
+    expect("local secret: file is 0600", mode(sdir.appendingPathComponent(LocalSecret.fileName)), 0o600)
+    _ = LocalSecret.create(in: sdir, secret: "short")
+    expect("local secret: a short value is not trusted", LocalSecret.read(in: sdir), nil)
 }

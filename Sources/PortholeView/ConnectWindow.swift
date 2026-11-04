@@ -3,7 +3,7 @@ import PortholeCore
 
 @MainActor
 final class ConnectWindow: NSWindow, NSTextFieldDelegate {
-    var onSubmit: ((_ address: String, _ name: String?, _ hostID: String?, _ secret: String?) -> Void)?
+    var onSubmit: ((_ address: String, _ name: String?, _ secret: String?) -> Void)?
     var onRequestPairing: ((_ address: String, _ name: String?) -> Void)?
     var onRefresh: (() -> Void)?
     var onCancel: (() -> Void)?
@@ -17,7 +17,6 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
     private let connectButton = NSButton(title: "Connect", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Quit", target: nil, action: nil)
     private var chosenName: String?
-    private var chosenID: String?
     private var targets: [ClosureTarget] = []
     private var rows: [(NSButton, String)] = []
 
@@ -139,7 +138,6 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
     private func choose(_ host: DiscoveredHost, address addr: String, trusted: Bool) {
         address.stringValue = addr
         chosenName = host.name
-        chosenID = host.hostID
         for (b, a) in rows { b.state = a == addr ? .on : .off }
         resetSecret()
         makeFirstResponder(address)
@@ -149,14 +147,12 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
     func fill(_ addr: String) {
         address.stringValue = addr
         chosenName = nil
-        chosenID = nil
         resetSecret()
     }
 
     func controlTextDidChange(_ obj: Notification) {
         guard (obj.object as? NSTextField) === address else { return }
         chosenName = nil
-        chosenID = nil
         for (b, a) in rows { b.state = a == address.stringValue ? .on : .off }
         resetSecret()
     }
@@ -192,6 +188,6 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
         let addr = address.stringValue.trimmingCharacters(in: .whitespaces)
         guard !addr.isEmpty else { showError("Pick a host or type its address."); return }
         message.isHidden = true
-        onSubmit?(addr, chosenName, chosenID, secret.isHidden ? nil : secret.stringValue)
+        onSubmit?(addr, chosenName, secret.isHidden ? nil : secret.stringValue)
     }
 }

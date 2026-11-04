@@ -27,7 +27,7 @@ enum HostCLI {
         guard let url = localURL(port: port, path: path, query) else { return (nil, nil) }
         var req = URLRequest(url: url)
         req.timeoutInterval = 4
-        req.setValue("1", forHTTPHeaderField: localRouteHeader)
+        req.setValue(LocalSecret.read(in: HostConfig.directory) ?? "", forHTTPHeaderField: localRouteHeader)
         let cfg = URLSessionConfiguration.ephemeral
         cfg.connectionProxyDictionary = [:]
         let session = URLSession(configuration: cfg)
@@ -46,7 +46,8 @@ enum HostCLI {
         let (status, body) = ask(config.httpPort, "/local/paircode")
         guard let status else { fail("Porthole Host isn't running on this Mac (nothing answers on port \(config.httpPort))."); return 1 }
         guard status == 200, let code = body?["code"] as? String else {
-            fail(status == 404 ? "The running Porthole Host is too old for paircode. Restart it after updating." : "The host answered HTTP \(status).")
+            fail(status == 404 ? "The running Porthole Host refused the local request. It may be an older version, or run as another user; restart it after updating."
+                 : "The host answered HTTP \(status).")
             return 1
         }
         print(code)
@@ -69,8 +70,10 @@ enum HostCLI {
     }
 
     private static func unpair(_ who: String) -> Int32 {
+        var running = false
         if let config = HostConfig.saved() {
             let (status, body) = ask(config.httpPort, "/local/unpair", ["who": who])
+            running = status != nil
             switch status {
             case 200?:
                 print("Unpaired \(body?["name"] as? String ?? who) (\(body?["id"] as? String ?? "?")). It lost access and was disconnected.")
@@ -84,6 +87,10 @@ enum HostCLI {
             }
         }
         switch TrustStore(directory: HostConfig.directory).unpair(who) {
+        case .found(let d) where running:
+            print("Unpaired \(d.name) (\(d.id)) in \(TrustStore.fileName); it can't get a new token.")
+            fail("The running Porthole Host refused the local request, so a viewer already connected from \(d.name) stays until it disconnects. Restart Porthole Host to drop it now.")
+            return 1
         case .found(let d):
             print("Unpaired \(d.name) (\(d.id)). Porthole Host isn't running, so there was nothing to disconnect.")
             return 0

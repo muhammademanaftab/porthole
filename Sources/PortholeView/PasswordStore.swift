@@ -89,10 +89,8 @@ enum PasswordStore {
         trust = t
     }
 
-    static func credential(for address: String, hostID: String? = nil) -> (ViewerCredential, hostID: String?)? {
-        let t = trust
-        if let paired = hostID.flatMap({ id in t.hosts.first { $0.id == id } }) ?? t.host(forAddress: address),
-           let secret = secret(forHost: paired.id) {
+    static func credential(for address: String) -> (ViewerCredential, hostID: String?)? {
+        if let paired = trust.host(forAddress: address), let secret = secret(forHost: paired.id) {
             return (.device(id: device.id, secret: secret), paired.id)
         }
         return password(for: address).map { (.password($0), nil) }

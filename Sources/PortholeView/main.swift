@@ -96,9 +96,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             w?.close()
             self.discovery.stop()
         }
-        w.onSubmit = { [weak self] address, name, hostID, secret in
-            self?.submit(address: address, name: name, hostID: hostID, secret: secret)
-        }
+        w.onSubmit = { [weak self] address, name, secret in self?.submit(address: address, name: name, secret: secret) }
         w.onRequestPairing = { [weak self] address, name in self?.requestPairing(address: address, name: name) }
         return w
     }
@@ -125,14 +123,14 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    func submit(address: String, name: String?, hostID: String?, secret: String?) {
+    func submit(address: String, name: String?, secret: String?) {
         guard let w = connectWindow else { return }
         guard splitHostAddress(address) != nil else {
             w.showError("\"\(address)\" isn't a host address. Use a name or IP, optionally with :port.")
             return
         }
         guard let secret, !secret.isEmpty else {
-            if let (cred, id) = PasswordStore.credential(for: address, hostID: hostID) {
+            if let (cred, id) = PasswordStore.credential(for: address) {
                 startConnection(address: address, name: name, credential: cred, saved: true, hostID: id)
             } else {
                 requestPairing(address: address, name: name)
@@ -194,10 +192,6 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 UserDefaults.standard.set(host, forKey: "host")
                 if case .password(let password) = credential, !PasswordStore.save(password, for: host) {
                     UserDefaults.standard.set(password, forKey: "password")
-                }
-                if case .device = credential, let hostID, let paired = PasswordStore.trust.hosts.first(where: { $0.id == hostID }),
-                   let secret = PasswordStore.secret(forHost: hostID) {
-                    PasswordStore.savePairing(hostID: hostID, name: paired.name, address: host, secret: secret)
                 }
                 PasswordStore.knownHosts = rememberHost(PasswordStore.knownHosts, KnownHost(name: name ?? host, address: host))
                 for _ in 0..<50 where c.hostParticipant == nil { try? await Task.sleep(nanoseconds: 100_000_000) }

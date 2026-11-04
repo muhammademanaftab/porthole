@@ -8,7 +8,7 @@ final class HostApp: NSObject, NSApplicationDelegate {
     lazy var server = LiveKitServer(config: config)
     let host = HostRoom()
     var http: HTTPServer?
-    let pairing = PairingDesk()
+    let pairing = PairingDesk(budgetFile: HostConfig.directory.appendingPathComponent("pairing-budget.json"))
     lazy var trust = HostTrust(desk: pairing, config: config)
     var statusItem: NSStatusItem?
     var settingsWindow: SettingsWindow?

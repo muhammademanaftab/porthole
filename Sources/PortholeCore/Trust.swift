@@ -191,6 +191,21 @@ public func revokedIdentities(_ identities: [String], isPaired: (String) -> Bool
     identities.filter { deviceID(fromIdentity: $0).map { !isPaired($0) } ?? false }
 }
 
+public struct RevokedDevices: Equatable, Sendable {
+    public private(set) var ids: Set<String> = []
+
+    public init() {}
+
+    public mutating func revoke(_ device: String) { ids.insert(device) }
+
+    public mutating func accepts(_ identity: String, isPaired: (String) -> Bool) -> Bool {
+        guard let device = deviceID(fromIdentity: identity), ids.contains(device) else { return true }
+        guard isPaired(device) else { return false }
+        ids.remove(device)
+        return true
+    }
+}
+
 public func identities(_ identities: [String], of device: String) -> [String] {
     identities.filter { deviceID(fromIdentity: $0) == device }
 }
@@ -281,8 +296,7 @@ public struct ViewerTrust: Codable, Equatable, Sendable {
     }
 
     public func host(for discovered: DiscoveredHost) -> PairedHost? {
-        if let id = discovered.hostID, let h = hosts.first(where: { $0.id == id }) { return h }
-        return discovered.addresses.lazy.compactMap { host(forAddress: $0) }.first
+        discovered.addresses.lazy.compactMap { host(forAddress: $0) }.first
     }
 
     public mutating func remember(id: String, name: String, address: String) {
@@ -303,7 +317,7 @@ public func hostKeyForTrust(hostID: String?, address: String) -> String {
     return "addr:" + (savedPasswordKey(address) ?? address.lowercased())
 }
 
-public enum HostCommand: Equatable, Sendable {
+public enum HostPairCommand: Equatable, Sendable {
     case app
     case paircode
     case devices
@@ -319,7 +333,7 @@ usage: porthole-host [command]
   unpair <name|id> forget a paired Mac; it loses access immediately
 """
 
-public func hostPairCommand(_ args: [String]) -> HostCommand {
+public func hostPairCommand(_ args: [String]) -> HostPairCommand {
     guard let first = args.first else { return .app }
     switch first {
     case "paircode": return args.count == 1 ? .paircode : .usage(error: "paircode takes no arguments")
@@ -368,6 +382,20 @@ public func isLocalHostHeader(_ header: String) -> Bool {
 }
 
 public let localRouteHeader = "X-Porthole-Local"
+
+public enum LocalSecret {
+    public static let fileName = "local-secret"
+
+    public static func read(in directory: URL) -> String? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent(fileName)) else { return nil }
+        let s = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.count >= 32 ? s : nil
+    }
+
+    public static func create(in directory: URL, secret: String = randomSecret(bytes: 32)) -> String? {
+        writePrivately(Data(secret.utf8), to: directory.appendingPathComponent(fileName)) ? secret : nil
+    }
+}
 
 public func showsPairingWindow(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
     environment["PORTHOLE_PAIR_HEADLESS"] != "1"

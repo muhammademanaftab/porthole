@@ -39,6 +39,8 @@ public struct WebRoutes {
     public var hostID: String?
     public var onPairRequest: ((PairRequester, String) -> Void)?
     public var onUnpair: ((PairedDevice) -> Void)?
+    public var localSecret: String?
+    public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
     static let mutatingPaths: Set<String> = ["/pair", "/pair/request", "/local/paircode", "/local/unpair"]
@@ -69,8 +71,12 @@ public struct WebRoutes {
             return HTTPResponse("405 Method Not Allowed", "text/plain", "method not allowed", headers: [("Allow", "GET")])
         }
         let hostHeader = hostLine.map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) } ?? ""
-        let local = fromLoopback && isLocalHostHeader(hostHeader)
-            && lines.dropFirst().contains { $0.lowercased().hasPrefix(localRouteHeader.lowercased() + ":") }
+        let local = fromLoopback && isLocalHostHeader(hostHeader) && localSecret.map { secret in
+            lines.dropFirst().contains { line in
+                guard line.lowercased().hasPrefix(localRouteHeader.lowercased() + ":") else { return false }
+                return constantTimeEqual(String(line.dropFirst(localRouteHeader.count + 1)).trimmingCharacters(in: .whitespaces), secret)
+            }
+        } == true
         var response = comps.path.hasPrefix("/local/") ? localRoute(comps, allowed: local) : route(comps, hostHeader: hostHeader)
         if parts[0] == "HEAD" { response.sendsBody = false }
         return response
@@ -96,7 +102,7 @@ public struct WebRoutes {
             case .device(let device):
                 identity = pairedIdentity(name: query["name"], suffix: suffix(), device: device.id)
             }
-            let token = tokens.make(identity: identity, room: "porthole", canPublish: false)
+            let token = tokens.make(identity: identity, room: "porthole", canPublish: false, ttl: Self.viewerTokenTTL)
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
             return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         case "/hello":
@@ -118,15 +124,13 @@ public struct WebRoutes {
     }
 
     private func pair(_ code: String, device: String?, name: String?) -> HTTPResponse {
-        guard let pairing else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
-        if let device {
-            guard trust != nil, DeviceIdentity.isValidID(device) else {
-                return Self.json("400 Bad Request", ["error": "That isn't a Porthole device ID."])
-            }
+        guard let pairing, let trust else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        guard let device else {
+            return Self.json("400 Bad Request", ["error": "This copy of Porthole is too old to pair with \(hostName). Update it, or use the host's password."])
         }
+        guard DeviceIdentity.isValidID(device) else { return Self.json("400 Bad Request", ["error": "That isn't a Porthole device ID."]) }
         let outcome = pairing.redeem(code, device: device)
         guard outcome == .accepted else { return Self.json("403 Forbidden", ["error": pairMessage(outcome) ?? ""]) }
-        guard let device, let trust else { return Self.json("200 OK", ["password": password]) }
         guard let secret = trust.pair(id: device, name: cleanDeviceName(name)) else {
             return Self.json("500 Internal Server Error", ["error": "The host couldn't save the pairing."])
         }
@@ -142,6 +146,8 @@ public struct WebRoutes {
         switch pairing.request(from: who) {
         case .throttled:
             return Self.json("429 Too Many Requests", ["error": "Too many pairing requests. Wait a few minutes and try again."])
+        case .busy(let seconds):
+            return Self.json("409 Conflict", ["error": "Another Mac is pairing with \(hostName) right now. Try again in \(seconds) s."])
         case .issued(let code), .same(let code):
             onPairRequest?(who, code)
             return Self.json("200 OK", ["requested": true, "host": hostName])

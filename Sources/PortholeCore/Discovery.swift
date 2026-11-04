@@ -196,7 +196,7 @@ public struct DiscoveredHost: Equatable, Sendable {
     }
 
     func matches(_ o: DiscoveredHost) -> Bool {
-        if let a = hostID, let b = o.hostID { return a == b }
+        if let a = hostID, let b = o.hostID, a != b { return false }
         if let a = tailscaleIP, let b = o.tailscaleIP { return a == b }
         if let a = lanHost?.lowercased(), let b = o.lanHost?.lowercased(), a == b { return true }
         return normalizedHostName(name) == normalizedHostName(o.name)
