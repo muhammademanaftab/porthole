@@ -27,6 +27,14 @@ enum Gallery {
             w.ask("Studio Mac mini is showing a pairing code for this Mac. Type it here; after that this Mac can view it without a password.")
         case "picker", "loading", "empty", "locked", "nomatch":
             picker(screen)
+        case "portal", "reconnecting":
+            let info = windows[1]
+            let c = Connection(hostAddress: "studio.local", credential: .password("gallery"))
+            let w = PortalWindow(windowID: info.id, title: info.portalTitle, subtitle: "Studio Mac mini", app: info.app,
+                                 size: CGSize(width: info.w, height: info.h), connection: c)
+            if screen == "reconnecting" { w.show(.reconnecting) }
+            w.makeKeyAndOrderFront(nil)
+            keep.append(w)
         case "settings":
             let w = ViewerSettingsWindow()
             keep.append(w)

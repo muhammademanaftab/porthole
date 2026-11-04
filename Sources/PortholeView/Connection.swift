@@ -14,6 +14,7 @@ final class Connection: NSObject, RoomDelegate {
     var onClipboard: ((String) -> Void)?
     var onIcon: ((UInt32, Data) -> Void)?
     var onThumb: ((UInt32, Data) -> Void)?
+    var onOpenError: ((UInt32, String) -> Void)?
     var onLink: ((LinkState) -> Void)?
     var streamSettings: () -> ViewerSettings = { ViewerSettings() }
 
@@ -190,7 +191,7 @@ final class Connection: NSObject, RoomDelegate {
                 self.subscribeIfPublished(id)
             case .closed: if let id = m.win { self.onClosed?(id) }
             case .error:
-                if let id = m.win { self.pending[id] = nil }
+                if let id = m.win, self.pending.removeValue(forKey: id) != nil { self.onOpenError?(id, m.msg ?? "Unknown error") }
                 self.onError?(m.msg ?? "Unknown error")
             default: break
             }

@@ -15,6 +15,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var muted = !ViewerSettingsWindow.current.playSound
     var muteItem: NSMenuItem?
     var settingsWindow: ViewerSettingsWindow?
+    var hostName = ""
     var connectWindow: ConnectWindow?
     let discovery = HostDiscovery()
 
@@ -222,6 +223,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func connect(host: String, credential: ViewerCredential, name: String? = nil, saved: Bool = false, hostID: String? = nil) {
         for p in portals.values { p.close() }
+        hostName = name ?? host
         if let old = connection { Task { await old.disconnect() } }
         picker?.close()
         let c = Connection(hostAddress: host, credential: credential)
@@ -237,6 +239,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
+        c.onOpenError = { [weak self] id, msg in self?.portals[id]?.show(.failed(msg)) }
+        c.onLink = { [weak self] state in
+            self?.portals.values.forEach { $0.linkChanged(state) }
+        }
         c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
         c.onIcon = { [weak self, weak picker] id, png in
             self?.icons[id] = png
@@ -281,22 +287,37 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     func open(_ info: WindowInfo) {
         if let existing = portals[info.id] { existing.makeKeyAndOrderFront(nil); return }
         guard let c = connection else { return }
-        let host = c.hostAddress
         icons[info.id] = nil
         c.requestIcon(info.id)
-        c.open(info.id) { [weak self] track, reply in
-            guard let self else { return }
-            let size = CGSize(width: reply.w ?? info.w, height: reply.h ?? info.h)
-            let portal = PortalWindow(windowID: info.id, title: info.portalTitle(host: host), size: size, track: track, connection: c)
-            portal.onClose = { [weak self] in
-                self?.connection?.close(info.id)
-                self?.portals[info.id] = nil
-                self?.tiles.remove(info.id)
-            }
-            self.portals[info.id] = portal
-            portal.makeKeyAndOrderFront(nil)
-            NSApp.activate()
-            self.startTile(info, portal: portal)
+        let portal = PortalWindow(windowID: info.id, title: info.portalTitle, subtitle: hostName, app: info.app,
+                                  size: CGSize(width: info.w, height: info.h), connection: c)
+        portal.onClose = { [weak self] in
+            self?.connection?.close(info.id)
+            self?.portals[info.id] = nil
+            self?.tiles.remove(info.id)
+        }
+        portal.onRetry = { [weak self, weak portal] in
+            guard let self, let portal else { return }
+            self.request(info, into: portal)
+        }
+        portals[info.id] = portal
+        portal.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        startTile(info, portal: portal)
+        request(info, into: portal)
+    }
+
+    func request(_ info: WindowInfo, into portal: PortalWindow) {
+        guard let c = connection else { return }
+        c.open(info.id) { [weak portal] track, reply in
+            guard let portal else { return }
+            if let w = reply.w, let h = reply.h { portal.fit(remote: CGSize(width: w, height: h)) }
+            portal.attach(track)
+        }
+        let host = hostName
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak portal] in
+            guard let portal, portal.isOpening else { return }
+            portal.show(.failed("No picture arrived from \(host). It may be busy, asleep or locked."))
         }
     }
 
