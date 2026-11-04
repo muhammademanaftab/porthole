@@ -25,6 +25,7 @@ public struct Message: Codable, Equatable, Sendable {
         case sized
         case companion
         case ask, control
+        case unlock
     }
 
     public enum MouseKind: String, Codable, Sendable {

@@ -15,18 +15,19 @@ public enum PortalPhase: Equatable, Sendable {
     case reconnecting
     case disconnected(String)
     case failed(String)
+    case locked
 
     public var busy: Bool {
         switch self {
         case .opening, .reconnecting: return true
-        case .disconnected, .failed: return false
+        case .disconnected, .failed, .locked: return false
         }
     }
 
     public var clearsOnPicture: Bool {
         switch self {
         case .opening, .failed: return true
-        case .reconnecting, .disconnected: return false
+        case .reconnecting, .disconnected, .locked: return false
         }
     }
 
@@ -36,6 +37,7 @@ public enum PortalPhase: Equatable, Sendable {
         case .reconnecting: return "Reconnecting…"
         case .disconnected: return "Disconnected"
         case .failed: return "Can't Open This Window"
+        case .locked: return "Screen Is Locked"
         }
     }
 
@@ -44,6 +46,7 @@ public enum PortalPhase: Equatable, Sendable {
         case .opening: return "Waiting for the first picture from the host."
         case .reconnecting: return "The connection to the host dropped. The picture comes back when it reconnects."
         case .disconnected(let why), .failed(let why): return why
+        case .locked: return "This Mac's screen is locked, so typing and clicks go to the lock screen."
         }
     }
 
@@ -52,6 +55,7 @@ public enum PortalPhase: Equatable, Sendable {
         case .opening, .reconnecting: return "arrow.triangle.2.circlepath"
         case .disconnected: return "wifi.exclamationmark"
         case .failed: return "exclamationmark.triangle.fill"
+        case .locked: return "lock.fill"
         }
     }
 
@@ -59,6 +63,10 @@ public enum PortalPhase: Equatable, Sendable {
         if case .failed = self { return true }
         return false
     }
+
+    public var canUnlock: Bool { self == .locked }
+
+    public var closeTitle: String { self == .locked ? "Not Now" : "Close Window" }
 }
 
 public func hostStatusLine(state: String, openWindows n: Int) -> String {

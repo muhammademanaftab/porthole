@@ -67,24 +67,57 @@ enum ViewerTools {
         }
     }
 
-    static func withWindows(_ host: String, _ then: @escaping @MainActor (String, [WindowInfo]) -> Void) -> Never {
+    static func withWindows(_ host: String, unlock: UnlockEnv.Request? = nil, _ then: @escaping @MainActor (String, [WindowInfo]) -> Void) -> Never {
         let address = resolve(host)
         guard let (cred, hostID) = PasswordStore.credential(for: address) else {
             fail("no saved pairing or password for \(address). Pair first: porthole-view request \(address)")
             finish(1)
         }
-        runLoop(timeout: 25, "waiting for \(address)'s window list") {
+        runLoop(timeout: UnlockEnv.cliTimeout(unlock), "waiting for \(address)'s window list") {
             let c = Connection(hostAddress: address, credential: cred, hostID: hostID)
             var done = false
+            var lockedSeen = false
+            var unlockTried = false
+            var relistLeft = 0
             c.onWindows = { list in
                 guard !done else { return }
+                if let unlock, UnlockEnv.shouldAsk(lockedSeen: lockedSeen, listEmpty: list.isEmpty, tried: unlockTried) {
+                    unlockTried = true
+                    print("\(address) is locked; asking it to type the password into its lock screen in \(unlock.delay) s")
+                    VLog.info("cli open: \(address) is locked; \(UnlockEnv.name) asks to unlock it in \(unlock.delay) s")
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: UInt64(unlock.delay) * 1_000_000_000)
+                        c.unlock(password: unlock.password)
+                    }
+                    return
+                }
+                if UnlockEnv.shouldRelist(listEmpty: list.isEmpty, triesLeft: relistLeft) {
+                    relistLeft -= 1
+                    VLog.info("cli open: the list is still empty after the unlock; asking again in \(UnlockEnv.relistEvery) s")
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: UInt64(UnlockEnv.relistEvery * 1_000_000_000))
+                        c.requestList()
+                    }
+                    return
+                }
                 done = true
                 Task { @MainActor in
                     then(address, WindowFilter.sortedForPicker(list))
                     await c.disconnect()
                 }
             }
-            c.onError = { msg in fail(msg) }
+            c.onUnlock = { m in
+                let line = "unlock: \(m.on == true ? "unlocked" : "not unlocked"): \(m.msg ?? "")"
+                VLog.info("cli open: \(line)")
+                guard m.on == true else { fail(line); finish(1) }
+                print(line)
+                relistLeft = UnlockEnv.relistTries
+                c.requestList()
+            }
+            c.onError = { msg in
+                if unlock != nil, UnlockPrompt.isLockNotice(msg) { lockedSeen = true; return }
+                fail(msg)
+            }
             Task { @MainActor in
                 do {
                     try await c.connect()
@@ -117,7 +150,11 @@ enum ViewerTools {
     }
 
     static func open(_ host: String, target: String) -> Never {
-        withWindows(host) { address, list in
+        let unlock = UnlockEnv.parse(ProcessInfo.processInfo.environment[UnlockEnv.name])
+        if ProcessInfo.processInfo.environment[UnlockEnv.name] != nil, unlock == nil {
+            fail("\(UnlockEnv.name) must be secs:password (secs 0 to \(UnlockEnv.maxDelay)); ignoring it")
+        }
+        withWindows(host, unlock: unlock) { address, list in
             switch pickWindow(target, in: list) {
             case .found(let w):
                 launch(address, w)
@@ -213,7 +250,7 @@ enum ViewerTools {
         if app.pathExtension == "app" {
             let cfg = NSWorkspace.OpenConfiguration()
             cfg.arguments = [address]
-            cfg.environment = env
+            cfg.environment = UnlockEnv.scrubbed(env)
             NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, error in
                 if let error { fail("couldn't open Porthole: \(error.localizedDescription)"); finish(1) }
                 finish(0)
@@ -224,7 +261,7 @@ enum ViewerTools {
         let p = Process()
         p.executableURL = exe
         p.arguments = [address]
-        p.environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new }
+        p.environment = UnlockEnv.scrubbed(ProcessInfo.processInfo.environment.merging(env) { _, new in new })
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { fail("couldn't start \(exe.path): \(error.localizedDescription)"); finish(1) }

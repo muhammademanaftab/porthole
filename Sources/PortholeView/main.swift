@@ -23,6 +23,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     let discovery = HostDiscovery()
     var openObserver: NSObjectProtocol?
     var pendingRecent: RecentPortal?
+    weak var unlockFrom: NSWindow?
+    var unlockStartedAt: Date?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
@@ -64,6 +66,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let mute = appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
         mute.state = muted ? .on : .off
         muteItem = mute
+        appMenu.addItem(withTitle: "Unlock Host\u{2026}", action: #selector(unlockHost), keyEquivalent: "")
         appMenu.addItem(withTitle: "Restart Host…", action: #selector(restartHost), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Porthole", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -291,7 +294,16 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             picker?.show(list)
             self?.autoOpen(list)
         }
-        c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
+        c.onError = { [weak self, weak picker] msg in
+            picker?.showError(msg)
+            picker?.orderFront(nil)
+            if msg == LockNotice.control { self?.portals.values.forEach { $0.hostLocked() } }
+        }
+        c.onUnlock = { [weak self, weak c] m in
+            guard let self, let c, self.connection === c else { return }
+            self.unlockAnswered(m)
+        }
+        picker.onUnlock = { [weak self, weak picker] in self?.askUnlock(from: picker) }
         c.onClosed = { [weak self] id in
             guard let self else { return }
             self.dismissedCompanions[id] = nil
@@ -424,8 +436,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             guard let self, let portal else { return }
             self.request(info.id, into: portal)
         }
+        portal.onUnlock = { [weak self, weak portal] in self?.askUnlock(from: portal) }
         portal.wholeScreen = info.screen == true
         portal.showRoute(c.route)
+        portal.unlocking = unlockStartedAt != nil
         portals[info.id] = portal
         portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
         portal.makeKeyAndOrderFront(nil)
@@ -517,7 +531,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     func pollClipboard() {
         guard !portals.isEmpty, let c = connection else { return }
         let pb = NSPasteboard.general
-        guard let text = clip.outgoing(changeCount: pb.changeCount, text: { pb.string(forType: .string) }) else { return }
+        guard let text = clip.outgoing(changeCount: pb.changeCount, types: { pb.types?.map(\.rawValue) ?? [] },
+                                       text: { pb.string(forType: .string) }) else { return }
         c.sendClipboard(text)
     }
 

@@ -33,6 +33,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_SCREEN_MATCH", "host", "0 or 1: force the viewer-sized Stage as the whole Mac's screen (on by itself on a Mac with only a headless stub display)", "detected"),
         EnvFlag("PORTHOLE_ROUTE", "viewer", "auto, local or tailscale: how the viewer reaches the host for this run (auto tries the same network first, then the saved or Tailscale address)", "the setting (auto)"),
         EnvFlag("PORTHOLE_OPEN", "viewer", "open the first window whose app and title contain this text (or id:<windowID>) once the list arrives", "unset"),
+        EnvFlag("PORTHOLE_OPEN_UNLOCK", "viewer", "secs:password: porthole open asks a locked host to type this login password into its lock screen after secs seconds; the outcome is logged, the value never printed", "unset", secret: true),
         EnvFlag("PORTHOLE_COMMAND", "internal", "watchdog: run the watchdog loop (set by the launch agent); app: run the host", "app"),
         EnvFlag("PORTHOLE_WATCHDOG_RELAUNCH", "internal", "why the watchdog launched this host (login, crash, hang, remote, migrate, missingAfterQuit)", "unset"),
         EnvFlag("PORTHOLE_LAUNCH_AGENT", "internal", "1: launched by the old login agent, which is then handed over to the watchdog", "unset"),

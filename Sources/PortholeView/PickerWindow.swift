@@ -28,6 +28,10 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     var route: String? { didSet { if route != oldValue { render() } } }
     var onThumbsWanted: (() -> Void)?
     var onIconWanted: ((UInt32) -> Void)?
+    var onUnlock: (() -> Void)?
+    var unlocking = false { didSet { render() } }
+
+    private func unlockAsked() { onUnlock?() }
 
     init(hostName: String, onPick: @escaping (WindowInfo) -> Void, refresh: @escaping () -> Void) {
         self.onPick = onPick
@@ -66,6 +70,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         background.state = .followsWindowActiveState
 
         notice.onAction = { [weak self] in self?.refresh() }
+        notice.onUnlock = { [weak self] in self?.unlockAsked() }
 
         statusIcon.imageScaling = .scaleProportionallyDown
         statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -265,7 +270,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         notice.isHidden = n == nil
         scroll.isHidden = n != nil
         hint.isHidden = n != nil
-        if let n { notice.show(n) }
+        if let n { notice.show(n, working: unlocking && n == .locked) }
         subtitle = loaded ? pickerCountLabel(total: all.count, shown: shown.count) : "Connecting…"
         if let error, !all.isEmpty {
             statusIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
@@ -458,7 +463,9 @@ final class NoticeView: NSStackView {
     private let body = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private let action = NSButton(title: "Refresh", target: nil, action: nil)
+    private let unlock = NSButton(title: "Unlock\u{2026}", target: nil, action: nil)
     var onAction: (() -> Void)?
+    var onUnlock: (() -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -477,7 +484,13 @@ final class NoticeView: NSStackView {
         action.bezelStyle = .rounded
         action.target = self
         action.action = #selector(fire)
-        for v in [spinner, icon, heading, body, action] { addArrangedSubview(v) }
+        unlock.bezelStyle = .rounded
+        unlock.keyEquivalent = "\r"
+        unlock.target = self
+        unlock.action = #selector(fireUnlock)
+        let buttons = NSStackView(views: [action, unlock])
+        buttons.spacing = 8
+        for v in [spinner, icon, heading, body, buttons] { addArrangedSubview(v) }
         setCustomSpacing(14, after: icon)
         setCustomSpacing(14, after: spinner)
         setCustomSpacing(16, after: body)
@@ -486,20 +499,23 @@ final class NoticeView: NSStackView {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func fire() { onAction?() }
+    @objc private func fireUnlock() { onUnlock?() }
 
-    func show(_ n: PickerNotice) {
-        let loading = n == .loading
+    func show(_ n: PickerNotice, working: Bool = false) {
+        let loading = n == .loading || working
         spinner.isHidden = !loading
         if loading { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         icon.isHidden = loading
         icon.image = NSImage(systemSymbolName: n.symbol, accessibilityDescription: nil)
         icon.contentTintColor = n == .locked ? .systemOrange : { if case .error = n { return .systemRed } else { return .tertiaryLabelColor } }()
         heading.stringValue = n.title
-        body.stringValue = n.message
+        body.stringValue = working ? UnlockPrompt.working : n.message
         switch n {
         case .loading, .noMatches: action.isHidden = true
         default: action.isHidden = false
         }
+        unlock.isHidden = n != .locked || onUnlock == nil || working
+        if working { action.isHidden = true }
     }
 }
 

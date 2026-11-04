@@ -12,6 +12,16 @@ func clipboardTests() {
     expect("text over 1 MB is not sent", c.outgoing(changeCount: 10) { String(repeating: "a", count: ClipboardSync.maxBytes + 1) }, nil)
     expect("exactly 1 MB is sent", c.outgoing(changeCount: 11) { String(repeating: "b", count: ClipboardSync.maxBytes) }?.utf8.count, ClipboardSync.maxBytes)
 
+    var p = ClipboardSync(changeCount: 0)
+    expect("a concealed copy (a password manager) is not sent",
+           p.outgoing(changeCount: 1, types: { ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"] }) { "hunter2" }, nil)
+    expect("a transient copy is not sent", p.outgoing(changeCount: 2, types: { ["org.nspasteboard.TransientType", "public.utf8-plain-text"] }) { "hunter2" }, nil)
+    expect("the skipped change is not sent later", p.outgoing(changeCount: 2, types: { [] }) { "hunter2" }, nil)
+    expect("an ordinary copy with types is sent", p.outgoing(changeCount: 3, types: { ["public.utf8-plain-text"] }) { "hello" }, "hello")
+    check("private types are recognised", ClipboardSync.isPrivate(types: ["org.nspasteboard.ConcealedType"])
+          && ClipboardSync.isPrivate(types: ["org.nspasteboard.TransientType"]) && !ClipboardSync.isPrivate(types: ["public.utf8-plain-text"])
+          && !ClipboardSync.isPrivate(types: []))
+
     var r = ClipboardSync(changeCount: 0)
     check("remote text is applied", r.incoming("from host"))
     check("the same remote text is not applied twice", !r.incoming("from host"))
