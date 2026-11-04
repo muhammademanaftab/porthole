@@ -233,6 +233,89 @@ if audioCheck {
     exit(0)
 }
 
+if env["PORTHOLE_P3"] != nil {
+    func take(_ kind: Message.Kind) -> [Message] {
+        probe.lock.lock(); defer { probe.lock.unlock() }
+        let hit = probe.inbox.filter { $0.t == kind }
+        probe.inbox.removeAll { $0.t == kind }
+        return hit
+    }
+    print("P3    opened at \(Int(opened.w ?? 0))x\(Int(opened.h ?? 0)) pt (picker said \(Int(target.w))x\(Int(target.h)))")
+    let startPx = counter.snapshot().1
+    var sent = 0
+    let dragStart = Date()
+    var throttle = LiveResizeThrottle()
+    while Date().timeIntervalSince(dragStart) < 1.5 {
+        let t = Date().timeIntervalSince(dragStart)
+        let size = CGSize(width: 700 + t * 300, height: 460 + t * 150)
+        if let s = throttle.during(size, now: t) {
+            var r = Message(.resize); r.win = target.id; r.w = s.width; r.h = s.height
+            try await probe.send(r); sent += 1
+        }
+        try await Task.sleep(nanoseconds: 1_000_000_000 / 120)
+        if Int(t * 10) % 5 == 0 { let px = counter.snapshot().1; print("DRAG  t=\(String(format: "%.2f", t)) frame \(Int(px.width))x\(Int(px.height)) px") }
+    }
+    let final = throttle.finish(CGSize(width: 1150, height: 685), now: 2)
+    var r = Message(.resize); r.win = target.id; r.w = final.width; r.h = final.height
+    try await probe.send(r); sent += 1
+    try await Task.sleep(nanoseconds: 1_500_000_000)
+    let endPx = counter.snapshot().1
+    print("P3    live drag sent \(sent) resizes in 1.5 s; picture \(Int(startPx.width))x\(Int(startPx.height)) -> \(Int(endPx.width))x\(Int(endPx.height)) px; sized replies \(take(.sized).count)")
+    var small = Message(.resize); small.win = target.id; small.w = 200; small.h = 120
+    try await probe.send(small)
+    try await Task.sleep(nanoseconds: 800_000_000)
+    let s1 = take(.sized)
+    print("P3    too-small resize: replies \(s1.map { "\(Int($0.w ?? 0))x\(Int($0.h ?? 0)) for \(Int($0.aw ?? 0))x\(Int($0.ah ?? 0))" })")
+    var big = Message(.resize); big.win = target.id; big.w = 3000; big.h = 2000
+    try await probe.send(big)
+    try await Task.sleep(nanoseconds: 800_000_000)
+    let s2 = take(.sized)
+    print("P3    too-big resize: replies \(s2.map { "\(Int($0.w ?? 0))x\(Int($0.h ?? 0)) for \(Int($0.aw ?? 0))x\(Int($0.ah ?? 0))" })")
+    var back = Message(.resize); back.win = target.id; back.w = 700; back.h = 460
+    try await probe.send(back)
+    let watchUntil = Date().addingTimeInterval(Double(env["PORTHOLE_P3_WATCH"] ?? "30") ?? 30)
+    var opened: Set<UInt32> = []
+    while Date() < watchUntil {
+        for c in take(.companion) {
+            print("P3    companion offered: window \(c.win ?? 0) over \(c.of ?? 0) at \(Int(c.x ?? 0)),\(Int(c.y ?? 0)) \(Int(c.w ?? 0))x\(Int(c.h ?? 0)) (parent \(Int(c.pw ?? 0))x\(Int(c.ph ?? 0)))")
+            guard let id = c.win, !opened.contains(id) else { continue }
+            opened.insert(id)
+            var o = Message(.open); o.win = id
+            try await probe.send(o)
+            let id2 = id
+            Task {
+                for _ in 0..<100 {
+                    if let cp = hostP.trackPublications.values.first(where: { $0.name == Message.trackName(for: id2) }) as? RemoteTrackPublication {
+                        try? await cp.set(subscribed: true)
+                        for _ in 0..<60 {
+                            if let vt = cp.track as? VideoTrack {
+                                let cc = FrameCounter(); vt.add(videoRenderer: cc)
+                                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                                let (n, sz) = cc.snapshot()
+                                print("P3    companion \(id2) picture: \(n) frames in 1 s at \(Int(sz.width))x\(Int(sz.height)) px")
+                                return
+                            }
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                        }
+                    }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                print("P3    companion \(id2): no track")
+            }
+        }
+        for c in take(.closed) { print("P3    closed: window \(c.win ?? 0)") }
+        for o in take(.opened) { print("P3    opened reply: window \(o.win ?? 0)") }
+        for e in take(.error) { print("P3    error: \(e.msg ?? "")") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+    }
+    var close = Message(.close); close.win = target.id
+    try await probe.send(close)
+    try await Task.sleep(nanoseconds: 500_000_000)
+    await probe.room.disconnect()
+    print("DONE")
+    exit(0)
+}
+
 let sendsInput = targetApp == "TextEdit"
 if sendsInput {
     var click = Message(.mouse); click.win = target.id; click.x = 0.5; click.y = 0.6; click.btn = 0; click.clicks = 1

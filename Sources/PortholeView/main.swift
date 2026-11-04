@@ -7,6 +7,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var connection: Connection?
     var picker: PickerWindow?
     var portals: [UInt32: PortalWindow] = [:]
+    var companions: [UInt32: PortalWindow] = [:]
+    var dismissedCompanions: [UInt32: UInt32] = [:]
     var titles: [UInt32: String] = [:]
     var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     var clipTimer: Timer?
@@ -84,6 +86,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         window.addItem(.separator())
+        window.addItem(withTitle: "Hide Title Bar Automatically", action: #selector(PortalWindow.toggleTitleBarAutoHide(_:)), keyEquivalent: "")
+        window.addItem(.separator())
         window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         let windowItem = NSMenuItem()
         windowItem.submenu = window
@@ -105,6 +109,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         muteItem?.state = muted ? .on : .off
         connection?.muted = muted
         settingsWindow?.reflect(s)
+        for p in portals.values { p.applyTitleBar(global: Self.hideTitleBar(s)) }
     }
 
     @objc func showSettings() {
@@ -225,6 +230,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func connect(host: String, credential: ViewerCredential, name: String? = nil, saved: Bool = false, hostID: String? = nil) {
         for p in portals.values { p.close() }
+        closeCompanions { _ in true }
+        dismissedCompanions.removeAll()
         hostName = name ?? host
         if let old = connection { Task { await old.disconnect() } }
         picker?.close()
@@ -240,8 +247,16 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             self?.autoOpen(list)
         }
         c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
-        c.onClosed = { [weak self] id in self?.portals[id]?.close() }
-        c.onOpenError = { [weak self] id, msg in self?.portals[id]?.show(.failed(msg)) }
+        c.onClosed = { [weak self] id in
+            guard let self else { return }
+            self.dismissedCompanions[id] = nil
+            self.closeCompanions { $0 == id }
+            self.portals[id]?.close()
+        }
+        c.onCompanion = { [weak self] m in self?.companionOffered(m) }
+        c.isCompanion = { [weak self] id in self?.companions[id] != nil }
+        c.onSized = { [weak self] m in if let id = m.win { self?.portals[id]?.hostSized(m) } }
+        c.onOpenError = { [weak self] id, msg in (self?.portals[id] ?? self?.companions[id])?.show(.failed(msg)) }
         c.onLink = { [weak self] state in
             self?.portals.values.forEach { $0.linkChanged(state) }
         }
@@ -258,6 +273,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             guard let self, let c, self.connection === c else { return }
             picker?.showError("Reconnected.")
             c.requestList()
+            self.closeCompanions { _ in true }
+            self.dismissedCompanions.removeAll()
             for (id, portal) in self.portals {
                 portal.reopen()
                 self.request(id, into: portal, fit: false)
@@ -337,16 +354,65 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             self?.connection?.close(info.id)
             self?.portals[info.id] = nil
             self?.tiles.remove(info.id)
+            self?.closeCompanions { [weak self] in self?.companions[$0]?.companionOf == info.id }
+            self?.dismissedCompanions = self?.dismissedCompanions.filter { $0.value != info.id } ?? [:]
+        }
+        portal.onLayout = { [weak self, weak portal] in
+            guard let self, let portal else { return }
+            for child in self.companions.values where child.companionOf == info.id {
+                if let m = child.companionOffer { child.place(companion: m, over: portal) }
+            }
         }
         portal.onRetry = { [weak self, weak portal] in
             guard let self, let portal else { return }
             self.request(info.id, into: portal)
         }
         portals[info.id] = portal
+        portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
         portal.makeKeyAndOrderFront(nil)
         NSApp.activate()
         startTile(info, portal: portal)
         request(info.id, into: portal)
+    }
+
+    func companionOffered(_ m: Message) {
+        guard let id = m.win, let parentID = m.of, let parent = portals[parentID], let c = connection,
+              dismissedCompanions[id] == nil else { return }
+        if let existing = companions[id] {
+            existing.place(companion: m, over: parent)
+            return
+        }
+        let portal = PortalWindow(windowID: id, title: parent.title, subtitle: hostName, app: "", size: CGSize(width: m.w ?? 400, height: m.h ?? 300),
+                                  connection: c, companion: true)
+        portal.companionOf = parentID
+        portal.onClose = { [weak self, weak portal] in
+            guard let self else { return }
+            if portal?.closedByHost != true { self.dismissedCompanions[id] = parentID }
+            self.connection?.close(id)
+            self.companions[id] = nil
+        }
+        portal.onRetry = { [weak self, weak portal] in
+            guard let self, let portal else { return }
+            self.request(id, into: portal, fit: false)
+        }
+        companions[id] = portal
+        portal.place(companion: m, over: parent)
+        parent.addChildWindow(portal, ordered: .above)
+        if parent.isKeyWindow || NSApp.isActive { portal.makeKeyAndOrderFront(nil) } else { portal.orderFront(nil) }
+        request(id, into: portal, fit: false)
+    }
+
+    func closeCompanions(where match: (UInt32) -> Bool) {
+        for id in companions.keys.sorted() where match(id) {
+            guard let p = companions[id] else { continue }
+            p.closedByHost = true
+            p.parent?.removeChildWindow(p)
+            p.close()
+        }
+    }
+
+    static func hideTitleBar(_ s: ViewerSettings) -> Bool {
+        TitleBarReveal.global(saved: s.hideTitleBar, environment: ProcessInfo.processInfo.environment)
     }
 
     func request(_ id: UInt32, into portal: PortalWindow, fit: Bool = true) {

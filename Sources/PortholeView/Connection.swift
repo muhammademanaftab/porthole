@@ -15,6 +15,9 @@ final class Connection: NSObject, RoomDelegate {
     var onIcon: ((UInt32, Data) -> Void)?
     var onThumb: ((UInt32, Data) -> Void)?
     var onOpenError: ((UInt32, String) -> Void)?
+    var isCompanion: (UInt32) -> Bool = { _ in false }
+    var onSized: ((Message) -> Void)?
+    var onCompanion: ((Message) -> Void)?
     var onLink: ((LinkState) -> Void)?
     var streamSettings: () -> ViewerSettings = { ViewerSettings() }
 
@@ -268,7 +271,14 @@ final class Connection: NSObject, RoomDelegate {
                 self.openedReplies[id] = m
                 self.subscribeIfPublished(id)
             case .closed: if let id = m.win { self.onClosed?(id) }
+            case .sized: self.onSized?(m)
+            case .companion: self.onCompanion?(m)
             case .error:
+                if let id = m.win, self.isCompanion(id) {
+                    self.pending[id] = nil
+                    self.onOpenError?(id, m.msg ?? "Unknown error")
+                    return
+                }
                 if let id = m.win, self.pending.removeValue(forKey: id) != nil {
                     VLog.warn("host refused window \(id): \(m.msg ?? "unknown error")")
                     self.onOpenError?(id, m.msg ?? "Unknown error")

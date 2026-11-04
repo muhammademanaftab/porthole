@@ -1,4 +1,5 @@
 import ApplicationServices
+import Foundation
 
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
@@ -22,6 +23,38 @@ enum AXWindows {
         return windows.first { windowID($0) == id }
     }
 
+    static let attachedRoles: Set<String> = ["AXSheet", "AXPopover", "AXDrawer"]
+
+    static func attachedWindowIDs(parent: UInt32, pid: pid_t) -> Set<UInt32> {
+        guard let w = window(id: parent, pid: pid) else { return [] }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(w, kAXChildrenAttribute as CFString, &value) == .success,
+              let children = value as? [AXUIElement] else { return [] }
+        var out = Set<UInt32>()
+        for c in children {
+            guard let role = string(c, kAXRoleAttribute), attachedRoles.contains(role), let id = windowID(c), id != parent else { continue }
+            out.insert(id)
+        }
+        return out
+    }
+
+    static func isFullscreen(_ w: AXUIElement) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(w, "AXFullScreen" as CFString, &value) == .success else { return nil }
+        return (value as? NSNumber)?.boolValue
+    }
+
+    @discardableResult
+    static func setFullscreen(_ w: AXUIElement, _ on: Bool) -> Bool {
+        AXUIElementSetAttributeValue(w, "AXFullScreen" as CFString, (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef) == .success
+    }
+
+    static func string(_ e: AXUIElement, _ attribute: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
     static func focusedWindowID(pid: pid_t) -> UInt32? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app(pid), kAXFocusedWindowAttribute as CFString, &value) == .success,
@@ -35,6 +68,14 @@ enum AXWindows {
               let v = value, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
         var p = CGPoint.zero
         return AXValueGetValue(v as! AXValue, .cgPoint, &p) ? p : nil
+    }
+
+    static func size(_ w: AXUIElement) -> CGSize? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(w, kAXSizeAttribute as CFString, &value) == .success,
+              let v = value, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var s = CGSize.zero
+        return AXValueGetValue(v as! AXValue, .cgSize, &s) ? s : nil
     }
 
     @discardableResult

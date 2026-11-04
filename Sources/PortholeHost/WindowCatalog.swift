@@ -15,7 +15,10 @@ enum WindowCatalog {
     }
 
     static func list() async throws -> [WindowInfo] {
-        WindowFilter.sortedForPicker(try await shareable().map { w in
+        let displays = LiveWindow.displays().map(\.frame)
+        let all = try await shareable(onScreenOnly: false)
+        let listed = all.filter { FullscreenPolicy.listed(onScreen: $0.isOnScreen, bounds: $0.frame, displays: displays) }
+        return WindowFilter.sortedForPicker(listed.map { w in
             WindowInfo(id: w.windowID, app: w.owningApplication?.applicationName ?? "",
                        title: w.title ?? "", bundle: w.owningApplication?.bundleIdentifier,
                        w: w.frame.width, h: w.frame.height)

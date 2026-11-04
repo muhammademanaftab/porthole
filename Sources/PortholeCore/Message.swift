@@ -21,6 +21,8 @@ public struct Message: Codable, Equatable, Sendable {
         case windows, opened, closed, error
         case icon, thumb
         case restart
+        case sized
+        case companion
     }
 
     public enum MouseKind: String, Codable, Sendable {
@@ -52,6 +54,11 @@ public struct Message: Codable, Equatable, Sendable {
     public var bitrate: Int?
     public var fps: Int?
     public var level: Double?
+    public var aw: Double?
+    public var ah: Double?
+    public var of: UInt32?
+    public var pw: Double?
+    public var ph: Double?
 
     public init(_ t: Kind) { self.t = t }
 

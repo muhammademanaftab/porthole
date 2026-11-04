@@ -243,6 +243,7 @@ final class SharingPane: NSViewController {
     private let screenRow = NSStackView()
     private let accessRow = NSStackView()
     private let pairedLabel = NSTextField(labelWithString: "")
+    private let dialogs = NSButton(checkboxWithTitle: "Show Dialogs as Their Own Windows", target: nil, action: nil)
     private var revealed = false
 
     init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust) {
@@ -282,17 +283,22 @@ final class SharingPane: NSViewController {
         copyPassword.controlSize = .small
 
         for r in [screenRow, accessRow] { r.orientation = .horizontal; r.spacing = 8; r.alignment = .centerY }
+        dialogs.target = self
+        dialogs.action = #selector(toggleDialogs)
+        let windows = Form.column([dialogs, Form.note("A sheet, alert, Save or Print panel that opens over a shared window gets its own window on the viewer, next to that window. Off: sheets and menus are drawn into the window's picture.")])
 
         let grid = Form.grid([
             [Form.label("Viewers:"), viewers],
             [Form.label("Browser link:"), Form.column([Form.row([linkLabel, copyLink]),
                                                         Form.note("Opens this Mac's windows in any browser with the password.")])],
             [Form.label("Password:"), Form.row([passwordLabel, reveal, copyPassword], spacing: 4)],
+            [Form.label("Windows:"), windows],
             [Form.label("Screen Recording:"), screenRow],
             [Form.label("Accessibility:"), accessRow],
         ])
         grid.row(at: 1).topPadding = 10
         grid.row(at: 3).topPadding = 10
+        grid.row(at: 4).topPadding = 10
         view = Form.pane(grid)
     }
 
@@ -309,6 +315,7 @@ final class SharingPane: NSViewController {
         reveal.image = NSImage(systemSymbolName: revealed ? "eye.slash" : "eye", accessibilityDescription: revealed ? "Hide" : "Show")
         let n = trust.store.devices().count
         pairedLabel.stringValue = n == 0 ? "No Macs are paired yet." : "\(n) Mac\(n == 1 ? " is" : "s are") paired with this one."
+        dialogs.state = CompanionRules.enabled(stored: UserDefaults.standard.object(forKey: CompanionRules.settingKey), environment: [:]) ? .on : .off
         fill(screenRow, ok: CGPreflightScreenCaptureAccess(), action: #selector(openScreenSettings))
         fill(accessRow, ok: InputInjector.isTrusted, action: #selector(openAXSettings))
     }
@@ -321,6 +328,12 @@ final class SharingPane: NSViewController {
             b.controlSize = .small
             row.addArrangedSubview(b)
         }
+    }
+
+    @objc private func toggleDialogs() {
+        let on = dialogs.state == .on
+        UserDefaults.standard.set(on, forKey: CompanionRules.settingKey)
+        Log.info("settings: show dialogs as their own windows \(on ? "on" : "off")")
     }
 
     @objc private func pairNew() { trust.presentNewCode() }

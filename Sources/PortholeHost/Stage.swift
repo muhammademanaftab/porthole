@@ -122,6 +122,35 @@ final class Stage {
         return NSScreen.screens.first { ($0.deviceDescription[key] as? NSNumber)?.uint32Value == id }?.backingScaleFactor ?? 1
     }
 
+    static let fullscreenPolicy = FullscreenPolicy(environment: ProcessInfo.processInfo.environment)
+
+    func leaveFullscreen(_ id: UInt32) async -> Bool {
+        guard let live = LiveWindow.lookup(id) else { return true }
+        guard let w = AXWindows.window(id: id, pid: live.pid) else {
+            Log.info("fullscreen: window \(id) of pid \(live.pid) has no accessibility element")
+            return true
+        }
+        let full = AXWindows.isFullscreen(w) == true
+        guard Self.fullscreenPolicy.shouldExit(isFullscreen: full) else { return !full }
+        guard AXWindows.setFullscreen(w, false) else {
+            Log.info("fullscreen: could not take window \(id) out of full screen; sharing it where it is")
+            return false
+        }
+        let deadline = Date().addingTimeInterval(FullscreenPolicy.exitTimeout)
+        var done = false
+        while Date() < deadline, !done {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            done = FullscreenPolicy.exitDone(stillFullscreen: AXWindows.isFullscreen(w), before: live.bounds, now: LiveWindow.lookup(id)?.bounds)
+        }
+        guard done else {
+            Log.info("fullscreen: window \(id) did not leave full screen within \(Int(FullscreenPolicy.exitTimeout)) s; sharing it where it is")
+            return false
+        }
+        try? await Task.sleep(nanoseconds: UInt64(FullscreenPolicy.settleSeconds * 1_000_000_000))
+        Log.info("fullscreen: window \(id) left full screen, now \(LiveWindow.lookup(id)?.bounds ?? .zero)")
+        return true
+    }
+
     func park(_ id: UInt32) async {
         guard let stage = bounds, parked[id] == nil, let live = LiveWindow.lookup(id),
               let w = AXWindows.window(id: id, pid: live.pid), let home = AXWindows.position(w) else { return }

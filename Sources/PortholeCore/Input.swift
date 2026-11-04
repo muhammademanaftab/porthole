@@ -72,8 +72,13 @@ public enum ViewerInput {
     public static let moveInterval: TimeInterval = 1.0 / 60
     public static let pixelsPerScrollLine: Double = 16
 
-    public static func point(_ p: CGPoint, kind: Message.MouseKind?, contentPixels: CGSize, bounds: CGRect) -> CGPoint? {
+    public static func point(_ p: CGPoint, kind: Message.MouseKind?, contentPixels: CGSize, bounds: CGRect, fill: Bool = false) -> CGPoint? {
         let content = contentPixels == .zero ? bounds.size : contentPixels
+        if fill {
+            let r = filledRect(content: content, in: bounds)
+            guard r.width > 0, r.height > 0 else { return nil }
+            return CGPoint(x: min(max((p.x - r.minX) / r.width, 0), 1), y: min(max((p.y - r.minY) / r.height, 0), 1))
+        }
         let clamp = kind == .up || kind == .drag
         return clamp ? clampedNormalized(p, content: content, in: bounds) : normalized(p, content: content, in: bounds)
     }

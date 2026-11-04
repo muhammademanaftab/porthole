@@ -15,6 +15,7 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     private var timer: DispatchSourceTimer?
     private var padTimer: DispatchSourceTimer?
     private var pacer: FramePacer
+    private var follow = SizeFollowSchedule()
     private var ladder = ScaleLadder(native: 2)
     private var lastInputAt: Double?
     private var submitted = 0
@@ -109,8 +110,14 @@ final class WindowSession: NSObject, SCStreamOutput, SCStreamDelegate, TrackDele
     }
 
     func followSizeSoon() {
-        for delay in CapturePacing.followSizeDelays {
-            queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.followSize() }
+        queue.async { [weak self] in
+            guard let self, !stopped else { return }
+            for (delay, step) in follow.request() {
+                queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, follow.shouldRun(step) else { return }
+                    followSize()
+                }
+            }
         }
     }
 
