@@ -245,6 +245,7 @@ final class SharingPane: NSViewController {
     private let pairedLabel = NSTextField(labelWithString: "")
     private let dialogs = NSButton(checkboxWithTitle: "Show Dialogs as Their Own Windows", target: nil, action: nil)
     private let wholeMac = NSPopUpButton()
+    private let curtain = NSButton(checkboxWithTitle: "Curtain while the whole Mac is shared", target: nil, action: nil)
     private var revealed = false
 
     init(link: @escaping () -> String, password: @escaping () -> String, trust: HostTrust) {
@@ -290,10 +291,15 @@ final class SharingPane: NSViewController {
         wholeMac.addItems(withTitles: WholeMacMode.allCases.map(\.label))
         wholeMac.target = self
         wholeMac.action = #selector(wholeMacChanged)
+        curtain.target = self
+        curtain.action = #selector(toggleCurtain)
         let whole = Form.column([
             Form.row([Form.label("Allow Whole Mac:"), wholeMac]),
             Form.note("Paired Macs and password viewers get a Whole Mac card that shows and controls this Mac's entire screen. Ask: a notice here asks the first time each viewer opens it. On a Mac with no screen attached, the Stage at the viewer's size becomes the screen."),
+            curtain,
+            Form.note("A frosted notice covers this Mac's screens and its keyboard, mouse and trackpad are paused while the whole Mac is shared. \(CurtainFilter.escapeHint) takes it back; it also lifts after 30 minutes."),
         ])
+        whole.setCustomSpacing(10, after: whole.arrangedSubviews[1])
 
         let grid = Form.grid([
             [Form.label("Viewers:"), viewers],
@@ -328,6 +334,8 @@ final class SharingPane: NSViewController {
         dialogs.state = CompanionRules.enabled(stored: UserDefaults.standard.object(forKey: CompanionRules.settingKey), environment: [:]) ? .on : .off
         let mode = WholeMac.mode(stored: UserDefaults.standard.object(forKey: WholeMac.settingKey), environment: [:])
         wholeMac.selectItem(at: WholeMacMode.allCases.firstIndex(of: mode) ?? 1)
+        curtain.state = CurtainSetting.enabled(stored: UserDefaults.standard.object(forKey: CurtainSetting.settingKey), environment: [:]) ? .on : .off
+        curtain.isEnabled = mode != .off
         fill(screenRow, ok: CGPreflightScreenCaptureAccess(), action: #selector(openScreenSettings))
         fill(accessRow, ok: InputInjector.isTrusted, action: #selector(openAXSettings))
     }
@@ -353,6 +361,13 @@ final class SharingPane: NSViewController {
         UserDefaults.standard.set(mode.rawValue, forKey: WholeMac.settingKey)
         Log.info("settings: allow whole mac \(mode.rawValue)")
         refresh()
+    }
+
+    @objc private func toggleCurtain() {
+        let on = curtain.state == .on
+        UserDefaults.standard.set(on, forKey: CurtainSetting.settingKey)
+        Log.info("settings: curtain while the whole mac is shared \(on ? "on" : "off")")
+        (NSApp.delegate as? HostApp)?.host.wholeMacChanged()
     }
 
     @objc private func pairNew() { trust.presentNewCode() }

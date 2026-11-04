@@ -4,7 +4,11 @@ import PortholeCore
 
 @MainActor
 final class InputInjector {
-    private let source = CGEventSource(stateID: .hidSystemState)
+    private let source: CGEventSource? = {
+        let s = CGEventSource(stateID: .hidSystemState)
+        s?.userData = PortholeEventTag.value
+        return s
+    }()
     private var focusedWindow: UInt32?
     private var buttonsDown: Set<Int> = []
     private var axWindows: [UInt32: AXUIElement] = [:]

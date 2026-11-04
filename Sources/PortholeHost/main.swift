@@ -165,6 +165,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !isGallery else { NSApp.terminate(nil); return }
         HostFiles.writeMarker(marker)
         Log.info("quitting (\(marker.rawValue))", .host)
+        liftCurtain()
         host.stage.release()
         server.stop()
         NSApp.terminate(nil)
@@ -174,6 +175,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !isGallery else { return }
         HostFiles.writeMarker(.session, unlessPresent: true)
         Log.info("terminating (\(HostFiles.readMarker()?.rawValue ?? ExitMarker.session.rawValue))", .host)
+        liftCurtain()
         host.stage.release()
         Log.flush()
     }

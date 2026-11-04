@@ -26,6 +26,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_WEB_ROOT", "host", "folder served as the browser viewer instead of the bundled web files", "Contents/Resources/web"),
         EnvFlag("PORTHOLE_LIVEKIT_SERVER", "host", "path of the livekit-server binary to run", "the bundled one, then Homebrew's"),
         EnvFlag("PORTHOLE_WHOLE_MAC", "host", "off, ask or always: whether viewers may open the whole Mac, for this run only", "the saved setting (ask)"),
+        EnvFlag("PORTHOLE_CURTAIN", "host", "0 or 1: whether the privacy curtain covers this Mac while the whole Mac is shared, for this run only", "the saved switch (off)"),
         EnvFlag("PORTHOLE_SCREEN_MATCH", "host", "0 or 1: force the viewer-sized Stage as the whole Mac's screen (on by itself on a Mac with only a headless stub display)", "detected"),
         EnvFlag("PORTHOLE_OPEN", "viewer", "open the first window whose app and title contain this text (or id:<windowID>) once the list arrives", "unset"),
         EnvFlag("PORTHOLE_COMMAND", "internal", "watchdog: run the watchdog loop (set by the launch agent); app: run the host", "app"),

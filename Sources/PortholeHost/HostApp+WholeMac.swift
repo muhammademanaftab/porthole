@@ -3,7 +3,12 @@ import PortholeCore
 
 @MainActor
 final class WholeMacUI {
+    let screens = CurtainWindows()
+    lazy var curtain = CurtainController(tap: EventTapCurtain(), screens: screens)
     let prompt = WholeMacPrompt()
+    var timer: Timer?
+    var lastLive = 0
+    var lastViewer: String?
 }
 
 extension HostApp {
@@ -16,6 +21,39 @@ extension HostApp {
             self?.refresh()
         }
         host.wholeMac.settled = { key in ui.prompt.close(key) }
-        Log.info("whole mac: \(host.wholeMac.mode().rawValue)")
+        ui.screens.skip = { [weak room] in room?.stage.displayID }
+        ui.curtain.onEscape = { [weak self] in
+            Log.info("curtain: taken back on this Mac with \(CurtainFilter.escapeHint)")
+            ui.curtain.escape()
+            self?.refresh()
+        }
+        host.wholeMac.liveChanged = { live, viewer in
+            ui.lastLive = live
+            ui.lastViewer = viewer
+            Self.applyCurtain(ui, environment: env)
+        }
+        Log.info("whole mac: \(host.wholeMac.mode().rawValue); curtain \(CurtainSetting.enabled(stored: UserDefaults.standard.object(forKey: CurtainSetting.settingKey), environment: env) ? "on" : "off")")
+    }
+
+    static func applyCurtain(_ ui: WholeMacUI, environment env: [String: String]) {
+        let enabled = CurtainSetting.enabled(stored: UserDefaults.standard.object(forKey: CurtainSetting.settingKey), environment: env)
+        let wasUp = ui.curtain.isUp
+        ui.curtain.update(enabled: enabled, liveScreens: ui.lastLive, viewer: ui.lastViewer, now: ProcessInfo.processInfo.systemUptime)
+        if ui.curtain.isUp, ui.timer == nil {
+            ui.timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    ui.curtain.tick(now: ProcessInfo.processInfo.systemUptime)
+                    if !ui.curtain.isUp { ui.timer?.invalidate(); ui.timer = nil }
+                }
+            }
+        }
+        if !ui.curtain.isUp { ui.timer?.invalidate(); ui.timer = nil }
+        if wasUp != ui.curtain.isUp {
+            Log.info(ui.curtain.isUp ? "curtain: raised (blocking input \(ui.curtain.isBlocking))" : "curtain: lifted (\(ui.curtain.lastLift?.rawValue ?? "?"))")
+        }
+    }
+
+    func liftCurtain() {
+        wholeMacUI.curtain.shutdown()
     }
 }
