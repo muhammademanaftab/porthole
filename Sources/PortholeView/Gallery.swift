@@ -27,6 +27,10 @@ enum Gallery {
             w.ask("Studio Mac mini is showing a pairing code for this Mac. Type it here; after that this Mac can view it without a password.")
         case "picker", "loading", "empty", "locked", "nomatch":
             picker(screen)
+        case "settings":
+            let w = ViewerSettingsWindow()
+            keep.append(w)
+            w.present(tab: 2)
         default:
             _ = connect()
         }

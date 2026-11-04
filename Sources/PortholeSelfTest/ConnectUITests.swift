@@ -64,4 +64,8 @@ func galleryTests() {
     expect("gallery: other commands", galleryScreen(["mini", "pw"]), nil)
     expect("gallery: no arguments", galleryScreen([]), nil)
     check("gallery: screens are unique", Set(galleryScreens).count == galleryScreens.count)
+    expect("host gallery: bare command shows Settings", galleryScreen(["gallery"], screens: hostGalleryScreens), "settings")
+    expect("host gallery: the menu", galleryScreen(["gallery", "menu"], screens: hostGalleryScreens), "menu")
+    expect("host gallery: viewer screens are not host screens", galleryScreen(["gallery", "picker"], screens: hostGalleryScreens), nil)
+    expect("gallery: an empty screen list never matches", galleryScreen(["gallery"], screens: []), nil)
 }

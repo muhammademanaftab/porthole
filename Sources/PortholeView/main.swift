@@ -12,7 +12,9 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var clipTimer: Timer?
     let tiles = TileManager()
     var icons: [UInt32: Data] = [:]
-    var muted = false
+    var muted = !ViewerSettingsWindow.current.playSound
+    var muteItem: NSMenuItem?
+    var settingsWindow: ViewerSettingsWindow?
     var connectWindow: ConnectWindow?
     let discovery = HostDiscovery()
 
@@ -45,21 +47,68 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Restart Host", action: #selector(restartHost), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Porthole", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "0")
+        appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "k")
+        let mute = appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
+        mute.state = muted ? .on : .off
+        muteItem = mute
+        appMenu.addItem(withTitle: "Restart Host…", action: #selector(restartHost), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Porthole", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Porthole", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Find…", action: #selector(PickerWindow.performFindPanelAction(_:)), keyEquivalent: "f")
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let window = NSMenu(title: "Window")
+        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        window.addItem(.separator())
+        window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        let windowItem = NSMenuItem()
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        NSApp.windowsMenu = window
         NSApp.mainMenu = main
     }
 
     @objc func showPicker() { picker?.makeKeyAndOrderFront(nil); connection?.requestList() }
     @objc func toggleMute(_ item: NSMenuItem) {
-        muted.toggle()
-        item.state = muted ? .on : .off
+        var s = ViewerSettingsWindow.current
+        s.playSound = muted
+        ViewerSettingsWindow.save(s)
+        applySettings(s)
+    }
+
+    func applySettings(_ s: ViewerSettings) {
+        muted = !s.playSound
+        muteItem?.state = muted ? .on : .off
         connection?.muted = muted
+        settingsWindow?.reflect(s)
+    }
+
+    @objc func showSettings() {
+        let w = settingsWindow ?? ViewerSettingsWindow()
+        w.onChange = { [weak self] s in self?.applySettings(s) }
+        settingsWindow = w
+        w.present()
     }
 
     @objc func restartHost() {

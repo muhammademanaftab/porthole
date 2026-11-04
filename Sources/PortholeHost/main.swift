@@ -21,6 +21,10 @@ final class HostApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst()), screens: hostGalleryScreens) {
+            HostGallery.show(screen, app: self)
+            return
+        }
         HostFiles.clearMarker()
         let env = ProcessInfo.processInfo.environment
         if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)") }
@@ -125,14 +129,10 @@ final class HostApp: NSObject, NSApplicationDelegate {
     @objc func copyPassword() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(config.password, forType: .string) }
     @objc func pairViewer() { trust.presentNewCode() }
     @objc func showPairedMacs() { trust.showPaired() }
-    @objc func openScreenSettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-    }
-    @objc func openAXSettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
+    @objc func openScreenSettings() { HostSystemSettings.openScreenRecording() }
+    @objc func openAXSettings() { HostSystemSettings.openAccessibility() }
     @objc func showSettings() {
-        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password })
+        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password }, trust: trust)
         settingsWindow = w
         w.present()
     }

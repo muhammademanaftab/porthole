@@ -87,9 +87,11 @@ public func connectStatus(found: Int, scanning: Bool) -> String {
 
 public let galleryScreens = ["connect", "code", "picker", "loading", "empty", "locked", "nomatch", "settings", "portal", "reconnecting"]
 
-public func galleryScreen(_ args: [String]) -> String? {
-    guard args.first == "gallery" else { return nil }
-    if args.count == 1 { return galleryScreens[0] }
-    guard args.count == 2, galleryScreens.contains(args[1]) else { return nil }
+public let hostGalleryScreens = ["settings", "sharing", "help", "menu", "pairing"]
+
+public func galleryScreen(_ args: [String], screens: [String] = galleryScreens) -> String? {
+    guard args.first == "gallery", let first = screens.first else { return nil }
+    if args.count == 1 { return first }
+    guard args.count == 2, screens.contains(args[1]) else { return nil }
     return args[1]
 }
