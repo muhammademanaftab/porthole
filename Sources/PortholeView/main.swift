@@ -239,6 +239,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
+        c.onSized = { [weak self] m in if let id = m.win { self?.portals[id]?.hostSized(m) } }
         c.onOpenError = { [weak self] id, msg in self?.portals[id]?.show(.failed(msg)) }
         c.onLink = { [weak self] state in
             self?.portals.values.forEach { $0.linkChanged(state) }

@@ -22,7 +22,7 @@ final class InputInjector {
         case .scroll: scroll(m, live: live)
         case .key: key(m, id: id, live: live)
         case .text: text(m, id: id, live: live)
-        case .resize: resize(id: id, live: live, w: m.w, h: m.h)
+        case .resize: break
         default: break
         }
     }
@@ -114,8 +114,20 @@ final class InputInjector {
         }
     }
 
-    private func resize(id: UInt32, live: LiveWindow, w: Double?, h: Double?) {
-        guard let size = resizeTarget(w: w, h: h), let ax = AXWindows.window(id: id, pid: live.pid) else { return }
-        AXWindows.setSize(ax, size)
+    func resize(_ m: Message) -> (asked: CGSize, actual: CGSize)? {
+        guard let id = m.win, let live = LiveWindow.lookup(id), let asked = resizeTarget(w: m.w, h: m.h),
+              let ax = AXWindows.window(id: id, pid: live.pid) else { return nil }
+        let plan = ResizePlan.make(window: live.bounds, asked: asked, areas: Self.usableAreas())
+        if let origin = plan.origin { AXWindows.setPosition(ax, origin) }
+        AXWindows.setSize(ax, plan.size)
+        return (asked, AXWindows.size(ax) ?? plan.size)
+    }
+
+    static func usableAreas() -> [CGRect] {
+        guard let primary = NSScreen.screens.first?.frame.height else { return [] }
+        return NSScreen.screens.map { s in
+            let v = s.visibleFrame
+            return CGRect(x: v.minX, y: primary - v.maxY, width: v.width, height: v.height)
+        }
     }
 }

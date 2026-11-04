@@ -14,6 +14,9 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     private let appName: String
     var onClose: (() -> Void)?
     var onRetry: (() -> Void)?
+    private var throttle = LiveResizeThrottle()
+    private var limits = PortalSizing.Limits()
+    private var resizeEndedAt: Double?
 
     init(windowID: UInt32, title: String, subtitle: String, app: String, size: CGSize, connection: Connection) {
         self.windowID = windowID
@@ -50,6 +53,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             ])
         }
         contentView = content
+        contentMinSize = CGSize(width: 100, height: 80)
         show(.opening(app))
         center()
         makeFirstResponder(inputView)
@@ -64,6 +68,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             inputView.contentPixels = CGSize(width: Int(d.width), height: Int(d.height))
             if phase?.clearsOnPicture == true { show(nil) }
         }
+        updatePictureMode()
     }
 
     func reopen() {
@@ -113,6 +118,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             guard track === self.track else { return }
             self.inputView.contentPixels = CGSize(width: Int(d.width), height: Int(d.height))
             if self.phase?.clearsOnPicture == true { self.show(nil) }
+            self.updatePictureMode()
         }
     }
 
@@ -125,10 +131,54 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         super.sendEvent(event)
     }
 
-    func windowDidEndLiveResize(_ notification: Notification) {
-        guard let size = contentView?.bounds.size else { return }
+    private static var now: Double { ProcessInfo.processInfo.systemUptime }
+
+    private var pictureSize: CGSize? { contentView?.bounds.size }
+
+    private func sendResize(_ size: CGSize) {
         var m = Message(.resize); m.win = windowID; m.w = size.width; m.h = size.height
         connection.send(m)
+    }
+
+    func windowWillStartLiveResize(_ notification: Notification) {
+        updatePictureMode()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        guard inLiveResize, let size = pictureSize else { return }
+        if let s = throttle.during(size, now: Self.now) { sendResize(s) }
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let size = pictureSize else { return }
+        sendResize(throttle.finish(size, now: Self.now))
+        resizeEndedAt = Self.now
+        updatePictureMode()
+        DispatchQueue.main.asyncAfter(deadline: .now() + PictureFit.settleSeconds + 0.05) { [weak self] in self?.updatePictureMode() }
+    }
+
+    func hostSized(_ m: Message) {
+        guard let w = m.w, let h = m.h, let aw = m.aw, let ah = m.ah else { return }
+        let actual = CGSize(width: w, height: h), asked = CGSize(width: aw, height: ah)
+        limits.learn(asked: asked, actual: actual)
+        contentMinSize = CGSize(width: max(100, limits.minimum.width), height: max(80, limits.minimum.height))
+        contentMaxSize = limits.maximum
+        let screen = self.screen?.visibleFrame.size ?? NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
+        guard let target = PortalSizing.snap(asked: asked, lastSent: throttle.lastSent, actual: actual,
+                                             liveResizing: inLiveResize, screen: screen),
+              target != pictureSize else { return }
+        let top = frame.maxY
+        setContentSize(target)
+        setFrameTopLeftPoint(NSPoint(x: frame.minX, y: top))
+    }
+
+    func updatePictureMode() {
+        let video = track?.dimensions.map { CGSize(width: Int($0.width), height: Int($0.height)) }
+        let since = resizeEndedAt.map { Self.now - $0 }
+        let mode = PictureFit.mode(liveResizing: inLiveResize, video: video, view: pictureSize ?? .zero, sinceResizeEnd: since)
+        let layout: VideoView.LayoutMode = mode == .fill ? .fill : .fit
+        if videoView.layoutMode != layout { videoView.layoutMode = layout }
+        inputView.fill = mode == .fill
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -245,6 +295,7 @@ final class InputCaptureView: NSView {
     let windowID: UInt32
     let connection: Connection
     var contentPixels = CGSize.zero
+    var fill = false
     private var lastMove = Date.distantPast
 
     init(windowID: UInt32, connection: Connection) {
@@ -269,7 +320,7 @@ final class InputCaptureView: NSView {
     }
 
     private func point(_ e: NSEvent, kind: Message.MouseKind? = nil) -> CGPoint? {
-        ViewerInput.point(convert(e.locationInWindow, from: nil), kind: kind, contentPixels: contentPixels, bounds: bounds)
+        ViewerInput.point(convert(e.locationInWindow, from: nil), kind: kind, contentPixels: contentPixels, bounds: bounds, fill: fill)
     }
 
     private func sendMouse(_ e: NSEvent, kind: Message.MouseKind, button: Int) {

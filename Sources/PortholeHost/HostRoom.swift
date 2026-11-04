@@ -174,7 +174,15 @@ final class HostRoom: NSObject, RoomDelegate {
             await warnIfLocked(who)
             input.handle(m)
             sessions[id]?.noteInput()
-            if m.t == .resize { sessions[id]?.followSizeSoon() }
+            if m.t == .resize {
+                if let r = input.resize(m), PortalSizing.hostShouldReply(asked: r.asked, actual: r.actual) {
+                    var reply = Message(.sized)
+                    reply.win = id; reply.w = r.actual.width; reply.h = r.actual.height
+                    reply.aw = r.asked.width; reply.ah = r.asked.height
+                    await send(reply, to: who)
+                }
+                sessions[id]?.followSizeSoon()
+            }
         case .restart:
             let refusal = onRestart.map { $0(who, registry.activeViewers.contains(who)) } ?? "This host can't restart itself."
             guard let refusal else { return }

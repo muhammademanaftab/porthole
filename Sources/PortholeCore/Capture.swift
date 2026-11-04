@@ -48,7 +48,6 @@ public enum WindowFilter {
 
 public enum CapturePacing {
     public static let resendAfter: TimeInterval = 1.0
-    public static let followSizeDelays: [TimeInterval] = [0.15, 0.4, 0.8]
 
     public static func acceptsFrame(status raw: Int?) -> Bool {
         raw.flatMap(SCFrameStatus.init(rawValue:)) == .complete

@@ -73,7 +73,6 @@ func pacingTests() {
     }
     check("capture frames: missing or unknown status is skipped",
           !CapturePacing.acceptsFrame(status: nil) && !CapturePacing.acceptsFrame(status: 99))
-    expect("capture resize: follow-up checks at 0.15, 0.4 and 0.8 s", CapturePacing.followSizeDelays, [0.15, 0.4, 0.8])
 
     let primary = ScreenInfo(frame: CGRect(x: 0, y: 0, width: 1440, height: 900), scale: 2)
     let right = ScreenInfo(frame: CGRect(x: 1440, y: 0, width: 1920, height: 1080), scale: 1)

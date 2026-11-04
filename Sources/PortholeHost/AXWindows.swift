@@ -37,6 +37,14 @@ enum AXWindows {
         return AXValueGetValue(v as! AXValue, .cgPoint, &p) ? p : nil
     }
 
+    static func size(_ w: AXUIElement) -> CGSize? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(w, kAXSizeAttribute as CFString, &value) == .success,
+              let v = value, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var s = CGSize.zero
+        return AXValueGetValue(v as! AXValue, .cgSize, &s) ? s : nil
+    }
+
     @discardableResult
     static func setPosition(_ w: AXUIElement, _ point: CGPoint) -> Bool {
         var p = point
