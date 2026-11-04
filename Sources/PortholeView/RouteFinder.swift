@@ -59,14 +59,53 @@ enum RouteFinder {
         if mode() != .tailscale { LocalSightings.shared.start() }
     }
 
-    static func plan(saved: String, hostID: String?, mode: RouteMode) async -> [RouteCandidate] {
+    static func plan(saved: String, hostID: String?, credential: ViewerCredential, mode: RouteMode) async -> [RouteCandidate] {
+        guard case .device = credential else {
+            return RoutePlan.candidates(mode: mode, saved: saved, hostID: hostID, local: [], known: [], savedOnly: true)
+        }
         var hosts: [DiscoveredHost] = []
         if mode != .tailscale {
-            hosts = await LocalSightings.shared.current(wait: bonjourWait) { !RoutePlan.sightings(of: hostID, saved: saved, in: $0).isEmpty }
+            hosts = await LocalSightings.shared.current(wait: bonjourWait) { !RoutePlan.matching(hostID, in: $0).isEmpty }
         }
-        let local = RoutePlan.sightings(of: hostID, saved: saved, in: hosts)
+        var resolved: [String: String] = [:]
+        for name in RoutePlan.namesToResolve(of: hostID, in: hosts) {
+            if let ip = await resolveLocal(name, budget: 1) { resolved[name] = ip }
+        }
+        let local = RoutePlan.sightings(of: hostID, in: hosts, resolved: resolved)
         let known = PasswordStore.trust.addresses(of: hostID)
         return RoutePlan.candidates(mode: mode, saved: saved, hostID: hostID, local: local, known: known)
+    }
+
+    nonisolated static func resolveLocal(_ name: String, budget: TimeInterval) async -> String? {
+        final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var done = false
+            func claim() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+        }
+        let once = Once()
+        return await withCheckedContinuation { cont in
+            DispatchQueue.global().asyncAfter(deadline: .now() + budget) { if once.claim() { cont.resume(returning: nil) } }
+            DispatchQueue.global().async {
+                var hints = addrinfo(ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM, ai_protocol: 0,
+                                     ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+                var res: UnsafeMutablePointer<addrinfo>?
+                var found: [String] = []
+                if getaddrinfo(name, nil, &hints, &res) == 0 {
+                    var p = res
+                    while let cur = p {
+                        var buf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                        if getnameinfo(cur.pointee.ai_addr, cur.pointee.ai_addrlen, &buf, socklen_t(buf.count), nil, 0, NI_NUMERICHOST) == 0 {
+                            found.append(String(cString: buf))
+                        }
+                        p = cur.pointee.ai_next
+                    }
+                    freeaddrinfo(res)
+                }
+                let usable = found.map(bareHost).filter { isIPLiteral($0) && addressScope($0) == .local }
+                let pick = usable.first(where: { parseDottedQuad($0) != nil }) ?? usable.first
+                if once.claim() { cont.resume(returning: pick) }
+            }
+        }
     }
 
     nonisolated static let session: URLSession = {
@@ -76,6 +115,7 @@ enum RouteFinder {
         cfg.httpShouldSetCookies = false
         cfg.httpCookieStorage = nil
         cfg.waitsForConnectivity = false
+        cfg.connectionProxyDictionary = [:]
         return URLSession(configuration: cfg, delegate: RefuseRedirects(), delegateQueue: nil)
     }()
 

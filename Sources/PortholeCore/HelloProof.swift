@@ -1,6 +1,11 @@
 import CryptoKit
 import Foundation
 
+public func isIPLiteral(_ host: String) -> Bool {
+    let h = bareHost(host)
+    return parseDottedQuad(h) != nil || parseIPv6(h) != nil
+}
+
 public enum HelloProof {
     public static let nonceBytes = 16
 
@@ -13,10 +18,8 @@ public enum HelloProof {
     }
 
     public static func viewerKey(_ credential: ViewerCredential) -> Data? {
-        switch credential {
-        case .password(let pw): return pw.isEmpty ? nil : Data(pw.utf8)
-        case .device(_, let secret): return secret.isEmpty ? nil : Data(secretDigest(secret).utf8)
-        }
+        guard case .device(_, let secret) = credential, !secret.isEmpty else { return nil }
+        return Data(secretDigest(secret).utf8)
     }
 
     public static func deviceKey(secretHash: String) -> Data? {
@@ -33,19 +36,13 @@ public enum HelloProof {
     }
 
     public static func verify(_ proof: String?, key: Data?, nonce: String, hostID: String?, address: String) -> Bool {
-        guard let proof, let key, let hostID, DeviceIdentity.isValidID(hostID), isValidNonce(nonce) else { return false }
+        guard let proof, let key, let hostID, DeviceIdentity.isValidID(hostID), isValidNonce(nonce), isIPLiteral(address) else { return false }
         return constantTimeEqual(proof.lowercased(), self.proof(key: key, nonce: nonce, hostID: hostID, address: address))
     }
 
-    public static func query(_ credential: ViewerCredential, nonce: String) -> KeyValuePairs<String, String> {
-        switch credential {
-        case .password: return ["pw": "0", "nonce": nonce]
-        case .device(let id, _): return ["device": id, "nonce": nonce]
-        }
-    }
-
     public static func url(hostAddress: String, credential: ViewerCredential, nonce: String) -> URL? {
-        hostURL(hostAddress, path: "/hello", query(credential, nonce: nonce))
+        guard case .device(let id, _) = credential else { return nil }
+        return hostURL(hostAddress, path: "/hello", ["device": id, "nonce": nonce])
     }
 
     public enum Answer: Equatable, Sendable {
@@ -61,22 +58,51 @@ public enum HelloProof {
         return ok ? .confirmed(hello) : .unconfirmed(hello)
     }
 
-    public static func hostKey(query: [String: String], password: String, secretHash: (String) -> String?) -> Data? {
-        if let device = query["device"], !device.isEmpty {
-            guard DeviceIdentity.isValidID(device) else { return nil }
-            return secretHash(device).flatMap(deviceKey)
-        }
-        guard query["pw"] == "0", !password.isEmpty else { return nil }
-        return Data(password.utf8)
+    public static func namesOtherHost(_ answer: Answer, expectedID: String?) -> Bool {
+        guard case .unconfirmed(let hello) = answer, let expectedID, let id = hello?.id else { return false }
+        return id != expectedID
     }
 
-    public static func answer(query: [String: String], hostHeader: String, hostID: String?, password: String,
+    public static func answer(query: [String: String], hostHeader: String, hostID: String?,
                               secretHash: (String) -> String?, ownsAddress: (String) -> Bool) -> String? {
-        guard let nonce = query["nonce"], isValidNonce(nonce), let hostID, DeviceIdentity.isValidID(hostID) else { return nil }
-        let address = WebRoutes.hostname(from: hostHeader)
-        guard ownsAddress(bareHost(address)), let key = hostKey(query: query, password: password, secretHash: secretHash) else {
+        guard let nonce = query["nonce"], isValidNonce(nonce), let device = query["device"], !device.isEmpty,
+              let hostID, DeviceIdentity.isValidID(hostID) else { return nil }
+        let address = bareHost(WebRoutes.hostname(from: hostHeader))
+        guard isIPLiteral(address), ownsAddress(address), DeviceIdentity.isValidID(device),
+              let key = secretHash(device).flatMap(deviceKey) else {
             return (0..<32).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
         }
         return proof(key: key, nonce: nonce, hostID: hostID, address: address)
+    }
+}
+
+public final class PasswordThrottle: @unchecked Sendable {
+    public static let maxSources = 1024
+    private let lock = NSLock()
+    private var budgets: [String: (budget: GuessBudget, touched: Date)] = [:]
+    private let clock: () -> Date
+
+    public init(clock: @escaping () -> Date = Date.init) { self.clock = clock }
+
+    public func secondsPaused(_ source: String) -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        return budgets[source]?.budget.secondsPaused(now: clock())
+    }
+
+    public func failed(_ source: String) {
+        lock.lock(); defer { lock.unlock() }
+        let now = clock()
+        var b = budgets[source]?.budget ?? GuessBudget()
+        b.wrongGuess(now: now)
+        budgets[source] = (b, now)
+        if budgets.count > Self.maxSources {
+            let idle = budgets.filter { $0.value.budget.secondsPaused(now: now) == nil }.sorted { $0.value.touched < $1.value.touched }
+            for (key, _) in idle.prefix(budgets.count - Self.maxSources) { budgets[key] = nil }
+        }
+    }
+
+    public func succeeded(_ source: String) {
+        lock.lock(); defer { lock.unlock() }
+        budgets[source] = nil
     }
 }

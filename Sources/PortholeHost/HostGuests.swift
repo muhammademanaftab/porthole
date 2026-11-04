@@ -37,8 +37,7 @@ func lanAddress() -> String? {
 }
 
 func ownAddresses() -> Set<String> {
-    var out: Set<String> = ["127.0.0.1", "::1", "localhost"]
-    if let local = HTTPServer.localHostName { out.insert(bareHost(local)) }
+    var out: Set<String> = ["127.0.0.1", "::1"]
     var addrs: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&addrs) == 0, let first = addrs else { return out }
     defer { freeifaddrs(addrs) }
@@ -54,6 +53,9 @@ func ownAddresses() -> Set<String> {
         } else if sa.pointee.sa_family == UInt8(AF_INET6) {
             var sin6 = sockaddr_in6()
             memcpy(&sin6, sa, MemoryLayout<sockaddr_in6>.size)
+            withUnsafeMutableBytes(of: &sin6.sin6_addr) { b in
+                if b[0] == 0xfe && b[1] & 0xc0 == 0x80 { b[2] = 0; b[3] = 0 }
+            }
             if inet_ntop(AF_INET6, &sin6.sin6_addr, &buf, socklen_t(buf.count)) != nil { out.insert(bareHost(String(cString: buf))) }
         }
     }

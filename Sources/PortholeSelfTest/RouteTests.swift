@@ -78,27 +78,38 @@ func routeSightingTests() {
     let other = BonjourTXT.host(serviceName: "other", txt: BonjourTXT.make(name: "Other", tailscaleIP: "100.70.0.9", localHost: "other.local",
                                                                          id: "fedcba9876543210", lanIP: "10.0.1.60"))!
 
-    let seen = RoutePlan.sightings(of: routeHostID, saved: "100.101.102.103", in: [other, mini])
-    expect("route sightings: the paired host by ID, LAN IP first, then its .local name", seen.map(\.address), ["10.0.1.52", "Leos-Mac-mini.local"])
+    let seen = RoutePlan.sightings(of: routeHostID, in: [other, mini])
+    expect("route sightings: the paired host by ID, only its LAN IP literal", seen.map(\.address), ["10.0.1.52"])
     check("route sightings: carry the host ID and its Tailscale IP", seen.allSatisfy { $0.id == routeHostID && $0.tailscaleIP == "100.101.102.103" })
-    expect("route sightings: another host's ID is never used", RoutePlan.sightings(of: "aaaaaaaaaaaaaaaa", saved: "100.101.102.103", in: [other, mini]), [])
-    expect("route sightings: without an ID, the Tailscale IP in TXT matches",
-           RoutePlan.sightings(of: nil, saved: "100.101.102.103", in: [other, mini]).map(\.address), ["10.0.1.52", "Leos-Mac-mini.local"])
-    expect("route sightings: an addr: trust key counts as no ID",
-           RoutePlan.sightings(of: "addr:100.101.102.103:7878", saved: "100.101.102.103", in: [mini]).map(\.id), [routeHostID, routeHostID])
+    expect("route sightings: another host's ID is never used", RoutePlan.sightings(of: "aaaaaaaaaaaaaaaa", in: [other, mini]), [])
+    expect("route sightings: without a paired ID nothing is used", RoutePlan.sightings(of: nil, in: [other, mini]), [])
+    expect("route sightings: an addr: trust key counts as no ID", RoutePlan.sightings(of: "addr:100.101.102.103:7878", in: [mini]), [])
+    expect("route sightings: a host with an IP needs no name lookup", RoutePlan.namesToResolve(of: routeHostID, in: [mini]), [])
+    var nameOnly = BonjourTXT.host(serviceName: "mini", txt: BonjourTXT.make(name: "Mac mini", tailscaleIP: nil, localHost: "Leos-Mac-mini.local", id: routeHostID))!
+    expect("route sightings: only a .local name is looked up once", RoutePlan.namesToResolve(of: routeHostID, in: [nameOnly]), ["leos-mac-mini.local"])
+    expect("route sightings: an unresolved .local name is never used as an address", RoutePlan.sightings(of: routeHostID, in: [nameOnly]), [])
+    expect("route sightings: the resolved IP literal is used instead of the name",
+           RoutePlan.sightings(of: routeHostID, in: [nameOnly], resolved: ["leos-mac-mini.local": "10.0.1.52"]).map(\.address), ["10.0.1.52"])
+    expect("route sightings: a resolved address that isn't on this network is dropped",
+           RoutePlan.sightings(of: routeHostID, in: [nameOnly], resolved: ["leos-mac-mini.local": "8.8.8.8"]), [])
+    nameOnly.port = 9000
+    expect("route sightings: a resolved IPv6 keeps brackets and port",
+           RoutePlan.sightings(of: routeHostID, in: [nameOnly], resolved: ["leos-mac-mini.local": "fe80::1"]).map(\.address), ["[fe80::1]:9000"])
     mini.port = 9000
-    expect("route sightings: a custom port is kept", RoutePlan.sightings(of: routeHostID, saved: "100.101.102.103", in: [mini]).first?.address, "10.0.1.52:9000")
+    expect("route sightings: a custom port is kept", RoutePlan.sightings(of: routeHostID, in: [mini]).first?.address, "10.0.1.52:9000")
     var saved = mini
     saved.viaBonjour = false
-    expect("route sightings: only live Bonjour results count", RoutePlan.sightings(of: routeHostID, saved: "x", in: [saved]), [])
+    expect("route sightings: only live Bonjour results count", RoutePlan.sightings(of: routeHostID, in: [saved]), [])
+    check("ip literal: IPv4, IPv6 and bracketed", isIPLiteral("10.0.0.1") && isIPLiteral("fe80::1") && isIPLiteral("[fd00::1]"))
+    check("ip literal: names are not", !isIPLiteral("mini.local") && !isIPLiteral("localhost") && !isIPLiteral(""))
 }
 
 func routeCandidateTests() {
     let lan = [LocalSighting(address: "10.0.1.52", id: routeHostID, tailscaleIP: "100.101.102.103"),
-               LocalSighting(address: "Leos-Mac-mini.local", id: routeHostID, tailscaleIP: "100.101.102.103")]
+               LocalSighting(address: "[fe80::1]", id: routeHostID, tailscaleIP: "100.101.102.103")]
     let auto = RoutePlan.candidates(mode: .auto, saved: "100.101.102.103", hostID: routeHostID, local: lan, known: ["100.101.102.103"])
-    expect("route plan auto: LAN first, then .local, then the saved Tailscale address", auto.map(\.address),
-           ["10.0.1.52", "Leos-Mac-mini.local", "100.101.102.103"])
+    expect("route plan auto: LAN IPv4, then LAN IPv6, then the saved Tailscale address", auto.map(\.address),
+           ["10.0.1.52", "[fe80::1]", "100.101.102.103"])
     expect("route plan auto: short budgets for the LAN tries, 10 s for the last", auto.map(\.budget), [1.5, 1.5, 10])
     expect("route plan auto: the paired host ID is expected everywhere", auto.map(\.expectedID), [routeHostID, routeHostID, routeHostID])
     expect("route plan auto: LAN tries must prove themselves, the saved Tailscale address needn't", auto.map(\.mustProve), [true, true, false])
@@ -118,15 +129,20 @@ func routeCandidateTests() {
 
     let dup = RoutePlan.candidates(mode: .auto, saved: "10.0.1.52", hostID: routeHostID, local: lan, known: [])
     expect("route plan: the saved address is not tried twice", dup.map { "\($0.address) \($0.saved)" },
-           ["10.0.1.52 true", "Leos-Mac-mini.local false", "100.101.102.103 false"])
+           ["10.0.1.52 true", "[fe80::1] false", "100.101.102.103 false"])
     expect("route plan: the Tailscale IP seen in Bonjour is used after the LAN tries", dup.map(\.budget), [1.5, 1.5, 10])
 
     let pwOnly = RoutePlan.candidates(mode: .auto, saved: "100.101.102.103", hostID: nil, local: [LocalSighting(address: "10.0.1.52", id: "fedcba9876543210")], known: [])
-    expect("route plan: a password viewer still tries the LAN, but must prove it", pwOnly.map { "\($0.address) \($0.mustProve)" }, ["10.0.1.52 true", "100.101.102.103 false"])
-    expect("route plan: the TXT id is never taken as the expected host", pwOnly.map(\.expectedID), [nil, nil])
+    expect("route plan: without a paired ID only the saved address is tried", pwOnly.map(\.address), ["100.101.102.103"])
+    let pwSaved = RoutePlan.candidates(mode: .auto, saved: "100.101.102.103", hostID: routeHostID, local: lan, known: ["100.101.102.103"], savedOnly: true)
+    expect("route plan: a password viewer only ever uses the saved address", pwSaved.map(\.address), ["100.101.102.103"])
+    expect("route plan: a password viewer in Same network only mode with a Tailscale address has nothing to try",
+           RoutePlan.candidates(mode: .local, saved: "100.101.102.103", hostID: nil, local: lan, known: [], savedOnly: true), [])
+    expect("route plan: known MagicDNS names are not tried as fallbacks (no IP to prove)",
+           RoutePlan.candidates(mode: .auto, saved: "10.0.1.52", hostID: routeHostID, local: [], known: ["mini.tail1.ts.net"]).map(\.address), ["10.0.1.52"])
 
     let local = RoutePlan.candidates(mode: .local, saved: "100.101.102.103", hostID: routeHostID, local: lan, known: ["100.101.102.103"])
-    expect("route plan same network only: LAN addresses, never Tailscale", local.map(\.address), ["10.0.1.52", "Leos-Mac-mini.local"])
+    expect("route plan same network only: LAN addresses, never Tailscale", local.map(\.address), ["10.0.1.52", "[fe80::1]"])
     expect("route plan same network only: the last try has 10 s", local.map(\.budget), [1.5, 10])
     expect("route plan same network only, away: nothing to try",
            RoutePlan.candidates(mode: .local, saved: "100.101.102.103", hostID: routeHostID, local: [], known: []), [])
@@ -146,8 +162,8 @@ func routeCandidateTests() {
            RoutePlan.candidates(mode: .tailscale, saved: "10.0.1.52", hostID: nil, local: [], known: []), [])
     expect("route plan: a bad saved address gives nothing", RoutePlan.candidates(mode: .auto, saved: "", hostID: nil, local: lan, known: []), [])
     let custom = RoutePlan.candidates(mode: .auto, saved: "10.0.1.52:9000", hostID: routeHostID,
-                                      local: [LocalSighting(address: "mini.local:9000", id: routeHostID, tailscaleIP: "100.101.102.103")], known: [])
-    expect("route plan: the Bonjour Tailscale IP keeps the saved port", custom.map(\.address), ["mini.local:9000", "10.0.1.52:9000", "100.101.102.103:9000"])
+                                      local: [LocalSighting(address: "10.0.1.53:9000", id: routeHostID, tailscaleIP: "100.101.102.103")], known: [])
+    expect("route plan: the Bonjour Tailscale IP keeps the saved port", custom.map(\.address), ["10.0.1.53:9000", "10.0.1.52:9000", "100.101.102.103:9000"])
 
     check("route plan: a refusal from a proven host stops the plan", RoutePlan.stops(status: 403, confirmed: true) && RoutePlan.stops(status: 401, confirmed: true))
     check("route plan: a refusal from an unproven host doesn't", !RoutePlan.stops(status: 403, confirmed: false))
@@ -165,8 +181,7 @@ func helloProofTests() {
     check("hello proof: nonces differ", nonce != HelloProof.makeNonce())
     check("hello proof: bad nonces are refused", !HelloProof.isValidNonce("abc") && !HelloProof.isValidNonce(String(repeating: "G", count: 32)))
     expect("hello proof: device key is the secret's digest, as the host stores it", HelloProof.viewerKey(device), HelloProof.deviceKey(secretHash: secretDigest(secret)))
-    expect("hello proof: password key", HelloProof.viewerKey(pw), Data("hunter2".utf8))
-    expect("hello proof: no key from an empty password", HelloProof.viewerKey(.password("")), nil)
+    expect("hello proof: a password is never a proof key", HelloProof.viewerKey(pw), nil)
     let known = HelloProof.proof(key: Data("k".utf8), nonce: String(repeating: "a", count: 32), hostID: routeHostID, address: "10.0.1.52")
     expect("hello proof: HMAC-SHA256 hex", known.count, 64)
     expect("hello proof: same inputs give the same proof", known,
@@ -174,13 +189,12 @@ func helloProofTests() {
     check("hello proof: the address is part of the proof", known != HelloProof.proof(key: Data("k".utf8), nonce: String(repeating: "a", count: 32), hostID: routeHostID, address: "10.0.1.53"))
     expect("hello proof: device query", HelloProof.url(hostAddress: "10.0.1.52", credential: device, nonce: nonce)?.absoluteString,
            "http://10.0.1.52:7878/hello?device=1111222233334444&nonce=\(nonce)")
-    expect("hello proof: password query never carries the password", HelloProof.url(hostAddress: "10.0.1.52", credential: pw, nonce: nonce)?.absoluteString,
-           "http://10.0.1.52:7878/hello?pw=0&nonce=\(nonce)")
+    expect("hello proof: a password viewer never sends a challenge", HelloProof.url(hostAddress: "10.0.1.52", credential: pw, nonce: nonce), nil)
 
     let devices = ["1111222233334444": secretDigest(secret)]
-    let mine: (String) -> Bool = { ["10.0.1.52", "leos-mac-mini.local"].contains($0) }
-    func ask(_ q: [String: String], header: String = "10.0.1.52:7878", password: String = "hunter2") -> String? {
-        HelloProof.answer(query: q, hostHeader: header, hostID: routeHostID, password: password, secretHash: { devices[$0] }, ownsAddress: mine)
+    let mine: (String) -> Bool = { ["10.0.1.52", "leos-mac-mini.local", "localhost"].contains($0) }
+    func ask(_ q: [String: String], header: String = "10.0.1.52:7878") -> String? {
+        HelloProof.answer(query: q, hostHeader: header, hostID: routeHostID, secretHash: { devices[$0] }, ownsAddress: mine)
     }
     let deviceProof = ask(["device": "1111222233334444", "nonce": nonce])
     check("hello proof: a paired device's proof verifies", HelloProof.verify(deviceProof, key: HelloProof.viewerKey(device), nonce: nonce, hostID: routeHostID, address: "10.0.1.52"))
@@ -190,19 +204,24 @@ func helloProofTests() {
           !HelloProof.verify(deviceProof, key: HelloProof.viewerKey(device), nonce: nonce, hostID: "fedcba9876543210", address: "10.0.1.52"))
     check("hello proof: it doesn't verify with another secret",
           !HelloProof.verify(deviceProof, key: HelloProof.viewerKey(.device(id: "1111222233334444", secret: "x")), nonce: nonce, hostID: routeHostID, address: "10.0.1.52"))
-    let pwProof = ask(["pw": "0", "nonce": nonce], header: "Leos-Mac-mini.local:7878")
-    check("hello proof: a password viewer's proof verifies on the .local name",
-          HelloProof.verify(pwProof, key: HelloProof.viewerKey(pw), nonce: nonce, hostID: routeHostID, address: "Leos-Mac-mini.local"))
+    let viaName = ask(["device": "1111222233334444", "nonce": nonce], header: "Leos-Mac-mini.local:7878")
+    check("hello proof: asked on the .local name, even an address the host claims, the proof is refused",
+          !HelloProof.verify(viaName, key: HelloProof.viewerKey(device), nonce: nonce, hostID: routeHostID, address: "Leos-Mac-mini.local"))
+    let viaLocalhost = ask(["device": "1111222233334444", "nonce": nonce], header: "localhost:7878")
+    check("hello proof: asked on localhost, the proof is refused",
+          !HelloProof.verify(viaLocalhost, key: HelloProof.viewerKey(device), nonce: nonce, hostID: routeHostID, address: "localhost"))
+    check("hello proof: a real proof for a name never verifies on the viewer",
+          !HelloProof.verify(HelloProof.proof(key: HelloProof.viewerKey(device)!, nonce: nonce, hostID: routeHostID, address: "mini.local"),
+                             key: HelloProof.viewerKey(device), nonce: nonce, hostID: routeHostID, address: "mini.local"))
     let unknownDevice = ask(["device": "9999888877776666", "nonce": nonce])
     check("hello proof: an unpaired device gets a proof that never verifies", unknownDevice?.count == 64
           && !HelloProof.verify(unknownDevice, key: HelloProof.viewerKey(device), nonce: nonce, hostID: routeHostID, address: "10.0.1.52"))
     let relayed = ask(["device": "1111222233334444", "nonce": nonce], header: "10.0.1.99:7878")
     check("hello proof: a request relayed through another address gets no usable proof",
           !HelloProof.verify(relayed, key: HelloProof.viewerKey(device), nonce: nonce, hostID: routeHostID, address: "10.0.1.99"))
-    check("hello proof: an empty host password proves nothing",
-          !HelloProof.verify(ask(["pw": "0", "nonce": nonce], password: ""), key: Data(), nonce: nonce, hostID: routeHostID, address: "10.0.1.52"))
+    expect("hello proof: a password challenge gets no proof at all", ask(["pw": "0", "nonce": nonce]), nil)
     expect("hello proof: plain /hello gets no proof", ask([:]), nil)
-    expect("hello proof: a bad nonce gets no proof", ask(["pw": "0", "nonce": "zz"]), nil)
+    expect("hello proof: a bad nonce gets no proof", ask(["device": "1111222233334444", "nonce": "zz"]), nil)
 
     let body = { (proof: String?, id: String?) -> Data in
         var o: [String: Any] = ["app": "porthole", "name": "Mac mini", "version": 1]
@@ -211,20 +230,57 @@ func helloProofTests() {
         return try! JSONSerialization.data(withJSONObject: o)
     }
     let mini = HostHello(name: "Mac mini", version: 1, id: routeHostID)
+    let other = HostHello(name: "Mac mini", version: 1, id: "fedcba9876543210")
     expect("hello check: a good proof confirms",
            HelloProof.check(status: 200, body: body(deviceProof, routeHostID), credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.52"), .confirmed(mini))
-    expect("hello check: a password viewer needs no expected ID",
-           HelloProof.check(status: 200, body: body(pwProof, routeHostID), credential: pw, nonce: nonce, expectedID: nil, address: "leos-mac-mini.local"), .confirmed(mini))
+    expect("hello check: a password viewer is never confirmed",
+           HelloProof.check(status: 200, body: body(deviceProof, routeHostID), credential: pw, nonce: nonce, expectedID: nil, address: "10.0.1.52"), .unconfirmed(mini))
     expect("hello check: the right ID without a proof is not enough",
            HelloProof.check(status: 200, body: body(nil, routeHostID), credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.52"), .unconfirmed(mini))
-    expect("hello check: another host ID is refused before the proof",
-           HelloProof.check(status: 200, body: body(deviceProof, "fedcba9876543210"), credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.52"),
-           .unconfirmed(HostHello(name: "Mac mini", version: 1, id: "fedcba9876543210")))
+    let wrongHost = HelloProof.check(status: 200, body: body(deviceProof, "fedcba9876543210"), credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.52")
+    expect("hello check: another host ID is refused before the proof", wrongHost, .unconfirmed(other))
+    check("hello check: a valid /hello naming another host is flagged", HelloProof.namesOtherHost(wrongHost, expectedID: routeHostID))
+    check("hello check: no answer is not another host", !HelloProof.namesOtherHost(.unconfirmed(nil), expectedID: routeHostID))
+    check("hello check: an old host without an ID is not another host", !HelloProof.namesOtherHost(.unconfirmed(HostHello(name: "m", version: 1)), expectedID: routeHostID))
+    check("hello check: nothing expected, nothing flagged", !HelloProof.namesOtherHost(.unconfirmed(other), expectedID: nil))
+    check("hello check: a confirmed answer is not another host", !HelloProof.namesOtherHost(.confirmed(mini), expectedID: routeHostID))
     expect("hello check: a proof made for another address is refused",
            HelloProof.check(status: 200, body: body(deviceProof, routeHostID), credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.60"), .unconfirmed(mini))
     expect("hello check: no answer", HelloProof.check(status: nil, body: nil, credential: device, nonce: nonce, expectedID: routeHostID, address: "x"), .unconfirmed(nil))
     expect("hello check: a 302 is no answer", HelloProof.check(status: 302, body: body(deviceProof, routeHostID), credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.52"), .unconfirmed(nil))
+    passwordThrottleTests()
     helloRouteTests()
+}
+
+func passwordThrottleTests() {
+    var now = Date(timeIntervalSince1970: 1_000)
+    let t = PasswordThrottle(clock: { now })
+    for _ in 0..<(GuessBudget.wrongPerPause - 1) { t.failed("10.0.0.9") }
+    expect("password throttle: nine wrong passwords don't pause", t.secondsPaused("10.0.0.9"), nil)
+    t.failed("10.0.0.9")
+    expect("password throttle: the tenth pauses that source for a minute", t.secondsPaused("10.0.0.9"), 60)
+    expect("password throttle: another source isn't paused", t.secondsPaused("10.0.0.10"), nil)
+    now = now.addingTimeInterval(61)
+    expect("password throttle: the pause runs out", t.secondsPaused("10.0.0.9"), nil)
+    for _ in 0..<GuessBudget.wrongPerPause { t.failed("10.0.0.9") }
+    expect("password throttle: the next pause is twice as long", t.secondsPaused("10.0.0.9"), 120)
+    t.failed("10.0.0.11")
+    t.succeeded("10.0.0.11")
+    for _ in 0..<(GuessBudget.wrongPerPause - 1) { t.failed("10.0.0.11") }
+    expect("password throttle: the right password clears the strikes", t.secondsPaused("10.0.0.11"), nil)
+
+    var routes = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: AccessToken(apiKey: "k", apiSecret: "s"), webRoot: nil, hostName: "Mini")
+    routes.passwordThrottle = PasswordThrottle()
+    func token(_ pw: String, from source: String) -> HTTPResponse {
+        routes.respond(to: "GET /token?pw=\(pw) HTTP/1.1\r\nHost: 10.0.1.52:7878\r\n\r\n", source: source)
+    }
+    for _ in 0..<GuessBudget.wrongPerPause { _ = token("nope", from: "10.0.0.9") }
+    let paused = token("pw-123", from: "10.0.0.9")
+    check("token route: after ten wrong passwords that source gets 429, even with the right one",
+          paused.status == "429 Too Many Requests" && (json(paused.body)?["error"] as? String)?.contains("Too many wrong passwords") == true)
+    expect("token route: another source still gets a token", token("pw-123", from: "10.0.0.10").status, "200 OK")
+    expect("token route: a share link isn't throttled by passwords",
+           routes.respond(to: "GET /token?share=x HTTP/1.1\r\nHost: m\r\n\r\n", source: "10.0.0.9").status != "429 Too Many Requests", true)
 }
 
 func helloRouteTests() {
@@ -248,11 +304,8 @@ func helloRouteTests() {
     expect("hello route: a paired device gets a proof it can check",
            HelloProof.check(status: 200, body: answer.body, credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.52"), .confirmed(mini))
     let pwAnswer = get("/hello?pw=0&nonce=\(nonce)")
-    expect("hello route: a password viewer gets a proof keyed by the password",
-           HelloProof.check(status: 200, body: pwAnswer.body, credential: .password("pw-123"), nonce: nonce, expectedID: nil, address: "10.0.1.52"), .confirmed(mini))
-    check("hello route: the password itself never appears in the answer", !String(decoding: pwAnswer.body, as: UTF8.self).contains("pw-123"))
-    check("hello route: the wrong password can't check it",
-          HelloProof.check(status: 200, body: pwAnswer.body, credential: .password("nope"), nonce: nonce, expectedID: nil, address: "10.0.1.52") != .confirmed(mini))
+    check("hello route: a password challenge gets a plain /hello with no proof",
+          pwAnswer.status == "200 OK" && HostHello.parse(pwAnswer.body)?.id == routeHostID && json(pwAnswer.body)?["proof"] == nil)
     let foreign = get("/hello?device=1111222233334444&nonce=\(nonce)", host: "10.0.1.99:7878")
     check("hello route: asked through an address that isn't the host's, the proof is useless",
           HelloProof.check(status: 200, body: foreign.body, credential: device, nonce: nonce, expectedID: routeHostID, address: "10.0.1.99") != .confirmed(mini))

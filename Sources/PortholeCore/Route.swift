@@ -114,27 +114,35 @@ public enum RoutePlan {
         return port == Int(HostConfig.defaultHTTPPort) ? bracketed : "\(bracketed):\(port)"
     }
 
-    public static func sightings(of hostID: String?, saved: String, in hosts: [DiscoveredHost]) -> [LocalSighting] {
-        let id = hostID.flatMap { DeviceIdentity.isValidID($0) ? $0 : nil }
-        let savedHost = splitHostAddress(saved).map { bareHost($0.host) }
+    public static func matching(_ hostID: String?, in hosts: [DiscoveredHost]) -> [DiscoveredHost] {
+        guard let id = hostID.flatMap({ DeviceIdentity.isValidID($0) ? $0 : nil }) else { return [] }
+        return hosts.filter { $0.viaBonjour && $0.hostID == id }
+    }
+
+    public static func namesToResolve(of hostID: String?, in hosts: [DiscoveredHost]) -> [String] {
+        matching(hostID, in: hosts).compactMap { h in
+            guard h.lanIP.map({ isIPLiteral($0) && addressScope($0) == .local }) != true, let name = h.lanHost, addressScope(name) == .local else { return nil }
+            return bareHost(name)
+        }
+    }
+
+    public static func sightings(of hostID: String?, in hosts: [DiscoveredHost], resolved: [String: String] = [:]) -> [LocalSighting] {
         var out: [LocalSighting] = []
-        for h in hosts where h.viaBonjour {
-            let same: Bool
-            if let id { same = h.hostID == id } else {
-                same = h.tailscaleIP.map { bareHost($0) == savedHost } ?? false
-                    || [h.lanIP, h.lanHost].compactMap { $0 }.contains { bareHost($0) == savedHost }
-            }
-            guard same else { continue }
-            for host in [h.lanIP, h.lanHost].compactMap({ $0 }) where addressScope(host) == .local {
-                out.append(LocalSighting(address: formatAddress(host, port: h.port), id: id ?? h.hostID, tailscaleIP: h.tailscaleIP))
-            }
+        for h in matching(hostID, in: hosts) {
+            let ip = h.lanIP.flatMap { isIPLiteral($0) && addressScope($0) == .local ? bareHost($0) : nil }
+                ?? h.lanHost.flatMap { resolved[bareHost($0)] }.flatMap { isIPLiteral($0) && addressScope($0) == .local ? bareHost($0) : nil }
+            guard let ip else { continue }
+            out.append(LocalSighting(address: formatAddress(ip, port: h.port), id: h.hostID, tailscaleIP: h.tailscaleIP))
         }
         return out
     }
 
-    public static func candidates(mode: RouteMode, saved: String, hostID: String?, local: [LocalSighting], known: [String]) -> [RouteCandidate] {
+    public static func candidates(mode: RouteMode, saved: String, hostID: String?, local: [LocalSighting], known: [String],
+                                  savedOnly: Bool = false) -> [RouteCandidate] {
         guard let savedKey = savedPasswordKey(saved), let (savedHost, savedPort) = splitHostAddress(saved) else { return [] }
         let id = hostID.flatMap { DeviceIdentity.isValidID($0) ? $0 : nil }
+        let local = savedOnly || id == nil ? [] : local
+        let known = savedOnly || id == nil ? [] : known
         let savedScope = addressScope(savedHost)
         var list: [RouteCandidate] = []
         var seen: Set<String> = []
@@ -145,7 +153,7 @@ public enum RoutePlan {
             list.append(RouteCandidate(address: address, scope: addressScope(host), expectedID: id, saved: saved))
         }
         let sightedTS = local.compactMap(\.tailscaleIP).map { formatAddress($0, port: savedPort) }
-        let tailscaleKnown = (known + sightedTS).filter { a in splitHostAddress(a).map { addressScope($0.host) == .tailscale } ?? false }
+        let tailscaleKnown = (known + sightedTS).filter { a in splitHostAddress(a).map { addressScope($0.host) == .tailscale && isIPLiteral($0.host) } ?? false }
         switch mode {
         case .auto:
             for s in local { add(s.address) }

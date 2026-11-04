@@ -63,7 +63,7 @@ final class Connection: NSObject, RoomDelegate {
 
     private func connectOnce() async throws {
         let mode = RouteFinder.mode()
-        let plan = await RouteFinder.plan(saved: hostAddress, hostID: hostID, mode: mode)
+        let plan = await RouteFinder.plan(saved: hostAddress, hostID: hostID, credential: credential, mode: mode)
         guard !closing else { throw CancellationError() }
         guard !plan.isEmpty else {
             throw NSError(domain: "Porthole", code: 404, userInfo: [NSLocalizedDescriptionKey: RoutePlan.noRouteMessage(mode: mode, hostName: hostAddress)])
@@ -75,14 +75,19 @@ final class Connection: NSObject, RoomDelegate {
             let next = i + 1 < plan.count ? plan[i + 1].address : nil
             var confirmed = candidate.trustedWithoutProof
             if candidate.shouldChallenge {
-                switch await RouteFinder.challenge(candidate.address, credential: credential, expectedID: candidate.expectedID, budget: candidate.budget) {
+                let answer = await RouteFinder.challenge(candidate.address, credential: credential, expectedID: candidate.expectedID, budget: candidate.budget)
+                if HelloProof.namesOtherHost(answer, expectedID: candidate.expectedID) {
+                    VLog.info("route: \(candidate.address) is a different host\(next.map { "; trying \($0)" } ?? "")")
+                    continue
+                }
+                switch answer {
                 case .confirmed: confirmed = true
                 case .unconfirmed(let hello):
                     if candidate.mustProve {
                         VLog.info("route: \(candidate.address) \(hello == nil ? "didn't answer" : "couldn't prove it is this host")\(next.map { "; trying \($0)" } ?? "")")
                         continue
                     }
-                    VLog.info("route: saved address \(candidate.address) couldn't prove it is this host; trying it, but a refusal from it won't count")
+                    VLog.info("route: saved address \(candidate.address) gave no proof; trying it as before")
                 }
             }
             do {
@@ -111,13 +116,13 @@ final class Connection: NSObject, RoomDelegate {
         let url: String, token: String
         switch parseTokenReply(status: status, body: data) {
         case .ok(let u, let t): url = u; token = t
-        case .unpaired(let why) where RoutePlan.stops(status: status, confirmed: confirmed):
+        case .unpaired(let why) where RoutePlan.stops(status: status, confirmed: confirmed || candidate.saved):
             throw NSError(domain: "Porthole", code: 403, userInfo: [NSLocalizedDescriptionKey: why])
-        case .refused(let why) where RoutePlan.stops(status: status, confirmed: confirmed):
+        case .refused(let why) where RoutePlan.stops(status: status, confirmed: confirmed || candidate.saved):
             throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: why])
-        case .unpaired, .refused:
+        case .unpaired(let why), .refused(let why):
             throw NSError(domain: "Porthole", code: 502, userInfo: [NSLocalizedDescriptionKey:
-                "\(candidate.address) answered HTTP \(status) and couldn't be confirmed as this host."])
+                status == 429 ? why : "\(candidate.address) answered HTTP \(status) and couldn't be confirmed as this host."])
         }
         try await setUpOnce()
         guard !closing else { throw CancellationError() }
