@@ -12,6 +12,14 @@ public func hostMenuTitle(state: String, openWindows n: Int) -> String {
     "Porthole: \(state)\(n > 0 ? " · \(n) window\(n == 1 ? "" : "s") open" : "")"
 }
 
+public func hostStatusLine(state: String, openWindows n: Int) -> String {
+    n > 0 && state == "Sharing" ? "Sharing \(n) window\(n == 1 ? "" : "s")" : state == "Sharing" ? "Ready to share" : state
+}
+
+public func viewerCountLabel(_ n: Int) -> String {
+    n <= 1 ? "" : "\(n) viewers"
+}
+
 public func portalContentSize(remote size: CGSize, screen: CGSize) -> CGSize {
     CGSize(width: min(max(size.width, 320), screen.width), height: min(max(size.height, 200), screen.height))
 }
