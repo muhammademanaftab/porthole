@@ -1,0 +1,71 @@
+import PortholeCore
+
+func connectUITests() {
+    var e = CodeEntry()
+    expect("code entry: starts empty", e.code, "")
+    check("code entry: not complete when empty", !e.isComplete)
+    expect("code entry: typing a digit moves on", e.type("4", at: 0), 1)
+    expect("code entry: digit stored", e.digits[0], "4")
+    expect("code entry: letters are ignored and focus stays", e.type("x", at: 1), 1)
+    expect("code entry: ignored input leaves the box empty", e.digits[1], "")
+    expect("code entry: a pasted code fills the rest", e.type("12 34-5", at: 1), 5)
+    expect("code entry: pasted digits land in order", e.code, "412345")
+    check("code entry: six digits complete it", e.isComplete)
+    expect("code entry: typing over a full box replaces its digit (cursor after)", e.type("23", at: 2), 3)
+    expect("code entry: replaced digit", e.code, "413345")
+    expect("code entry: typing over a full box replaces its digit (cursor before)", e.type("93", at: 3), 4)
+    expect("code entry: replaced digit before", e.code, "413945")
+    expect("code entry: overflow past the last box is dropped", e.type("8888", at: 4), 5)
+    expect("code entry: overflow result", e.code, "413988")
+    expect("code entry: last box stays focused", e.type("1", at: 5), 5)
+
+    expect("code entry: backspace on a full box clears it in place", e.backspace(at: 5), 5)
+    expect("code entry: cleared", e.code, "41398")
+    expect("code entry: backspace on an empty box clears the previous one", e.backspace(at: 5), 4)
+    expect("code entry: previous cleared", e.code, "4139")
+    var first = CodeEntry()
+    expect("code entry: backspace at the first empty box stays", first.backspace(at: 0), 0)
+    expect("code entry: out-of-range type is clamped", first.type("1", at: 9), 5)
+    expect("code entry: out-of-range type changes nothing", first.code, "")
+    e.clear()
+    expect("code entry: clear empties every box", e.digits, Array(repeating: "", count: 6))
+    check("code entry: a full entry looks like a pairing code", {
+        var c = CodeEntry(); _ = c.type("123456", at: 0); return looksLikePairingCode(c.code)
+    }())
+
+    let mini = DiscoveredHost(name: "mini", tailscaleIP: "100.64.0.2", lanHost: "mini.local", status: .online, viaBonjour: true, viaTailscale: true)
+    expect("badge: online and paired is ready", mini.badge(trusted: true), .ready)
+    expect("badge: online and unpaired needs pairing", mini.badge(trusted: false), .needsPairing)
+    var old = mini; old.status = .older
+    expect("badge: older host", old.badge(trusted: false), .older)
+    var gone = mini; gone.status = .notFound
+    expect("badge: not found is offline even when paired", gone.badge(trusted: true), .offline)
+    expect("status text: online", mini.statusText, "Online")
+    expect("status text: older", old.statusText, "Older host")
+    expect("status text: offline", gone.statusText, "Offline")
+    expect("detail: address and both routes", mini.detail(address: "100.64.0.2"), "100.64.0.2 · this network and Tailscale")
+    let saved = DiscoveredHost(name: "x", lanHost: "x.local", status: .notFound, saved: true)
+    expect("detail: saved host with no route", saved.detail(address: "x.local"), "x.local · saved")
+    let bare = DiscoveredHost(name: "y", status: .notFound)
+    expect("detail: address only", bare.detail(address: "y"), "y")
+    check("badge help text for every badge", [HostBadge.ready, .needsPairing, .older, .offline].allSatisfy { !$0.help.isEmpty })
+
+    expect("connect status: scanning with nothing yet", connectStatus(found: 0, scanning: true), "Looking for Macs…")
+    expect("connect status: nothing found", connectStatus(found: 0, scanning: false), "No Macs found. Connect by address below.")
+    expect("connect status: one Mac", connectStatus(found: 1, scanning: false), "1 Mac online")
+    expect("connect status: several, still scanning", connectStatus(found: 3, scanning: true), "3 Macs online, still looking…")
+}
+
+func galleryTests() {
+    expect("gallery: bare command shows the Connect window", galleryScreen(["gallery"]), "connect")
+    expect("gallery: named screen", galleryScreen(["gallery", "picker"]), "picker")
+    expect("gallery: unknown screen is left to the app", galleryScreen(["gallery", "mini"]), nil)
+    expect("gallery: extra words are left to the app", galleryScreen(["gallery", "picker", "x"]), nil)
+    expect("gallery: other commands", galleryScreen(["mini", "pw"]), nil)
+    expect("gallery: no arguments", galleryScreen([]), nil)
+    check("gallery: screens are unique", Set(galleryScreens).count == galleryScreens.count)
+    expect("host gallery: bare command shows Settings", galleryScreen(["gallery"], screens: hostGalleryScreens), "settings")
+    expect("host gallery: the menu", galleryScreen(["gallery", "menu"], screens: hostGalleryScreens), "menu")
+    expect("host gallery: viewer screens are not host screens", galleryScreen(["gallery", "picker"], screens: hostGalleryScreens), nil)
+    expect("gallery: an empty screen list never matches", galleryScreen(["gallery"], screens: []), nil)
+}

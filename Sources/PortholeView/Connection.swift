@@ -13,6 +13,12 @@ final class Connection: NSObject, RoomDelegate {
     var onClosed: ((UInt32) -> Void)?
     var onClipboard: ((String) -> Void)?
     var onIcon: ((UInt32, Data) -> Void)?
+    var onThumb: ((UInt32, Data) -> Void)?
+    var onOpenError: ((UInt32, String) -> Void)?
+    var onLink: ((LinkState) -> Void)?
+    var streamSettings: () -> ViewerSettings = { ViewerSettings() }
+
+    enum LinkState { case connected, reconnecting, disconnected(String) }
     private var pending: [UInt32: (VideoTrack, Message) -> Void] = [:]
     private var openedReplies: [UInt32: Message] = [:]
     private var listening = SharedUse<String, UInt32>()
@@ -68,6 +74,12 @@ final class Connection: NSObject, RoomDelegate {
             guard AppIcon.isAcceptable(png) else { return }
             Task { @MainActor [weak self] in self?.onIcon?(win, png) }
         }
+        try await room.registerByteStreamHandler(for: thumbTopic) { [weak self] reader, identity in
+            guard identity.stringValue == "host", let win = AppIcon.window(from: reader.info.attributes) else { return }
+            let jpeg = try await reader.readAll()
+            guard WindowThumbnail.isAcceptable(jpeg) else { return }
+            Task { @MainActor [weak self] in self?.onThumb?(win, jpeg) }
+        }
         handlersReady = true
     }
 
@@ -86,6 +98,7 @@ final class Connection: NSObject, RoomDelegate {
         guard !reconnecting else { return }
         reconnecting = true
         defer { reconnecting = false }
+        onLink?(.reconnecting)
         onError?("Lost the connection to the host. Reconnecting…")
         attempt = nextReconnectAttempt(previous: attempt, upFor: connectedAt.map { Date().timeIntervalSince($0) })
         connectedAt = nil
@@ -103,6 +116,7 @@ final class Connection: NSObject, RoomDelegate {
                 for (id, then) in queued where pending[id] == nil { open(id, then: then) }
                 return
             } catch let err as NSError where err.domain == "Porthole" && (err.code == 401 || err.code == 403) {
+                onLink?(.disconnected(err.localizedDescription))
                 onError?(err.localizedDescription)
                 return
             } catch {
@@ -110,7 +124,10 @@ final class Connection: NSObject, RoomDelegate {
                 attempt = nextReconnectAttempt(previous: attempt, upFor: nil)
             }
         }
-        if !closing { onError?("Disconnected from host. Reconnect from the Porthole menu.") }
+        guard !closing else { return }
+        let text = "Disconnected from host. Reconnect from the Porthole menu."
+        onLink?(.disconnected(text))
+        onError?(text)
     }
 
     private lazy var outbox: AsyncStream<(Data, Bool)>.Continuation = {
@@ -157,12 +174,17 @@ final class Connection: NSObject, RoomDelegate {
         pending[id] = then
         var m = Message(.open); m.win = id
         if let screen = NSScreen.main?.frame.size { m.sw = screen.width; m.sh = screen.height; m.ss = NSScreen.main.map { Double($0.backingScaleFactor) } }
+        streamSettings().apply(to: &m)
         Task {
             for _ in 0..<RetryPolicy.open.times where pending[id] != nil && openedReplies[id] == nil {
                 send(m)
                 try? await Task.sleep(nanoseconds: UInt64(RetryPolicy.open.every * 1_000_000_000))
             }
         }
+    }
+
+    func requestThumbnails() {
+        send(Message(.thumb))
     }
 
     func requestIcon(_ id: UInt32) {
@@ -232,7 +254,7 @@ final class Connection: NSObject, RoomDelegate {
                 self.subscribeIfPublished(id)
             case .closed: if let id = m.win { self.onClosed?(id) }
             case .error:
-                if let id = m.win { self.pending[id] = nil }
+                if let id = m.win, self.pending.removeValue(forKey: id) != nil { self.onOpenError?(id, m.msg ?? "Unknown error") }
                 self.onError?(m.msg ?? "Unknown error")
             default: break
             }
@@ -260,10 +282,20 @@ final class Connection: NSObject, RoomDelegate {
 
     nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         let kind = Self.kind(of: error)
+        let text = "Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")"
         Task { @MainActor in
             guard !self.closing else { return }
             if reconnectDelay(after: kind, attempt: 1) != nil { await self.reconnect(); return }
-            self.onError?("Disconnected from host\(error.map { ": \($0.localizedDescription)" } ?? ".")")
+            self.onLink?(.disconnected(text))
+            self.onError?(text)
         }
+    }
+
+    nonisolated func room(_ room: Room, didStartReconnectWithMode reconnectMode: ReconnectMode) {
+        Task { @MainActor in if !self.closing { self.onLink?(.reconnecting) } }
+    }
+
+    nonisolated func room(_ room: Room, didCompleteReconnectWithMode reconnectMode: ReconnectMode) {
+        Task { @MainActor in if !self.closing { self.onLink?(.connected) } }
     }
 }

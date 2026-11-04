@@ -1,0 +1,49 @@
+import AppKit
+import ImageIO
+import PortholeCore
+import ScreenCaptureKit
+import UniformTypeIdentifiers
+
+@MainActor
+enum Thumbnails {
+    private static var cache: [UInt32: (at: Date, jpeg: Data)] = [:]
+    private static let fresh: TimeInterval = 3
+
+    static func each(_ send: @escaping (UInt32, Data) async -> Void) async {
+        guard let windows = try? await WindowCatalog.shareable(onScreenOnly: true) else { return }
+        let infos = WindowFilter.sortedForPicker(windows.map {
+            WindowInfo(id: $0.windowID, app: $0.owningApplication?.applicationName ?? "", title: $0.title ?? "",
+                       bundle: nil, w: $0.frame.width, h: $0.frame.height)
+        })
+        let byID = Dictionary(windows.map { ($0.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        cache = cache.filter { Date().timeIntervalSince($0.value.at) < 60 }
+        for id in WindowThumbnail.requests(for: infos) {
+            if Task.isCancelled { return }
+            guard let w = byID[id], let jpeg = await jpeg(for: w) else { continue }
+            await send(id, jpeg)
+        }
+    }
+
+    private static func jpeg(for w: SCWindow) async -> Data? {
+        if let hit = cache[w.windowID], Date().timeIntervalSince(hit.at) < fresh { return hit.jpeg }
+        guard let px = WindowThumbnail.pixelSize(window: w.frame.size) else { return nil }
+        let config = SCStreamConfiguration()
+        config.width = Int(px.width)
+        config.height = Int(px.height)
+        config.showsCursor = false
+        config.scalesToFit = true
+        config.ignoreShadowsSingleWindow = true
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: w),
+                                                                      configuration: config),
+              let jpeg = encode(image), WindowThumbnail.isAcceptable(jpeg) else { return nil }
+        cache[w.windowID] = (Date(), jpeg)
+        return jpeg
+    }
+
+    private static func encode(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: WindowThumbnail.quality] as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? data as Data : nil
+    }
+}

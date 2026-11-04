@@ -3,7 +3,7 @@ import CoreGraphics
 import PortholeCore
 
 @MainActor
-final class HostApp: NSObject, NSApplicationDelegate {
+final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let config = HostConfig.loadOrCreate()
     lazy var server = LiveKitServer(config: config)
     let host = HostRoom()
@@ -21,6 +21,10 @@ final class HostApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst()), screens: hostGalleryScreens) {
+            HostGallery.show(screen, app: self)
+            return
+        }
         HostFiles.clearMarker()
         let env = ProcessInfo.processInfo.environment
         if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)") }
@@ -92,47 +96,45 @@ final class HostApp: NSObject, NSApplicationDelegate {
 
     func setUpMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "Porthole")
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
         statusItem = item
         refresh()
     }
 
+    var menuModel: HostMenuModel {
+        HostMenuModel(state: state, macName: Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
+                      address: tailscaleAddress(), shared: host.sharedWindows, screenLocked: Session.isScreenLocked,
+                      screenRecording: CGPreflightScreenCaptureAccess(), accessibility: InputInjector.isTrusted,
+                      paired: trust.store.devices().count)
+    }
+
     func refresh() {
-        let menu = NSMenu()
         let n = host.openWindowCount
-        menu.addItem(withTitle: hostMenuTitle(state: state, openWindows: n), action: nil, keyEquivalent: "")
-        if Session.isScreenLocked { menu.addItem(withTitle: "Screen is locked: viewers can watch but not type", action: nil, keyEquivalent: "") }
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Copy Browser Link", action: #selector(copyLink), keyEquivalent: "c").target = self
-        menu.addItem(withTitle: "Copy Password", action: #selector(copyPassword), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Pair a New Viewer…", action: #selector(pairViewer), keyEquivalent: "p").target = self
-        menu.addItem(withTitle: "Paired Macs…", action: #selector(showPairedMacs), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        let perms = menu.addItem(withTitle: "Screen Recording: \(CGPreflightScreenCaptureAccess() ? "on" : "OFF, click to fix")",
-                                 action: #selector(openScreenSettings), keyEquivalent: "")
-        perms.target = self
-        let ax = menu.addItem(withTitle: "Accessibility: \(InputInjector.isTrusted ? "on" : "OFF, click to fix")",
-                              action: #selector(openAXSettings), keyEquivalent: "")
-        ax.target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Porthole Host", action: #selector(quit), keyEquivalent: "q").target = self
-        statusItem?.menu = menu
+        let symbol = state.hasPrefix("Error") ? "exclamationmark.triangle" : n > 0 ? "macwindow.on.rectangle" : "macwindow"
+        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Porthole Host")
+        statusItem?.button?.toolTip = hostMenuTitle(state: state, openWindows: n)
+        if let menu = statusItem?.menu { menuNeedsUpdate(menu) }
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let fresh = StatusMenu.build(menuModel, target: self)
+        let items = fresh.items
+        fresh.removeAllItems()
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        for item in items { menu.addItem(item) }
     }
 
     @objc func copyLink() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(browserLink, forType: .string) }
     @objc func copyPassword() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(config.password, forType: .string) }
     @objc func pairViewer() { trust.presentNewCode() }
     @objc func showPairedMacs() { trust.showPaired() }
-    @objc func openScreenSettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-    }
-    @objc func openAXSettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
+    @objc func openScreenSettings() { HostSystemSettings.openScreenRecording() }
+    @objc func openAXSettings() { HostSystemSettings.openAccessibility() }
     @objc func showSettings() {
-        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password })
+        let w = settingsWindow ?? SettingsWindow(link: { [unowned self] in browserLink }, password: { [unowned self] in config.password }, trust: trust)
         settingsWindow = w
         w.present()
     }

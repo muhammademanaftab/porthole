@@ -19,20 +19,27 @@ final class PairingWindow: NSPanel, NSWindowDelegate {
         level = .floating
         delegate = self
 
+        let shield = NSImageView(image: NSImage(systemSymbolName: "lock.shield", accessibilityDescription: nil)!)
+        shield.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 30, weight: .regular)
+        shield.contentTintColor = .controlAccentColor
+        intro.alignment = .center
+        intro.font = .systemFont(ofSize: 12)
         codeLabel.font = .monospacedDigitSystemFont(ofSize: 44, weight: .semibold)
         codeLabel.alignment = .center
         codeLabel.isSelectable = true
         detail.textColor = .secondaryLabelColor
         detail.alignment = .center
+        detail.font = .systemFont(ofSize: 12)
         let again = NSButton(title: "New Code", target: self, action: #selector(newCode))
         let done = NSButton(title: "Done", target: self, action: #selector(finish))
         done.keyEquivalent = "\r"
         let buttons = NSStackView(views: [again, NSView(), done])
-        let root = NSStackView(views: [intro, codeLabel, detail, buttons])
+        let root = NSStackView(views: [shield, intro, codeLabel, detail, buttons])
         root.orientation = .vertical
         root.alignment = .centerX
         root.spacing = 12
-        root.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
+        root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 16, right: 20)
+        root.setCustomSpacing(16, after: detail)
         for v in [intro, codeLabel, detail, buttons] {
             v.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -40).isActive = true
         }

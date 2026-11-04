@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import IOKit.pwr_mgt
+import PortholeCore
 
 enum Power {
     private static var assertions: [IOPMAssertionID] = []
@@ -35,7 +36,7 @@ enum Session {
         return (d["CGSSessionScreenIsLocked"] as? Bool) ?? ((d["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false)
     }
 
-    static let lockedListMessage = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it (for example with Screen Sharing), then refresh."
+    static let lockedListMessage = LockNotice.list
 
-    static let lockedMessage = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it (for example with Screen Sharing) to control windows."
+    static let lockedMessage = LockNotice.control
 }

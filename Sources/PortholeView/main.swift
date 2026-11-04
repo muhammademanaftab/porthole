@@ -12,7 +12,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var clipTimer: Timer?
     let tiles = TileManager()
     var icons: [UInt32: Data] = [:]
-    var muted = false
+    var muted = !ViewerSettingsWindow.current.playSound
+    var muteItem: NSMenuItem?
+    var settingsWindow: ViewerSettingsWindow?
+    var hostName = ""
     var connectWindow: ConnectWindow?
     let discovery = HostDiscovery()
 
@@ -22,6 +25,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         tiles.onQuit = { [weak self] id in self?.portals[id]?.close() }
         clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollClipboard() }
+        }
+        if let screen = galleryScreen(Array(CommandLine.arguments.dropFirst())) {
+            Gallery.show(screen)
+            return
         }
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
@@ -41,21 +48,68 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Restart Host", action: #selector(restartHost), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Porthole", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Show Windows on Host", action: #selector(showPicker), keyEquivalent: "0")
+        appMenu.addItem(withTitle: "Connect to Host…", action: #selector(connectToHost), keyEquivalent: "k")
+        let mute = appMenu.addItem(withTitle: "Mute Host Sound", action: #selector(toggleMute(_:)), keyEquivalent: "")
+        mute.state = muted ? .on : .off
+        muteItem = mute
+        appMenu.addItem(withTitle: "Restart Host…", action: #selector(restartHost), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Porthole", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Porthole", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Find…", action: #selector(PickerWindow.performFindPanelAction(_:)), keyEquivalent: "f")
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let window = NSMenu(title: "Window")
+        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        window.addItem(.separator())
+        window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        let windowItem = NSMenuItem()
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        NSApp.windowsMenu = window
         NSApp.mainMenu = main
     }
 
     @objc func showPicker() { picker?.makeKeyAndOrderFront(nil); connection?.requestList() }
     @objc func toggleMute(_ item: NSMenuItem) {
-        muted.toggle()
-        item.state = muted ? .on : .off
+        var s = ViewerSettingsWindow.current
+        s.playSound = muted
+        ViewerSettingsWindow.save(s)
+        applySettings(s)
+    }
+
+    func applySettings(_ s: ViewerSettings) {
+        muted = !s.playSound
+        muteItem?.state = muted ? .on : .off
         connection?.muted = muted
+        settingsWindow?.reflect(s)
+    }
+
+    @objc func showSettings() {
+        let w = settingsWindow ?? ViewerSettingsWindow()
+        w.onChange = { [weak self] s in self?.applySettings(s) }
+        settingsWindow = w
+        w.present()
     }
 
     @objc func restartHost() {
@@ -169,6 +223,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func connect(host: String, credential: ViewerCredential, name: String? = nil, saved: Bool = false, hostID: String? = nil) {
         for p in portals.values { p.close() }
+        hostName = name ?? host
         if let old = connection { Task { await old.disconnect() } }
         picker?.close()
         let c = Connection(hostAddress: host, credential: credential)
@@ -184,13 +239,27 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         c.onError = { [weak picker] msg in picker?.showError(msg); picker?.orderFront(nil) }
         c.onClosed = { [weak self] id in self?.portals[id]?.close() }
+        c.onOpenError = { [weak self] id, msg in self?.portals[id]?.show(.failed(msg)) }
+        c.onLink = { [weak self] state in
+            self?.portals.values.forEach { $0.linkChanged(state) }
+        }
         c.onClipboard = { [weak self] text in self?.clipboardFromHost(text) }
-        c.onIcon = { [weak self] id, png in self?.icons[id] = png }
+        c.onIcon = { [weak self, weak picker] id, png in
+            self?.icons[id] = png
+            picker?.setIcon(id, png: png)
+        }
+        c.onThumb = { [weak picker] id, jpeg in picker?.setThumb(id, jpeg: jpeg) }
+        c.streamSettings = { ViewerSettings(lookup: { UserDefaults.standard.object(forKey: $0) }) }
+        picker.onThumbsWanted = { [weak c] in c?.requestThumbnails() }
+        picker.onIconWanted = { [weak c] id in c?.requestIcon(id) }
         c.onReconnected = { [weak self, weak c, weak picker] in
             guard let self, let c, self.connection === c else { return }
             picker?.showError("Reconnected.")
             c.requestList()
-            for (id, portal) in self.portals { c.open(id) { track, _ in portal.attach(track) } }
+            for (id, portal) in self.portals {
+                portal.reopen()
+                self.request(id, into: portal, fit: false)
+            }
         }
         Task {
             do {
@@ -227,22 +296,38 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     func open(_ info: WindowInfo) {
         if let existing = portals[info.id] { existing.makeKeyAndOrderFront(nil); return }
         guard let c = connection else { return }
-        let host = c.hostAddress
         icons[info.id] = nil
         c.requestIcon(info.id)
-        c.open(info.id) { [weak self] track, reply in
-            guard let self else { return }
-            let size = CGSize(width: reply.w ?? info.w, height: reply.h ?? info.h)
-            let portal = PortalWindow(windowID: info.id, title: info.portalTitle(host: host), size: size, track: track, connection: c)
-            portal.onClose = { [weak self] in
-                self?.connection?.close(info.id)
-                self?.portals[info.id] = nil
-                self?.tiles.remove(info.id)
-            }
-            self.portals[info.id] = portal
-            portal.makeKeyAndOrderFront(nil)
-            NSApp.activate()
-            self.startTile(info, portal: portal)
+        let portal = PortalWindow(windowID: info.id, title: info.portalTitle, subtitle: hostName, app: info.app,
+                                  size: CGSize(width: info.w, height: info.h), connection: c)
+        portal.onClose = { [weak self] in
+            self?.connection?.close(info.id)
+            self?.portals[info.id] = nil
+            self?.tiles.remove(info.id)
+        }
+        portal.onRetry = { [weak self, weak portal] in
+            guard let self, let portal else { return }
+            self.request(info.id, into: portal)
+        }
+        portals[info.id] = portal
+        portal.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        startTile(info, portal: portal)
+        request(info.id, into: portal)
+    }
+
+    func request(_ id: UInt32, into portal: PortalWindow, fit: Bool = true) {
+        guard let c = connection else { return }
+        c.open(id) { [weak portal] track, reply in
+            guard let portal else { return }
+            if fit, let w = reply.w, let h = reply.h { portal.fit(remote: CGSize(width: w, height: h)) }
+            portal.attach(track)
+        }
+        let host = hostName
+        let attempt = portal.beginRequest()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak portal] in
+            guard let portal, portal.isOpening, portal.requests == attempt else { return }
+            portal.show(.failed("No picture arrived from \(host). It may be busy, asleep or locked."))
         }
     }
 

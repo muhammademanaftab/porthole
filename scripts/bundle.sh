@@ -9,8 +9,9 @@ BIN=.build/arm64-apple-macosx/$CONFIG
 rm -rf dist && mkdir -p dist
 
 make_app() {
-  local app="dist/$1.app" exe=$2 id=$3 agent=$4
+  local app="dist/$1.app" exe=$2 id=$3 agent=$4 icon=$5
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
+  cp "assets/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
   cp "$BIN/$exe" "$app/Contents/MacOS/$exe"
   for fw in "$BIN"/*.framework; do [ -e "$fw" ] && cp -R "$fw" "$app/Contents/Frameworks/"; done
   install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/$exe" 2>/dev/null || true
@@ -23,6 +24,7 @@ make_app() {
   <key>CFBundleName</key><string>$1</string>
   <key>CFBundleDisplayName</key><string>$1</string>
   <key>CFBundleExecutable</key><string>$exe</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>
@@ -37,7 +39,7 @@ make_app() {
 PLIST
 }
 
-make_app "Porthole Host" porthole-host io.github.muhammademanaftab.porthole true
+make_app "Porthole Host" porthole-host io.github.muhammademanaftab.porthole true PortholeHost
 AGENTS="dist/Porthole Host.app/Contents/Library/LaunchAgents"
 mkdir -p "$AGENTS"
 "$BIN/porthole-host" agent-plist > "$AGENTS/io.github.muhammademanaftab.porthole.watchdog.plist"
@@ -52,7 +54,7 @@ LKDST="dist/Porthole Host.app/Contents/MacOS/livekit-server"
 cat "$(realpath "$LK")" > "$LKDST"
 chmod 755 "$LKDST"
 codesign --force --options runtime --timestamp=none -s "$SIGN_ID" "$LKDST"
-make_app "Porthole" porthole-view io.github.muhammademanaftab.porthole.view false
+make_app "Porthole" porthole-view io.github.muhammademanaftab.porthole.view false Porthole
 TILEDST="dist/Porthole.app/Contents/Helpers/porthole-tile"
 mkdir -p "$(dirname "$TILEDST")"
 cp "$BIN/porthole-tile" "$TILEDST"

@@ -357,9 +357,9 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'RETRY', 'clipFits', 'createPointer', 'ensureRandomUUID', 'hostReachable', 'isAudioTrack', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerStatus', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'clipFits', 'countLabel', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'hostReachable', 'iconRequests', 'isAudioTrack', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'streamWindow', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
-  for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)']) {
+  for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)', 'normalize(', '.every(t']) {
     assert.equal(html.includes(copy), false, copy);
   }
 });
@@ -479,6 +479,78 @@ test('index.html probes the host before reloading and keeps retrying when connec
   assert.match(html, /if \(await PC\.hostReachable\(fetch\)\) location\.reload\(\); else scheduleReconnect\(0, 0\);/);
   assert.match(html, /PC\.nextReconnectAttempt\(sessionStorage\.getItem\('reconnects'\), upForMs\)/);
   assert.match(html, /if \(sessionStorage\.getItem\('reconnects'\)\) scheduleReconnect\(0, 0\); else showPassword/);
-  assert.equal((html.match(/location\.reload\(\)/g) || []).length, 1);
+  const reloads = html.split('\n').filter(l => l.includes('location.reload()'));
+  assert.equal(reloads.length, 2);
+  assert.ok(reloads.some(l => l.includes("$('oretry').addEventListener('click'")));
   assert.ok(html.indexOf('connectedAt = Date.now()') > html.indexOf('await room.connect(url, token'));
+});
+
+const sample = [
+  { id: 1, app: 'TextEdit', title: 'Shopping List', w: 640, h: 480 },
+  { id: 2, app: 'Safari', title: 'Caf\u00e9 menu', w: 1280, h: 800 },
+  { id: 3, app: 'Finder', title: '', w: 900, h: 600 },
+];
+
+test('filterWindows matches app and title words, ignoring case and accents, like the Mac picker', () => {
+  const ids = (q) => core.filterWindows(sample, q).map(w => w.id);
+  assert.deepEqual(ids(''), [1, 2, 3]);
+  assert.deepEqual(ids('   '), [1, 2, 3]);
+  assert.deepEqual(ids('safari'), [2]);
+  assert.deepEqual(ids('LIST'), [1]);
+  assert.deepEqual(ids('cafe'), [2]);
+  assert.deepEqual(ids('text shopping'), [1]);
+  assert.deepEqual(ids('menu safari'), [2]);
+  assert.deepEqual(ids('text zebra'), []);
+  assert.deepEqual(ids('ind'), [3]);
+  assert.notEqual(core.filterWindows(sample, ''), sample);
+});
+
+test('pickerNotice mirrors the Mac picker states', () => {
+  assert.equal(core.pickerNotice(false, 0, 0, '', null).kind, 'loading');
+  assert.equal(core.pickerNotice(true, 0, 0, '', null).kind, 'empty');
+  assert.equal(core.pickerNotice(true, 0, 0, '', core.LOCKED_LIST).kind, 'locked');
+  assert.equal(core.pickerNotice(false, 0, 0, '', core.LOCKED_LIST).kind, 'locked');
+  assert.deepEqual(core.pickerNotice(false, 0, 0, '', 'Disconnected'), { kind: 'error', title: "Can't Show Windows", message: 'Disconnected' });
+  assert.equal(core.pickerNotice(true, 0, 0, '', '').kind, 'empty');
+  assert.equal(core.pickerNotice(true, 3, 3, '', 'Disconnected'), null);
+  assert.equal(core.pickerNotice(true, 3, 0, ' zebra ', null).message, 'No window matches \u201Czebra\u201D.');
+  assert.equal(core.pickerNotice(true, 3, 1, 'x', null), null);
+});
+
+test('the locked-screen text and topics match the Swift side', () => {
+  const picker = fs.readFileSync(path.join(__dirname, '../../Sources/PortholeCore/Picker.swift'), 'utf8');
+  assert.ok(picker.includes(`public static let list = "${core.LOCKED_LIST}"`));
+  assert.match(picker, new RegExp(`thumbTopic = "${core.THUMB_TOPIC}"`));
+  const tile = fs.readFileSync(path.join(__dirname, '../../Sources/PortholeCore/Tile.swift'), 'utf8');
+  assert.match(tile, new RegExp(`iconTopic = "${core.ICON_TOPIC}"`));
+  const message = fs.readFileSync(path.join(__dirname, '../../Sources/PortholeCore/Message.swift'), 'utf8');
+  assert.match(message, /case icon, thumb/);
+});
+
+test('countLabel and portalTitle', () => {
+  assert.equal(core.countLabel(1, 1), '1 window');
+  assert.equal(core.countLabel(4, 4), '4 windows');
+  assert.equal(core.countLabel(4, 2), '2 of 4 windows');
+  assert.equal(core.portalTitle(sample[0]), 'TextEdit \u2014 Shopping List');
+  assert.equal(core.portalTitle(sample[2]), 'Finder');
+});
+
+test('streamWindow reads the win attribute the host puts on icon and thumbnail streams', () => {
+  assert.equal(core.streamWindow({ win: '42' }), 42);
+  assert.equal(core.streamWindow({ win: '4294967295' }), 4294967295);
+  for (const bad of [{}, null, undefined, { win: '' }, { win: '-1' }, { win: '07' }, { win: '1.5' }, { win: '4294967296' }, { win: 7 }]) {
+    assert.equal(core.streamWindow(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('iconRequests asks once per app, in list order, up to a limit', () => {
+  const list = [...sample, { id: 4, app: 'TextEdit', title: 'Other', w: 1, h: 1 }];
+  assert.deepEqual(core.iconRequests(list), [1, 2, 3]);
+  assert.deepEqual(core.iconRequests(list, 2), [1, 2]);
+  assert.deepEqual(core.iconRequests([]), []);
+});
+
+test('pickerLink goes back to the window list with the same password', () => {
+  assert.equal(core.pickerLink('a b&c'), '?pw=a%20b%26c');
+  assert.equal(core.windowLink('a b&c', 7), core.pickerLink('a b&c') + '&win=7');
 });

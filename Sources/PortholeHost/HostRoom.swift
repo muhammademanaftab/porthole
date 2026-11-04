@@ -18,12 +18,18 @@ final class HostRoom: NSObject, RoomDelegate {
     private var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     private var clipTimer: Timer?
     private var lockWarnedAt: [String: Date] = [:]
+    private var thumbTasks: [String: Task<Void, Never>] = [:]
+    private var shared: [UInt32: WindowInfo] = [:]
     var onChange: (() -> Void)?
     var accepts: ((String) -> Bool)?
     var onRestart: ((String, Bool) -> String?)?
     private(set) var isConnected = false
 
     var openWindowCount: Int { sessions.count }
+
+    var sharedWindows: [(info: WindowInfo, viewers: Int)] {
+        WindowFilter.sortedForPicker(sessions.keys.compactMap { shared[$0] }).map { ($0, registry.viewers[$0.id]?.count ?? 0) }
+    }
 
     func connect(url: String, makeToken: @escaping () -> String) async throws {
         self.url = url
@@ -112,6 +118,7 @@ final class HostRoom: NSObject, RoomDelegate {
         guard let who = participant.identity?.stringValue else { return }
         Task { @MainActor in
             Log.info("viewer left: \(who)")
+            self.thumbTasks.removeValue(forKey: who)?.cancel()
             self.input.releaseAllButtons()
             for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
             for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
@@ -156,6 +163,8 @@ final class HostRoom: NSObject, RoomDelegate {
         case .icon:
             guard let id = m.win else { return }
             await sendIcon(id, to: who)
+        case .thumb:
+            sendThumbnails(to: who)
         case .key, .text, .mouse, .scroll, .resize:
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
             await warnIfLocked(who)
@@ -173,8 +182,8 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func open(_ id: UInt32, by who: String, screen: CGSize?, prefs: StreamPrefs) async {
-        let allowed = (try? await WindowCatalog.shareable(onScreenOnly: false).contains { $0.windowID == id }) ?? false
-        guard allowed else {
+        let found = (try? await WindowCatalog.shareable(onScreenOnly: false))?.first { $0.windowID == id }
+        guard let found else {
             var reply = Message(.error); reply.win = id; reply.msg = "That window can't be shared."
             await send(reply, to: who)
             return
@@ -212,6 +221,8 @@ final class HostRoom: NSObject, RoomDelegate {
                 }
                 session.onClosed = { [weak self] in Task { await self?.windowClosed(id) } }
                 sessions[id] = session
+                shared[id] = WindowInfo(id: id, app: found.owningApplication?.applicationName ?? "", title: found.title ?? "",
+                                        bundle: found.owningApplication?.bundleIdentifier, w: found.frame.width, h: found.frame.height)
                 applyPrefs()
                 onChange?()
                 if let pid = session.pid { await audio.add(window: id, pid: pid, in: room) }
@@ -241,10 +252,10 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func sharedPrefs(_ id: UInt32, adding extra: UInt32? = nil) -> StreamPrefs {
-        var shared = Set(sessions.keys).union(starting.keys)
-        if let extra { shared.insert(extra) }
+        var live = Set(sessions.keys).union(starting.keys)
+        if let extra { live.insert(extra) }
         let viewers = (viewerPrefs[id] ?? [:]).sorted { $0.key < $1.key }.map(\.value)
-        return StreamPrefs.combined(viewers, onlySharedWindow: shared == [id])
+        return StreamPrefs.combined(viewers, onlySharedWindow: live == [id])
     }
 
     private func applyPrefs() {
@@ -254,6 +265,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private func stopSession(_ id: UInt32) async {
         viewerPrefs[id] = nil
         guard let session = sessions.removeValue(forKey: id) else { return }
+        shared[id] = nil
         await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
@@ -265,6 +277,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private func windowClosed(_ id: UInt32) async {
         guard let who = registry.windowClosed(id), let session = sessions.removeValue(forKey: id) else { return }
         viewerPrefs[id] = nil
+        shared[id] = nil
         await audio.remove(window: id, in: room)
         await session.stop(in: room)
         stage.unpark(id)
@@ -273,6 +286,22 @@ final class HostRoom: NSObject, RoomDelegate {
         var m = Message(.closed); m.win = id
         for v in who { await send(m, to: v) }
         onChange?()
+    }
+
+    private func sendThumbnails(to who: String) {
+        thumbTasks[who]?.cancel()
+        thumbTasks[who] = Task { [weak self] in
+            await Thumbnails.each { id, jpeg in
+                guard let self, !Task.isCancelled else { return }
+                let opts = StreamByteOptions(topic: thumbTopic, attributes: AppIcon.attributes(win: id),
+                                             destinationIdentities: [Participant.Identity(from: who)],
+                                             mimeType: "image/jpeg", name: "thumb-\(id).jpg", totalSize: jpeg.count)
+                do { _ = try await self.room.localParticipant.sendBytes(jpeg, options: opts) } catch {
+                    Log.info("thumbnail send to \(who) failed: \(error.localizedDescription)")
+                }
+            }
+            self?.thumbTasks[who] = nil
+        }
     }
 
     private func sendIcon(_ id: UInt32, to who: String) async {
