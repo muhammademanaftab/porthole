@@ -37,6 +37,7 @@ final class HostRoom: NSObject, RoomDelegate {
     var onRestart: ((String, Bool) -> String?)?
     var guestLink: ((String) -> ShareLink?)?
     var guestControlSwitch: () -> Bool = { false }
+    var shareLinksExist: () -> Bool = { false }
     var onGuestAsk: ((String, ShareLink) -> Void)?
     var onGuestRefused: ((String) -> Void)?
     var onGuestsChanged: (() -> Void)?
@@ -587,7 +588,7 @@ final class HostRoom: NSObject, RoomDelegate {
         let tracker = tracker
         let links = Dictionary(participants.map { ($0.identity, guestLink?($0.identity)) }, uniquingKeysWith: { a, _ in a })
         let plan = TrackGrantPlan.make(participants: participants, tracks: tracks, link: { links[$0] ?? nil },
-                                       parent: { tracker.parent(of: $0) }, sharedParents: Set(parentIDs))
+                                       parent: { tracker.parent(of: $0) }, sharedParents: Set(parentIDs), linksExist: shareLinksExist())
         guard plan != trackPlan else { return }
         let first = trackPlan == nil
         trackPlan = plan
@@ -596,7 +597,7 @@ final class HostRoom: NSObject, RoomDelegate {
         do {
             try await room.localParticipant.setTrackSubscriptionPermissions(allParticipantsAllowed: plan.allParticipantsAllowed, trackPermissions: perms)
             let guests = plan.grants.filter { !$0.allTracks }
-            Log.info(plan.allParticipantsAllowed ? "track permissions: every viewer may subscribe (no guests)"
+            Log.info(plan.allParticipantsAllowed ? "track permissions: every viewer may subscribe (no share links, no guests)"
                      : "track permissions: \(plan.grants.count - guests.count) viewer(s) see every track, \(guests.count) guest(s) see \(guests.map { String($0.trackSids.count) }.joined(separator: ",")) track(s)", .trust)
         } catch {
             trackPlan = nil

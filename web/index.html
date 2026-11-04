@@ -265,7 +265,7 @@ function requestList() {
 }
 
 function onData(payload, participant, kind, topic) {
-  if (topic !== 'porthole') return;
+  if (topic !== 'porthole' || !participant || participant.identity !== 'host') return;
   const m = JSON.parse(new TextDecoder().decode(payload));
   if (m.t === 'windows') { listed = true; gotList(m.list || []); }
   else if (m.t === 'opened' && m.win === winId && !opened) { opened = true; subscribe(m.track); if (PC.isAudioTrack(m.audio)) listen(m.audio); }

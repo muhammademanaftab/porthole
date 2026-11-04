@@ -279,8 +279,8 @@ public struct TrackGrantPlan: Equatable, Sendable {
     }
 
     public static func make(participants: [Participant], tracks: [Track], link: (String) -> ShareLink?,
-                            parent: (UInt32) -> UInt32?, sharedParents: Set<UInt32>) -> TrackGrantPlan {
-        guard participants.contains(where: { GuestIdentity.isGuest($0.identity) }) else {
+                            parent: (UInt32) -> UInt32?, sharedParents: Set<UInt32>, linksExist: Bool = false) -> TrackGrantPlan {
+        guard linksExist || participants.contains(where: { GuestIdentity.isGuest($0.identity) }) else {
             return TrackGrantPlan(allParticipantsAllowed: true, grants: [])
         }
         let grants = participants.sorted { $0.identity < $1.identity }.map { p -> TrackGrant in

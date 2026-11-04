@@ -68,6 +68,7 @@ final class HostGuests {
         let store = store
         host.guestLink = { who in GuestIdentity.linkID(who).flatMap { store.link(id: $0) } }
         host.guestControlSwitch = { [weak self] in self?.allowControl ?? false }
+        host.shareLinksExist = { !store.links().isEmpty }
         host.onGuestAsk = { [weak self] who, link in self?.ask(who, link) }
         host.onGuestRefused = { [weak self] who in self?.kick(who, why: "(its share link expired or was revoked)") }
         host.onGuestsChanged = { [weak self] in
@@ -83,6 +84,7 @@ final class HostGuests {
     private func changed() {
         linksWindow?.reload()
         onChange?()
+        Task { await host?.updateTrackPermissions() }
     }
 
     var links: [ShareLink] { store.links() }
@@ -136,6 +138,7 @@ final class HostGuests {
         guard let host else { return }
         for who in host.guestIdentities where host.guestLink?(who) == nil { kick(who, why: "(its share link expired)") }
         if linksWindow?.isVisible == true { linksWindow?.reload() }
+        Task { await host.updateTrackPermissions() }
     }
 
     private var kicking: Set<String> = []

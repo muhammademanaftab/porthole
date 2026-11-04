@@ -158,6 +158,11 @@ private func trackPlanTests() {
     let mac = TrackGrantPlan.Participant(sid: "PA_mac", identity: "view-Air-abc.0123456789abcdef")
     let none = TrackGrantPlan.make(participants: [mac], tracks: tracks, link: { _ in nil }, parent: parent, sharedParents: [77, 88])
     expect("track plan: with no guests every viewer may subscribe", none, TrackGrantPlan(allParticipantsAllowed: true, grants: []))
+    let armed = TrackGrantPlan.make(participants: [mac], tracks: tracks, link: { _ in nil }, parent: parent, sharedParents: [77], linksExist: true)
+    check("track plan: while any share link is live the default is closed before a guest joins",
+          !armed.allParticipantsAllowed && armed.grants == [TrackGrant(participantSid: "PA_mac", allTracks: true, trackSids: [])])
+    let fresh = TrackGrantPlan.make(participants: [], tracks: tracks, link: { _ in nil }, parent: parent, sharedParents: [], linksExist: true)
+    check("track plan: a guest who joins before the next update sees nothing", !fresh.allParticipantsAllowed && fresh.grants.isEmpty)
     let g1 = TrackGrantPlan.Participant(sid: "PA_g1", identity: "guest-0a1b2c3d-aaaaaa")
     let g2 = TrackGrantPlan.Participant(sid: "PA_g2", identity: "guest-0a1b2c3e-bbbbbb")
     let gone = TrackGrantPlan.Participant(sid: "PA_g3", identity: "guest-deadbeef-cccccc")

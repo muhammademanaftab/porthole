@@ -58,4 +58,5 @@ test('page gates every input path on mayInput', () => {
   }
   assert.ok(html.includes("send({ t: 'ask', win: winId })"));
   assert.ok(html.includes("m.t === 'control'"));
+  assert.ok(html.includes("if (topic !== 'porthole' || !participant || participant.identity !== 'host') return;"));
 });
