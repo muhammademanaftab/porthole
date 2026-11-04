@@ -19,6 +19,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     private var limits = PortalSizing.Limits()
     private var resizeEndedAt: Double?
     let isCompanion: Bool
+    var wholeScreen = false
     var companionOf: UInt32?
     var companionOffer: Message?
     var closedByHost = false
@@ -113,6 +114,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     func fit(remote size: CGSize) {
         let screen = self.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let fitted = portalContentSize(remote: size, screen: screen.size)
+        if wholeScreen, size.width > 0, size.height > 0 { contentAspectRatio = size }
         guard fitted != contentView?.bounds.size else { return }
         let top = frame.maxY
         setContentSize(fitted)
@@ -168,6 +170,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     private var pictureSize: CGSize? { contentView?.bounds.size }
 
     private func sendResize(_ size: CGSize) {
+        guard !wholeScreen else { return }
         var m = Message(.resize); m.win = windowID; m.w = size.width; m.h = size.height
         connection.send(m)
     }

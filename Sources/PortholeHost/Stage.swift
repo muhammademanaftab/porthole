@@ -6,6 +6,7 @@ import VirtualDisplayBridge
 final class Stage {
     private var display: CGVirtualDisplay?
     private(set) var displayID: CGDirectDisplayID?
+    var matched: [CGDirectDisplayID] = []
     private var parked: [UInt32: (pid: pid_t, home: CGPoint)] = [:]
     private var nextSlot = 0
     private var emptySince: Date?
@@ -50,6 +51,7 @@ final class Stage {
 
     func release() {
         guard display != nil else { return }
+        unmatchScreens()
         unparkAll()
         idleTimer?.invalidate(); idleTimer = nil
         display = nil

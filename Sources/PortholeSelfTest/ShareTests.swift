@@ -115,6 +115,13 @@ private func guestAccessTests() {
     expect("guest access: a window link lists only its window", GuestAccess.visible([safari, notes], link: window).map(\.id), [77])
     expect("guest access: a picker link lists every window", GuestAccess.visible([safari, notes], link: picker).map(\.id), [77, 88])
     expect("guest access: a closed shared window lists nothing", GuestAccess.visible([notes], link: window).map(\.id), [])
+    let screen = WholeMac.windowID(screen: 0) ?? 0
+    check("guest access: Whole Mac is never a guest's, even on a picker link", !GuestAccess.allows(.open(win: screen, parent: nil), link: picker, controlling: true)
+          && !GuestAccess.allows(.input(win: screen), link: picker, controlling: true) && !GuestAccess.allows(.icon(win: screen), link: picker, controlling: true))
+    expect("guest access: a guest's list never carries Whole Mac entries", GuestAccess.visible([WindowInfo(id: screen, app: "Whole Mac", title: "Main", bundle: nil, w: 1, h: 1), safari],
+                                                                                         link: picker).map(\.id), [77])
+    expect("guest access: whole-mac sees a guest as neither paired nor password", WholeMac.viewer(GuestIdentity.make(link: "0a1b2c3d", client: "abcdef123456")), .other)
+    check("guest access: so Whole Mac is never offered to a guest", WholeMacMode.allCases.allSatisfy { !WholeMac.offered(mode: $0, viewer: WholeMac.viewer("guest-0a1b2c3d-abcdef123456")) })
     var key = Message(.key); key.win = 77
     expect("guest access: key, text, mouse, scroll and resize are input", [Message.Kind.key, .text, .mouse, .scroll, .resize].map { k -> GuestRequest? in
         var m = Message(k); m.win = 77; return GuestAccess.request(for: m, parent: { _ in nil })
@@ -152,7 +159,7 @@ private func trackPlanTests() {
     let now = Date()
     let window = ShareLink(id: "0a1b2c3d", tokenHash: "h", window: 77, label: "w", control: false, created: now, expires: now + 60)
     let picker = ShareLink(id: "0a1b2c3e", tokenHash: "h", window: nil, label: "p", control: false, created: now, expires: now + 60)
-    let tracks = [TrackGrantPlan.Track(sid: "TR_77", name: "win-77"), .init(sid: "TR_88", name: "win-88"),
+    let tracks = [TrackGrantPlan.Track(sid: "TR_77", name: "win-77"), .init(sid: "TR_88", name: "win-88"), .init(sid: "TR_MAC", name: Message.trackName(for: WholeMac.windowID(screen: 0) ?? 0)),
                   .init(sid: "TR_99", name: "win-99"), .init(sid: "TR_AUD", name: "aud-mix")]
     let parent: (UInt32) -> UInt32? = { $0 == 99 ? 77 : nil }
     let mac = TrackGrantPlan.Participant(sid: "PA_mac", identity: "view-Air-abc.0123456789abcdef")

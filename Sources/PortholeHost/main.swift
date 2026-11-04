@@ -19,6 +19,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let settings = HostSettings(lookup: { UserDefaults.standard.object(forKey: $0) })
     var state = "Starting…"
     var isGallery = false
+    let wholeMacUI = WholeMacUI()
 
     var browserLink: String {
         viewerLink(host: tailscaleAddress() ?? ProcessInfo.processInfo.hostName, port: config.httpPort, password: config.password)
@@ -61,6 +62,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !InputInjector.isTrusted { InputInjector.requestTrust() }
         host.companionsEnabled = { CompanionRules.enabled(stored: UserDefaults.standard.object(forKey: CompanionRules.settingKey), environment: env) }
         host.onRestart = { [weak self] who, hasOpenWindow in self?.restartRequested(by: who, hasOpenWindow: hasOpenWindow, watched: keep) }
+        setUpWholeMac(environment: env)
         startStatus(watched: keep)
         Task { await start() }
     }
@@ -100,7 +102,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             http.start()
             self.http = http
             let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
-            host.onChange = { [weak self] in self?.refresh() }
+            host.onChange = { [weak self] in self?.refresh(); self?.host.wholeMacChanged() }
             trust.attach(to: host)
             guests.attach(to: host)
             guests.onChange = { [weak self] in self?.refresh() }
@@ -175,6 +177,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !isGallery else { NSApp.terminate(nil); return }
         HostFiles.writeMarker(marker)
         Log.info("quitting (\(marker.rawValue))", .host)
+        liftCurtain()
         host.stage.release()
         server.stop()
         NSApp.terminate(nil)
@@ -184,6 +187,7 @@ final class HostApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !isGallery else { return }
         HostFiles.writeMarker(.session, unlessPresent: true)
         Log.info("terminating (\(HostFiles.readMarker()?.rawValue ?? ExitMarker.session.rawValue))", .host)
+        liftCurtain()
         host.stage.release()
         Log.flush()
     }

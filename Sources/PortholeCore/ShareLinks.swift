@@ -191,20 +191,22 @@ public enum GuestAccess {
         case .open(let win, let parent): return covers(link, win: win, parent: parent)
         case .icon(let win): return covers(link, win: win, parent: nil)
         case .thumbnails: return link.isPicker
-        case .input: return controlling
+        case .input(let win): return controlling && !WholeMac.isScreen(win)
         case .clipboardFromGuest: return controlling
         case .clipboardToGuest, .restart, .pair: return false
         }
     }
 
     public static func covers(_ link: ShareLink, win: UInt32, parent: UInt32?) -> Bool {
+        guard !WholeMac.isScreen(win), !(parent.map(WholeMac.isScreen) ?? false) else { return false }
         guard let only = link.window else { return true }
         return win == only || parent == only
     }
 
     public static func visible(_ list: [WindowInfo], link: ShareLink) -> [WindowInfo] {
-        guard let only = link.window else { return list }
-        return list.filter { $0.id == only }
+        let windows = list.filter { !WholeMac.isScreen($0.id) }
+        guard let only = link.window else { return windows }
+        return windows.filter { $0.id == only }
     }
 
     public static func request(for m: Message, parent: (UInt32) -> UInt32?) -> GuestRequest? {

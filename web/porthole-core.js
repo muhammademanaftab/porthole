@@ -252,16 +252,21 @@
     return n <= 0xFFFFFFFF && String(n) === s ? n : null;
   }
 
+  const SCREEN_FIRST_ID = 0xFFFFFF00, SCREEN_COUNT = 16;
+  const isScreenId = (id) => Number.isInteger(id) && id >= SCREEN_FIRST_ID && id < SCREEN_FIRST_ID + SCREEN_COUNT;
+  const isScreen = (w) => !!w && (w.screen === true || isScreenId(w.id));
+
   function iconRequests(list, limit = 24) {
     const seen = new Set(), out = [];
     for (const w of list) {
       if (out.length >= limit) break;
+      if (isScreen(w)) continue;
       if (seen.has(w.app)) continue;
       seen.add(w.app); out.push(w.id);
     }
     return out;
   }
 
-  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });

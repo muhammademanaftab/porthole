@@ -48,6 +48,7 @@
   .shot { position: relative; aspect-ratio: 16 / 10; border-radius: 9px; background: var(--well); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; }
   .shot img.thumb { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); object-fit: contain; filter: drop-shadow(0 2px 6px rgba(0,0,0,.18)); }
   .shot img.big { width: 56px; height: 56px; opacity: .9; }
+  .shot .glyph { font-size: 52px; line-height: 1; opacity: .85; }
   .meta { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 2px; }
   .meta img { width: 28px; height: 28px; flex: none; }
   .meta .blank { width: 28px; height: 28px; flex: none; border-radius: 7px; background: var(--well); }
@@ -356,6 +357,7 @@ function fillCard(a, w) {
   shot.replaceChildren();
   if (thumb) { const i = new Image(); i.className = 'thumb'; i.alt = ''; i.src = thumb; shot.append(i); }
   else if (icon) { const i = new Image(); i.className = 'big'; i.alt = ''; i.src = icon; shot.append(i); }
+  else if (PC.isScreen(w)) { const g = document.createElement('div'); g.className = 'glyph'; g.textContent = '\u{1F5A5}'; shot.append(g); }
   const slot = a.querySelector('.meta').firstElementChild;
   if (icon) { const i = new Image(); i.alt = ''; i.src = icon; slot.replaceWith(i); }
 }
@@ -591,6 +593,7 @@ window.addEventListener('paste', async e => {
   for (const m of PC.pasteKeys(winId)) send(m);
 });
 
+if (PC.isScreenId(winId)) $('fit').hidden = true;
 function fitToTab() { if (winId && room && allowed()) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); toast('Resized the window to fit this tab.'); } }
 $('fit').addEventListener('click', e => { e.stopPropagation(); fitToTab(); video.focus(); });
 

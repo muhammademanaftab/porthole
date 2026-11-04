@@ -9,9 +9,10 @@ public struct WindowInfo: Codable, Equatable, Sendable {
     public var bundle: String?
     public var w: Double
     public var h: Double
+    public var screen: Bool?
 
-    public init(id: UInt32, app: String, title: String, bundle: String?, w: Double, h: Double) {
-        self.id = id; self.app = app; self.title = title; self.bundle = bundle; self.w = w; self.h = h
+    public init(id: UInt32, app: String, title: String, bundle: String?, w: Double, h: Double, screen: Bool? = nil) {
+        self.id = id; self.app = app; self.title = title; self.bundle = bundle; self.w = w; self.h = h; self.screen = screen
     }
 }
 

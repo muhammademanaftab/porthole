@@ -297,6 +297,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     }
 
     private func localIcon(_ info: WindowInfo) -> NSImage? {
+        if info.screen == true { return NSImage(systemSymbolName: "display", accessibilityDescription: WholeMac.appName) }
         guard let bundle = info.bundle, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
     }
