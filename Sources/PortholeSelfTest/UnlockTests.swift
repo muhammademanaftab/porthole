@@ -9,6 +9,7 @@ func unlockTests() {
     unlockTypingTests()
     unlockRunTests()
     unlockEnvTests()
+    unlockGuardTests()
 }
 
 private let owner = pairedIdentity(name: "Studio", suffix: "ab12", device: "0123456789abcdef")
@@ -142,7 +143,7 @@ private func unlockRunTests() {
     Task.detached {
         var out: [(String, Bool)] = []
         func runner(_ mac: FakeMac) -> LockScreenUnlock {
-            LockScreenUnlock(isLocked: { mac.isLocked() }, wake: { mac.note("wake") }, type: { mac.note("type \($0.count)") },
+            LockScreenUnlock(isLocked: { mac.isLocked() }, wake: { mac.note("wake") }, type: { mac.note("type \($0.count)"); return true },
                              sleep: { mac.note("sleep \($0)") }, typed: { mac.note("typed") })
         }
         let ok = FakeMac(locked: [true, true, true, false])
@@ -152,11 +153,38 @@ private func unlockRunTests() {
         let stuck = FakeMac(locked: [true])
         let r2 = await runner(stuck).run("pw")
         let polls = stuck.log.filter { $0 == "sleep 0.5" }.count
-        out.append(("run: gives up after about 8 s still locked", r2 == .stillLocked && polls == 16))
+        out.append(("run: gives up after about 15 s still locked", r2 == .stillLocked && polls == 30))
         let early = FakeMac(locked: [false])
         let r3 = await runner(early).run("pw")
         out.append(("run: never types when the screen unlocked during the wake wait", r3 == .unlockedBeforeTyping
                     && !early.log.contains { $0.hasPrefix("type") }))
+        let mid = FakeMac(locked: [true])
+        let cut = LockScreenUnlock(isLocked: { mid.isLocked() }, wake: {}, type: { _ in mid.note("type"); return false },
+                                   sleep: { _ in }, typed: { mid.note("typed") })
+        let r4 = await cut.run("pw")
+        out.append(("run: an unlock during typing stops without polling or a typed note", r4 == .unlockedWhileTyping
+                    && mid.log == ["check", "type"]))
+
+        let all = LockScreenTyping.sequence("abc", source: nil)
+        var posted: [CGEvent] = []
+        var checks = 0
+        let full = await LockScreenTyping.post(all, stillLocked: { checks += 1; return true }, post: { posted.append($0) }, pause: {})
+        out.append(("post: checks the lock before every event and posts them all", full && checks == all.count && posted.count == all.count))
+        posted = []
+        checks = 0
+        let stopAt = Modifiers.flagKeyCodes.count + 3
+        let partial = await LockScreenTyping.post(all, stillLocked: { checks += 1; return checks <= stopAt }, post: { posted.append($0) }, pause: {})
+        out.append(("post: stops at the first unlocked check", !partial && posted.count == stopAt))
+        out.append(("post: never posts Return after an unlock mid-typing",
+                    !posted.contains { $0.getIntegerValueField(.keyboardEventKeycode) == Int64(LockScreenTyping.returnKey) }))
+        posted = []
+        checks = 0
+        let lastMoment = await LockScreenTyping.post(all, stillLocked: { checks += 1; return checks < all.count }, post: { posted.append($0) }, pause: {})
+        out.append(("post: an unlock right before the final Return up still skips it",
+                    !lastMoment && posted.count == all.count - 1))
+        posted = []
+        let none = await LockScreenTyping.post(all, stillLocked: { false }, post: { posted.append($0) }, pause: {})
+        out.append(("post: nothing is posted when unlocked from the start", !none && posted.isEmpty))
         results = out
         done.signal()
     }
@@ -174,7 +202,13 @@ private func unlockEnvTests() {
     expect("env: empty password", UnlockEnv.parse("3:"), nil)
     expect("env: too long a wait", UnlockEnv.parse("601:pw"), nil)
     expect("env: the CLI waits the usual 25 s without it", UnlockEnv.cliTimeout(nil), 25)
-    expect("env: the CLI waits for the delay and the unlock too", UnlockEnv.cliTimeout(UnlockEnv.Request(delay: 5, password: "x")), 49.5)
+    expect("env: the CLI waits for the delay, the unlock and the relists too", UnlockEnv.cliTimeout(UnlockEnv.Request(delay: 5, password: "x")), 59.5)
+    check("env: relist after an unlock only while the list is empty and tries are left",
+          UnlockEnv.shouldRelist(listEmpty: true, triesLeft: 3) && UnlockEnv.shouldRelist(listEmpty: true, triesLeft: 1)
+          && !UnlockEnv.shouldRelist(listEmpty: true, triesLeft: 0) && !UnlockEnv.shouldRelist(listEmpty: false, triesLeft: 3))
+    expect("env: relists 3 times, 1 s apart", [Double(UnlockEnv.relistTries), UnlockEnv.relistEvery], [3, 1])
+    let scrubbed = UnlockEnv.scrubbed([UnlockEnv.name: "5:hunter2", "PORTHOLE_OPEN": "id:7", "HOME": "/Users/x"])
+    expect("env: the long-lived viewer never gets the password", scrubbed, ["PORTHOLE_OPEN": "id:7", "HOME": "/Users/x"])
     check("env: ask once, only when the host said locked and listed nothing",
           UnlockEnv.shouldAsk(lockedSeen: true, listEmpty: true, tried: false)
           && !UnlockEnv.shouldAsk(lockedSeen: true, listEmpty: true, tried: true)
@@ -187,4 +221,44 @@ private func unlockEnvTests() {
     check("env: PORTHOLE_OPEN_UNLOCK is masked", flag?.secret == true)
     let rows = EnvFlags.rows(environment: [UnlockEnv.name: "5:hunter2"], setOnly: true)
     check("env: porthole env never prints the value", rows.count == 1 && !EnvFlags.render(rows).contains("hunter2") && EnvFlags.shown(rows[0]) != "5:hunter2")
+}
+
+private func unlockGuardTests() {
+    let rel = LockScreenTyping.releases(source: nil)
+    expect("typing: one modifier release per modifier key", rel.count, Modifiers.flagKeyCodes.count)
+    check("typing: the releases are flagsChanged with no flags", rel.allSatisfy { $0.type == .flagsChanged && $0.flags.intersection([.maskShift, .maskCommand, .maskAlternate, .maskControl, .maskSecondaryFn, .maskAlphaShift]).isEmpty })
+    expect("typing: the releases cover every modifier key code",
+           Set(rel.map { UInt16($0.getIntegerValueField(.keyboardEventKeycode)) }), Modifiers.flagKeyCodes)
+    let seq = LockScreenTyping.sequence("ab", source: nil)
+    check("typing: the modifiers are released before any character",
+          seq.prefix(rel.count).allSatisfy { $0.type == .flagsChanged } && seq.dropFirst(rel.count).allSatisfy { $0.type != .flagsChanged })
+    expect("typing: the sequence ends with Return", seq.last.map { $0.getIntegerValueField(.keyboardEventKeycode) }, 36)
+
+    for kind in [Message.Kind.key, .text, .mouse, .scroll] {
+        check("unlock: \(kind.rawValue) input is dropped while typing", UnlockPolicy.dropsInput(kind, running: true))
+        check("unlock: \(kind.rawValue) input passes otherwise", !UnlockPolicy.dropsInput(kind, running: false))
+    }
+    check("unlock: resizes still pass while typing", !UnlockPolicy.dropsInput(.resize, running: true))
+
+    expect("unlock: unlocked while typing tells the viewer", UnlockOutcome.unlockedWhileTyping.message,
+           "The Mac unlocked while Porthole was typing, so Porthole stopped typing.")
+    check("unlock: unlocked while typing replies on", UnlockOutcome.unlockedWhileTyping.reply().on == true)
+    check("unlock: unlocked while typing is logged without the password",
+          UnlockOutcome.unlockedWhileTyping.logLine.hasPrefix("unlock: the screen unlocked while Porthole was typing"))
+    var l = UnlockLimiter()
+    _ = l.begin(now: Date(timeIntervalSince1970: 0))
+    l.abandoned()
+    _ = l.begin(now: Date(timeIntervalSince1970: 10))
+    expect("unlock: an abandoned attempt counts no failure", l.finished(unlocked: false, now: Date(timeIntervalSince1970: 10)), 2)
+
+    check("unlock: a busy reply is recognised", UnlockPrompt.isBusyReply(UnlockOutcome.refused(.busy).reply()))
+    check("unlock: a real answer is not busy", !UnlockPrompt.isBusyReply(UnlockOutcome.stillLocked(triesLeft: 2).reply())
+          && !UnlockPrompt.isBusyReply(UnlockOutcome.unlocked.reply()) && !UnlockPrompt.isBusyReply(UnlockOutcome.refused(.tooSoon(seconds: 2)).reply()))
+
+    check("lock: locked on our console", LockState.isLocked(session: ["CGSSessionScreenIsLocked": true, "kCGSSessionOnConsoleKey": true]))
+    check("lock: NSNumber flags count", LockState.isLocked(session: ["CGSSessionScreenIsLocked": NSNumber(value: 1), "kCGSSessionOnConsoleKey": NSNumber(value: 1)]))
+    check("lock: locked but another user's session is on the console", !LockState.isLocked(session: ["CGSSessionScreenIsLocked": true, "kCGSSessionOnConsoleKey": false]))
+    check("lock: locked with no console key", !LockState.isLocked(session: ["CGSSessionScreenIsLocked": true]))
+    check("lock: unlocked on the console", !LockState.isLocked(session: ["kCGSSessionOnConsoleKey": true]))
+    check("lock: no session", !LockState.isLocked(session: nil))
 }

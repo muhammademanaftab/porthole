@@ -32,8 +32,7 @@ enum Power {
 
 enum Session {
     static var isScreenLocked: Bool {
-        guard let d = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
-        return (d["CGSSessionScreenIsLocked"] as? Bool) ?? ((d["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false)
+        LockState.isLocked(session: CGSessionCopyCurrentDictionary() as? [String: Any])
     }
 
     static let lockedListMessage = LockNotice.list

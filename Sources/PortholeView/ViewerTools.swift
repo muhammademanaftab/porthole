@@ -78,6 +78,7 @@ enum ViewerTools {
             var done = false
             var lockedSeen = false
             var unlockTried = false
+            var relistLeft = 0
             c.onWindows = { list in
                 guard !done else { return }
                 if let unlock, UnlockEnv.shouldAsk(lockedSeen: lockedSeen, listEmpty: list.isEmpty, tried: unlockTried) {
@@ -87,6 +88,15 @@ enum ViewerTools {
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: UInt64(unlock.delay) * 1_000_000_000)
                         c.unlock(password: unlock.password)
+                    }
+                    return
+                }
+                if UnlockEnv.shouldRelist(listEmpty: list.isEmpty, triesLeft: relistLeft) {
+                    relistLeft -= 1
+                    VLog.info("cli open: the list is still empty after the unlock; asking again in \(UnlockEnv.relistEvery) s")
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: UInt64(UnlockEnv.relistEvery * 1_000_000_000))
+                        c.requestList()
                     }
                     return
                 }
@@ -101,6 +111,7 @@ enum ViewerTools {
                 VLog.info("cli open: \(line)")
                 guard m.on == true else { fail(line); finish(1) }
                 print(line)
+                relistLeft = UnlockEnv.relistTries
                 c.requestList()
             }
             c.onError = { msg in
@@ -239,7 +250,7 @@ enum ViewerTools {
         if app.pathExtension == "app" {
             let cfg = NSWorkspace.OpenConfiguration()
             cfg.arguments = [address]
-            cfg.environment = env
+            cfg.environment = UnlockEnv.scrubbed(env)
             NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, error in
                 if let error { fail("couldn't open Porthole: \(error.localizedDescription)"); finish(1) }
                 finish(0)
@@ -250,7 +261,7 @@ enum ViewerTools {
         let p = Process()
         p.executableURL = exe
         p.arguments = [address]
-        p.environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new }
+        p.environment = UnlockEnv.scrubbed(ProcessInfo.processInfo.environment.merging(env) { _, new in new })
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { fail("couldn't start \(exe.path): \(error.localizedDescription)"); finish(1) }

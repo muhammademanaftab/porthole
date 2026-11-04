@@ -16,6 +16,18 @@ public struct ClipboardSync: Sendable {
         return t
     }
 
+    public mutating func outgoing(changeCount: Int, types: () -> [String], text: () -> String?) -> String? {
+        guard changeCount != seenChange else { return nil }
+        guard !Self.isPrivate(types: types()) else { seenChange = changeCount; return nil }
+        return outgoing(changeCount: changeCount, text: text)
+    }
+
+    public static let privateTypes: Set<String> = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"]
+
+    public static func isPrivate(types: [String]) -> Bool {
+        types.contains { privateTypes.contains($0) }
+    }
+
     public mutating func incoming(_ text: String) -> Bool {
         guard Self.fits(text), text != lastText else { return false }
         lastText = text

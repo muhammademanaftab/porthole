@@ -418,6 +418,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         portal.onUnlock = { [weak self, weak portal] in self?.askUnlock(from: portal) }
         portal.wholeScreen = info.screen == true
+        portal.unlocking = unlockStartedAt != nil
         portals[info.id] = portal
         portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
         portal.makeKeyAndOrderFront(nil)
@@ -509,7 +510,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     func pollClipboard() {
         guard !portals.isEmpty, let c = connection else { return }
         let pb = NSPasteboard.general
-        guard let text = clip.outgoing(changeCount: pb.changeCount, text: { pb.string(forType: .string) }) else { return }
+        guard let text = clip.outgoing(changeCount: pb.changeCount, types: { pb.types?.map(\.rawValue) ?? [] },
+                                       text: { pb.string(forType: .string) }) else { return }
         c.sendClipboard(text)
     }
 

@@ -78,7 +78,8 @@ final class HostRoom: NSObject, RoomDelegate {
 
     private func pollClipboard() {
         let pb = NSPasteboard.general
-        guard let text = clip.outgoing(changeCount: pb.changeCount, text: { pb.string(forType: .string) }) else { return }
+        guard let text = clip.outgoing(changeCount: pb.changeCount, types: { pb.types?.map(\.rawValue) ?? [] },
+                                       text: { pb.string(forType: .string) }) else { return }
         let to = registry.activeViewers.filter { !GuestIdentity.isGuest($0) }
         guard !to.isEmpty else { return }
         Log.info("clipboard: sending \(text.utf8.count) bytes to \(to.count) viewer(s)")
@@ -248,6 +249,10 @@ final class HostRoom: NSObject, RoomDelegate {
         case .thumb:
             sendThumbnails(to: who)
         case .key, .text, .mouse, .scroll, .resize:
+            if UnlockPolicy.dropsInput(m.t, running: unlockLimiter.running) {
+                Log.debug("input: dropped \(m.t.rawValue) from \(who) while typing into the lock screen")
+                return
+            }
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
             if WholeMac.isScreen(id) { screenInput(m, id); return }
             await warnIfLocked(who)

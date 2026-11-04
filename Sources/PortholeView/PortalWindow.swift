@@ -135,6 +135,11 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         show(.locked)
     }
 
+    var unlocking: Bool {
+        get { overlay.unlocking }
+        set { overlay.unlocking = newValue }
+    }
+
     func hostUnlocked() {
         if phase == .locked { show(track?.dimensions == nil ? .opening(appName) : nil) }
     }
@@ -166,7 +171,9 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     override func sendEvent(_ event: NSEvent) {
         if let phase, event.type == .keyDown || event.type == .keyUp, event.keyCode == 36 || event.keyCode == 76,
            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
-            if event.type == .keyDown, !event.isARepeat, phase.canRetry { overlay.retryClicked() }
+            if event.type == .keyDown, !event.isARepeat {
+                if phase.canRetry { overlay.retryClicked() } else if phase.canUnlock { overlay.unlockClicked() }
+            }
             return
         }
         if let phase, !phase.busy, event.type == .keyDown, event.charactersIgnoringModifiers == "w",
@@ -413,6 +420,7 @@ final class PortalOverlay: NSView {
     private let closeButton = NSButton(title: "Close Window", target: nil, action: nil)
     private let unlockButton = NSButton(title: "Unlock\u{2026}", target: nil, action: nil)
     private var current: PortalPhase?
+    var unlocking = false { didSet { unlockButton.isEnabled = !unlocking } }
     var onClose: (() -> Void)?
     var onRetry: (() -> Void)?
     var onUnlock: (() -> Void)?
@@ -511,7 +519,10 @@ final class PortalOverlay: NSView {
 
     @objc func retryClicked() { onRetry?() }
     @objc private func closeClicked() { if current?.canUnlock == true { onDismiss?() } else { onClose?() } }
-    @objc private func unlockClicked() { onUnlock?() }
+    @objc func unlockClicked() {
+        guard !unlocking, current?.canUnlock == true else { return }
+        onUnlock?()
+    }
 }
 
 @MainActor

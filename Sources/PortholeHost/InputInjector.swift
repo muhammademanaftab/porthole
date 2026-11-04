@@ -130,12 +130,12 @@ final class InputInjector {
         Log.debug("text: \(s.utf16.count) UTF-16 units typed as \(pieces.count) key pair(s), batch \(textBatch)")
     }
 
-    func typeIntoLockScreen(_ password: String) async {
+    func typeIntoLockScreen(_ password: String, stillLocked: () -> Bool) async -> Bool {
+        guard stillLocked() else { return false }
         releaseAllButtons()
-        for e in LockScreenTyping.events(password, source: source) {
-            e.post(tap: .cghidEventTap)
-            try? await Task.sleep(nanoseconds: 6_000_000)
-        }
+        return await LockScreenTyping.post(LockScreenTyping.sequence(password, source: source), stillLocked: stillLocked,
+                                           post: { $0.post(tap: .cghidEventTap) },
+                                           pause: { try? await Task.sleep(nanoseconds: 6_000_000) })
     }
 
     func resize(_ m: Message) -> (asked: CGSize, actual: CGSize)? {

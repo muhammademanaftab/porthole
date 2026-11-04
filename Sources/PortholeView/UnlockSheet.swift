@@ -50,7 +50,7 @@ enum UnlockSheet {
 
 extension ViewerApp: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(unlockHost) { return connection?.hostLocked == true }
+        if item.action == #selector(unlockHost) { return connection?.hostLocked == true && unlockStartedAt == nil }
         return true
     }
 
@@ -59,12 +59,12 @@ extension ViewerApp: NSMenuItemValidation {
     }
 
     func askUnlock(from window: NSWindow?) {
-        guard let c = connection else { return }
+        guard let c = connection, unlockStartedAt == nil else { return }
         let host = hostName
         UnlockSheet.ask(host: host, over: window) { [weak self, weak c, weak window] password in
-            guard let self, let c, self.connection === c else { return }
+            guard let self, let c, self.connection === c, self.unlockStartedAt == nil else { return }
             self.unlockFrom = window
-            self.picker?.unlocking = true
+            self.setUnlocking(true)
             let started = Date()
             self.unlockStartedAt = started
             c.unlock(password: password)
@@ -82,8 +82,12 @@ extension ViewerApp: NSMenuItemValidation {
 
     func unlockAnswered(_ m: Message) {
         guard unlockStartedAt != nil else { return }
+        if UnlockPrompt.isBusyReply(m) {
+            VLog.info("unlock: the host is still busy with an attempt; still waiting for its answer")
+            return
+        }
         unlockStartedAt = nil
-        picker?.unlocking = false
+        setUnlocking(false)
         let over = unlockFrom ?? picker
         unlockFrom = nil
         if m.on == true {
@@ -91,5 +95,10 @@ extension ViewerApp: NSMenuItemValidation {
             connection?.requestList()
         }
         UnlockSheet.outcome(m, host: hostName, over: over, again: { [weak self, weak over] in self?.askUnlock(from: over) })
+    }
+
+    private func setUnlocking(_ on: Bool) {
+        picker?.unlocking = on
+        for p in portals.values { p.unlocking = on }
     }
 }

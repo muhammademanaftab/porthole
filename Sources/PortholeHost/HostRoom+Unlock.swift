@@ -13,7 +13,7 @@ extension HostRoom {
         let run = LockScreenUnlock(
             isLocked: { Session.isScreenLocked },
             wake: { Power.wakeDisplay() },
-            type: { await input.typeIntoLockScreen($0) },
+            type: { await input.typeIntoLockScreen($0, stillLocked: { Session.isScreenLocked }) },
             sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
             typed: { Log.info("unlock: typed into the lock screen", .trust) })
         let outcome: UnlockOutcome
@@ -21,6 +21,9 @@ extension HostRoom {
         case .unlockedBeforeTyping:
             unlockLimiter.abandoned()
             outcome = .refused(.notLocked)
+        case .unlockedWhileTyping:
+            unlockLimiter.abandoned()
+            outcome = .unlockedWhileTyping
         case .unlocked:
             _ = unlockLimiter.finished(unlocked: true, now: Date())
             outcome = .unlocked

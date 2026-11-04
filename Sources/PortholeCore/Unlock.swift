@@ -40,14 +40,16 @@ public enum UnlockRefusal: Equatable, Sendable {
 
 public enum UnlockOutcome: Equatable, Sendable {
     case unlocked
+    case unlockedWhileTyping
     case stillLocked(triesLeft: Int)
     case refused(UnlockRefusal)
 
-    public var isUnlocked: Bool { self == .unlocked }
+    public var isUnlocked: Bool { self == .unlocked || self == .unlockedWhileTyping }
 
     public var logLine: String {
         switch self {
         case .unlocked: return "unlock: the screen is unlocked"
+        case .unlockedWhileTyping: return "unlock: the screen unlocked while Porthole was typing; stopped typing and not counted as a failure"
         case .stillLocked(let left): return "unlock: the screen is still locked (\(left) attempt(s) left before a pause)"
         case .refused(let r): return "unlock: refused (\(r.reason))"
         }
@@ -56,6 +58,7 @@ public enum UnlockOutcome: Equatable, Sendable {
     public var message: String {
         switch self {
         case .unlocked: return "This Mac is unlocked."
+        case .unlockedWhileTyping: return "The Mac unlocked while Porthole was typing, so Porthole stopped typing."
         case .stillLocked(let left):
             let pause = UnlockLimiter.minutesLabel(Int(UnlockLimiter.pause))
             let rest = left > 0 ? "\(left) more \(left == 1 ? "try" : "tries") before Porthole pauses unlocking for \(pause)."
@@ -137,6 +140,10 @@ public enum UnlockPolicy {
             && !password.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0) }
     }
 
+    public static func dropsInput(_ kind: Message.Kind, running: Bool) -> Bool {
+        running && [.key, .text, .mouse, .scroll].contains(kind)
+    }
+
     public static func check(identity: String, password: String?, screenLocked: Bool, mayPost: Bool,
                              limiter: inout UnlockLimiter, now: Date) -> UnlockRefusal? {
         guard isOwner(identity) else { return .notOwner }
@@ -154,6 +161,29 @@ public enum LockScreenTyping {
 
     public static func pieces(_ password: String) -> [[UInt16]] {
         password.map { Array(String($0).utf16) }
+    }
+
+    public static func releases(source: CGEventSource?) -> [CGEvent] {
+        Modifiers.flagKeyCodes.sorted().compactMap { code in
+            guard let e = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { return nil }
+            e.type = .flagsChanged
+            e.flags = []
+            return e
+        }
+    }
+
+    public static func sequence(_ password: String, source: CGEventSource?) -> [CGEvent] {
+        releases(source: source) + events(password, source: source)
+    }
+
+    public static func post(_ events: [CGEvent], stillLocked: () -> Bool, post: (CGEvent) -> Void,
+                            pause: () async -> Void) async -> Bool {
+        for e in events {
+            guard stillLocked() else { return false }
+            post(e)
+            await pause()
+        }
+        return true
     }
 
     public static func events(_ password: String, source: CGEventSource?) -> [CGEvent] {
@@ -178,17 +208,17 @@ public enum LockScreenTyping {
 public struct LockScreenUnlock {
     public static let wakeDelay: Double = 1.5
     public static let pollEvery: Double = 0.5
-    public static let pollFor: Double = 8
+    public static let pollFor: Double = 15
 
-    public enum Result: Equatable, Sendable { case unlocked, stillLocked, unlockedBeforeTyping }
+    public enum Result: Equatable, Sendable { case unlocked, stillLocked, unlockedBeforeTyping, unlockedWhileTyping }
 
     public var isLocked: () async -> Bool
     public var wake: () async -> Void
-    public var type: (String) async -> Void
+    public var type: (String) async -> Bool
     public var sleep: (Double) async -> Void
     public var typed: () -> Void
 
-    public init(isLocked: @escaping () async -> Bool, wake: @escaping () async -> Void, type: @escaping (String) async -> Void,
+    public init(isLocked: @escaping () async -> Bool, wake: @escaping () async -> Void, type: @escaping (String) async -> Bool,
                 sleep: @escaping (Double) async -> Void, typed: @escaping () -> Void = {}) {
         self.isLocked = isLocked; self.wake = wake; self.type = type; self.sleep = sleep; self.typed = typed
     }
@@ -197,7 +227,7 @@ public struct LockScreenUnlock {
         await wake()
         await sleep(Self.wakeDelay)
         guard await isLocked() else { return .unlockedBeforeTyping }
-        await type(password)
+        guard await type(password) else { return .unlockedWhileTyping }
         typed()
         var waited = 0.0
         while waited < Self.pollFor {
@@ -212,6 +242,8 @@ public struct LockScreenUnlock {
 public enum UnlockEnv {
     public static let name = "PORTHOLE_OPEN_UNLOCK"
     public static let maxDelay = 600
+    public static let relistTries = 3
+    public static let relistEvery: Double = 1
 
     public struct Request: Equatable, Sendable {
         public var delay: Int
@@ -222,7 +254,16 @@ public enum UnlockEnv {
 
     public static func cliTimeout(_ request: Request?) -> TimeInterval {
         guard let request else { return 25 }
-        return 25 + Double(request.delay) + LockScreenUnlock.wakeDelay + LockScreenUnlock.pollFor + 10
+        return 25 + Double(request.delay) + LockScreenUnlock.wakeDelay + LockScreenUnlock.pollFor
+            + Double(relistTries) * relistEvery + 10
+    }
+
+    public static func scrubbed(_ environment: [String: String]) -> [String: String] {
+        environment.filter { $0.key != name }
+    }
+
+    public static func shouldRelist(listEmpty: Bool, triesLeft: Int) -> Bool {
+        listEmpty && triesLeft > 0
     }
 
     public static func shouldAsk(lockedSeen: Bool, listEmpty: Bool, tried: Bool) -> Bool {
@@ -251,7 +292,19 @@ public enum UnlockPrompt {
 
     public static let noAnswer = "The host didn't answer. It may run a Porthole Host that can't unlock its screen yet."
 
+    public static func isBusyReply(_ m: Message) -> Bool {
+        m.t == .unlock && m.on != true && m.msg == UnlockRefusal.busy.message
+    }
+
     public static func isLockNotice(_ msg: String?) -> Bool {
         msg == LockNotice.list || msg == LockNotice.control
+    }
+}
+
+public enum LockState {
+    public static func isLocked(session: [String: Any]?) -> Bool {
+        guard let session else { return false }
+        func flag(_ key: String) -> Bool { (session[key] as? Bool) ?? ((session[key] as? NSNumber)?.boolValue ?? false) }
+        return flag("CGSSessionScreenIsLocked") && flag("kCGSSessionOnConsoleKey")
     }
 }
