@@ -41,6 +41,10 @@ read -r -d '' REMOTE <<'REMOTE_SCRIPT' || true
 set -euo pipefail
 APP="/Applications/Porthole Host.app"
 NEW="$HOME/porthole-deploy/new/Porthole Host.app"
+BACK="$HOME/porthole-deploy/rollback.tar"
+PREV="$HOME/porthole-deploy/previous.tar"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+forget() { "$LSREG" -u "$1" >/dev/null 2>&1 || true; }
 LABEL=io.github.muhammademanaftab.porthole.watchdog
 DOMAIN="gui/$(id -u)"
 hosts() { pgrep -f "Porthole Host.app/Contents/MacOS/porthole-host\$" || true; }
@@ -91,15 +95,23 @@ start_host() {
   return 1
 }
 stop_host
-rm -rf "$APP.rollback"
-if [ -d "$APP" ]; then mv "$APP" "$APP.rollback"; fi
-mv "$NEW" "$APP"
+for stale in "$APP.rollback" "$APP.previous" "$HOME/porthole-deploy/rollback/Porthole Host.app" "$HOME/porthole-deploy/previous/Porthole Host.app"; do forget "$stale"; rm -rf "$stale"; done
+rm -f "$BACK"
+if [ -d "$APP" ]; then tar -C /Applications -cf "$BACK" "Porthole Host.app"; fi
+mkdir -p "$APP"
+rsync -a --delete "$NEW/" "$APP/"
+forget "$NEW"
+rm -rf "$HOME/porthole-deploy/new"
+"$LSREG" -f "$APP" >/dev/null 2>&1 || true
 if ! start_host; then
   echo "deploy-mini: the new Porthole Host did not answer /hello within 60 s; rolling back" >&2
-  if [ -d "$APP.rollback" ]; then
+  if [ -f "$BACK" ]; then
     stop_host
-    rm -rf "$APP"
-    mv "$APP.rollback" "$APP"
+    rm -rf "$HOME/porthole-deploy/restore"; mkdir -p "$HOME/porthole-deploy/restore"
+    tar -C "$HOME/porthole-deploy/restore" -xf "$BACK"
+    rsync -a --delete "$HOME/porthole-deploy/restore/Porthole Host.app/" "$APP/"
+    forget "$HOME/porthole-deploy/restore/Porthole Host.app"
+    rm -rf "$HOME/porthole-deploy/restore" "$BACK"
     if start_host; then echo "rolled back to the previous Porthole Host" >&2; else echo "the previous Porthole Host did not answer either" >&2; fi
   fi
   exit 1
@@ -107,8 +119,8 @@ fi
 sleep 3
 n=$(hosts | grep -c . || true)
 echo "Porthole Host instances running: $n"
-[ "$n" = 1 ] || die "expected exactly one Porthole Host, found $n (the previous one is kept as $APP.rollback)"
-if [ -d "$APP.rollback" ]; then rm -rf "$APP.previous"; mv "$APP.rollback" "$APP.previous"; fi
+[ "$n" = 1 ] || die "expected exactly one Porthole Host, found $n (the previous one is kept as $BACK)"
+if [ -f "$BACK" ]; then mv -f "$BACK" "$PREV"; fi
 rm -rf "$HOME/porthole-deploy/new"
 echo
 "$APP/Contents/MacOS/porthole" doctor || true

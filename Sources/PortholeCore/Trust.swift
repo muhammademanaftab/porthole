@@ -417,7 +417,7 @@ public func viewerCommand(_ args: [String]) -> ViewerCommand {
         let rest = args.dropFirst()
         guard rest.allSatisfy({ $0 == "--json" }) else { return .usage(error: "machines takes only --json") }
         return .machines(json: !rest.isEmpty)
-    case "ls":
+    case "ls", "list":
         let rest = Array(args.dropFirst())
         let hosts = rest.filter { $0 != "--json" }
         guard hosts.count == 1, !hosts[0].hasPrefix("-") else { return .usage(error: "ls needs a host") }

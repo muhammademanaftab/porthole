@@ -75,13 +75,40 @@ enum KeepRunning {
         }
     }
 
+    static var stampURL: URL { HostConfig.directory.appendingPathComponent("watchdog-bundle") }
+
+    static var bundleStamp: String? {
+        guard let bundle = try? FileManager.default.attributesOfItem(atPath: Bundle.main.bundlePath),
+              let inode = bundle[.systemFileNumber] as? NSNumber else { return nil }
+        return "\(Bundle.main.bundlePath) \(inode)"
+    }
+
+    static func rememberBundle() {
+        guard let stamp = bundleStamp else { return }
+        try? stamp.write(to: stampURL, atomically: true, encoding: .utf8)
+    }
+
+    static var bundleChanged: Bool {
+        guard let stamp = bundleStamp else { return false }
+        return (try? String(contentsOf: stampURL, encoding: .utf8)) != stamp
+    }
+
     @discardableResult
     static func apply(_ on: Bool) -> String? {
         let before = status
         do {
             if on {
+                if before == .enabled, bundleChanged {
+                    Log.info("keep running: Porthole Host was replaced since the watchdog agent was registered; registering it again", .watchdog)
+                    try? service.unregister()
+                    try service.register()
+                    rememberBundle()
+                    Log.info("keep running: watchdog agent registered again, status \(describe(status))", .watchdog)
+                    return nil
+                }
                 guard before != .enabled && before != .requiresApproval else { return nil }
                 try service.register()
+                rememberBundle()
             } else {
                 guard before == .enabled || before == .requiresApproval else { return nil }
                 try service.unregister()

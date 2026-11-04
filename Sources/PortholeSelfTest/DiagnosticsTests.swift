@@ -664,6 +664,7 @@ private func viewerToolCommandTests() {
     expect("viewer command: machines --json", viewerCommand(["machines", "--json"]), .machines(json: true))
     expect("viewer command: machines with junk", viewerCommand(["machines", "x"]), .usage(error: "machines takes only --json"))
     expect("viewer command: ls", viewerCommand(["ls", "mini", "--json"]), .list(host: "mini", json: true))
+    expect("viewer command: list is ls", viewerCommand(["list", "mini"]), .list(host: "mini", json: false))
     expect("viewer command: ls without a host", viewerCommand(["ls"]), .usage(error: "ls needs a host"))
     expect("viewer command: open", viewerCommand(["open", "mini", "Safari"]), .open(host: "mini", target: "Safari"))
     expect("viewer command: open without a window", viewerCommand(["open", "mini"]), .usage(error: "open needs a host and a window ID or part of its title"))
