@@ -84,6 +84,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         window.addItem(.separator())
+        window.addItem(withTitle: "Hide Title Bar Automatically", action: #selector(PortalWindow.toggleTitleBarAutoHide(_:)), keyEquivalent: "")
+        window.addItem(.separator())
         window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         let windowItem = NSMenuItem()
         windowItem.submenu = window
@@ -105,6 +107,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         muteItem?.state = muted ? .on : .off
         connection?.muted = muted
         settingsWindow?.reflect(s)
+        for p in portals.values { p.applyTitleBar(global: Self.hideTitleBar(s)) }
     }
 
     @objc func showSettings() {
@@ -330,6 +333,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             self.request(info.id, into: portal)
         }
         portals[info.id] = portal
+        portal.applyTitleBar(global: Self.hideTitleBar(ViewerSettingsWindow.current))
         portal.makeKeyAndOrderFront(nil)
         NSApp.activate()
         startTile(info, portal: portal)
@@ -366,6 +370,10 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             p.parent?.removeChildWindow(p)
             p.close()
         }
+    }
+
+    static func hideTitleBar(_ s: ViewerSettings) -> Bool {
+        TitleBarReveal.global(saved: s.hideTitleBar, environment: ProcessInfo.processInfo.environment)
     }
 
     func request(_ id: UInt32, into portal: PortalWindow, fit: Bool = true) {

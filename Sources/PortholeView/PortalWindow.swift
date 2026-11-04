@@ -22,6 +22,12 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
     var companionOffer: Message?
     var closedByHost = false
     var onLayout: (() -> Void)?
+    private var autoHideGlobal = false
+    private(set) var autoHideOverride: Bool?
+    private var reveal = TitleBarReveal()
+    private var revealTimer: Timer?
+    private let barBackdrop = TitleBarBackdrop()
+    private var barTop: NSLayoutConstraint?
 
     init(windowID: UInt32, title: String, subtitle: String, app: String, size: CGSize, connection: Connection, companion: Bool = false) {
         self.windowID = windowID
@@ -58,6 +64,17 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
                 v.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             ])
         }
+        barBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        barBackdrop.isHidden = true
+        content.addSubview(barBackdrop, positioned: .below, relativeTo: overlay)
+        let top = barBackdrop.topAnchor.constraint(equalTo: content.topAnchor)
+        barTop = top
+        NSLayoutConstraint.activate([
+            barBackdrop.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            barBackdrop.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            top,
+            barBackdrop.heightAnchor.constraint(equalToConstant: 28),
+        ])
         contentView = content
         contentMinSize = CGSize(width: 100, height: 80)
         show(.opening(app))
@@ -205,13 +222,134 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         if r != frame { setFrame(r, display: true) }
     }
 
+    var autoHidesTitleBar: Bool { !isCompanion && TitleBarReveal.autoHide(global: autoHideGlobal, override: autoHideOverride) }
+
+    func applyTitleBar(global: Bool) {
+        autoHideGlobal = global
+        applyTitleBarMode()
+    }
+
+    @objc func toggleTitleBarAutoHide(_ sender: Any?) {
+        let next = !autoHidesTitleBar
+        autoHideOverride = next == autoHideGlobal ? nil : next
+        applyTitleBarMode()
+    }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleTitleBarAutoHide(_:)) {
+            item.state = autoHidesTitleBar ? .on : .off
+            return !isCompanion && !styleMask.contains(.fullScreen)
+        }
+        return super.validateMenuItem(item)
+    }
+
+    private var titlebarContainer: NSView? { standardWindowButton(.closeButton)?.superview?.superview }
+
+    private func applyTitleBarMode() {
+        guard !isCompanion else { return }
+        let on = autoHidesTitleBar
+        guard on != styleMask.contains(.fullSizeContentView) else { return }
+        let keep = pictureSize ?? .zero
+        let top = frame.maxY
+        if on {
+            styleMask.insert(.fullSizeContentView)
+            titlebarAppearsTransparent = true
+            titleVisibility = .hidden
+        } else {
+            styleMask.remove(.fullSizeContentView)
+            titlebarAppearsTransparent = false
+            titleVisibility = .visible
+        }
+        keepPictureSize(keep, top: top)
+        reveal.hide()
+        if on {
+            barBackdrop.isHidden = false
+            showBar(false, animated: false)
+            startRevealTimer()
+        } else {
+            revealTimer?.invalidate(); revealTimer = nil
+            barBackdrop.isHidden = true
+            titlebarContainer?.isHidden = false
+            titlebarContainer?.alphaValue = 1
+        }
+    }
+
+    private func keepPictureSize(_ size: CGSize, top: CGFloat) {
+        guard size.width > 0, size.height > 0 else { return }
+        for _ in 0..<2 {
+            guard let now = pictureSize, now != size else { break }
+            let f = CGRect(x: frame.minX, y: top - (frame.height + size.height - now.height),
+                           width: frame.width + size.width - now.width, height: frame.height + size.height - now.height)
+            setFrame(f, display: true)
+        }
+    }
+
+    private func startRevealTimer() {
+        revealTimer?.invalidate()
+        revealTimer = Timer.scheduledTimer(withTimeInterval: TitleBarReveal.pollSeconds, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollPointer() }
+        }
+    }
+
+    private func pollPointer() {
+        guard autoHidesTitleBar, isVisible, !styleMask.contains(.fullScreen) else { return }
+        let was = reveal.shown
+        let d = TitleBarReveal.distanceFromTop(pointer: NSEvent.mouseLocation, frame: frame)
+        let shown = reveal.pointer(distanceFromTop: (NSApp.isActive || isKeyWindow) ? d : nil, now: Self.now)
+        if shown != was { showBar(shown, animated: true) }
+    }
+
+    private func showBar(_ shown: Bool, animated: Bool) {
+        guard let bar = titlebarContainer else { return }
+        let height = max(28, frame.height - contentLayoutRect.height)
+        barTop?.constant = shown ? 0 : -height
+        if shown {
+            bar.isHidden = false
+            titleVisibility = .visible
+        }
+        let finish = { [weak self, weak bar] in
+            guard let self, let bar, !self.reveal.shown, self.autoHidesTitleBar else { return }
+            bar.isHidden = true
+            self.titleVisibility = .hidden
+        }
+        guard animated else {
+            bar.alphaValue = shown ? 1 : 0
+            barBackdrop.alphaValue = shown ? 1 : 0
+            contentView?.layoutSubtreeIfNeeded()
+            if !shown { finish() }
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.18
+            ctx.allowsImplicitAnimation = true
+            bar.animator().alphaValue = shown ? 1 : 0
+            barBackdrop.animator().alphaValue = shown ? 1 : 0
+            contentView?.layoutSubtreeIfNeeded()
+        }, completionHandler: { MainActor.assumeIsolated { if !shown { finish() } } })
+    }
+
     func windowWillClose(_ notification: Notification) {
+        revealTimer?.invalidate(); revealTimer = nil
         track?.remove(delegate: self)
         videoView.track = nil
         onClose?()
     }
 
     override var canBecomeKey: Bool { true }
+}
+
+@MainActor
+final class TitleBarBackdrop: NSVisualEffectView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        material = .titlebar
+        blendingMode = .withinWindow
+        state = .followsWindowActiveState
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 @MainActor
