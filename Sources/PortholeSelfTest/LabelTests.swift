@@ -11,6 +11,8 @@ func labelTests() {
 
     expect("portal phase: opening names the app", PortalPhase.opening("Notes").title, "Opening Notes…")
     expect("portal phase: opening with no app name", PortalPhase.opening("").title, "Opening window…")
+    check("portal phase: Whole Mac says someone may need to click Allow", PortalPhase.opening(WholeMac.appName).detail.contains("Allow"))
+    expect("portal phase: a window waits for the first picture", PortalPhase.opening("Notes").detail, "Waiting for the first picture from the host.")
     check("portal phase: opening and reconnecting show a spinner", PortalPhase.opening("a").busy && PortalPhase.reconnecting.busy)
     check("portal phase: failures don't spin", !PortalPhase.failed("x").busy && !PortalPhase.disconnected("x").busy)
     expect("portal phase: failure detail is the host's message", PortalPhase.failed("That window can't be shared.").detail, "That window can't be shared.")

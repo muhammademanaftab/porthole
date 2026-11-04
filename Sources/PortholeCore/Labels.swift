@@ -43,6 +43,8 @@ public enum PortalPhase: Equatable, Sendable {
 
     public var detail: String {
         switch self {
+        case .opening(let app) where app == WholeMac.appName:
+            return "If the host asks first, someone at that Mac clicks Allow. With Allow Whole Mac set to Always it opens straight away."
         case .opening: return "Waiting for the first picture from the host."
         case .reconnecting: return "The connection to the host dropped. The picture comes back when it reconnects."
         case .disconnected(let why), .failed(let why): return why
