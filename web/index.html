@@ -62,6 +62,12 @@
   .notice .glyph { font-size: 40px; line-height: 1; color: var(--faint); }
   .notice.locked .glyph { color: var(--warn); }
   .notice.error .glyph { color: var(--bad); }
+  .unlock { display: grid; gap: 8px; margin-top: 14px; width: min(300px, 100%); }
+  .unlock input { padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: inherit; outline: none; text-align: center; font: inherit; }
+  .unlock input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .unlock .btn { margin-top: 0; }
+  .unlock small { color: var(--muted); font-size: 12px; }
+  .unlock small.bad { color: var(--bad); }
   .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--muted); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #pwform { margin: 8vh auto 0; width: min(360px, calc(100% - 32px)); padding: 24px; border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); text-align: center; display: grid; gap: 12px; }
@@ -141,6 +147,7 @@ const params = new URLSearchParams(location.search);
 const winId = params.get('win') ? Number(params.get('win')) : null;
 const share = params.get('share');
 let guest = null, controlling = false, asking = false;
+let unlocking = false, unlockNote = null;
 const $ = (id) => document.getElementById(id);
 const isMac = /Mac/.test(navigator.platform);
 let room, hostP, listed = false, opened = false, firstFrame = false;
@@ -278,6 +285,7 @@ function onData(payload, participant, kind, topic) {
     else if (controlling && !was) toast('You may type and click in this window now.');
     else if (!controlling && was) toast('Control was turned off. You can keep watching.', true);
   }
+  else if (m.t === 'unlock') unlockAnswered(m);
   else if (m.t === 'error') {
     if (winId && m.win === winId && !opened) overlay('failed', m.msg);
     else if (winId) toast(m.msg, true);
@@ -303,6 +311,38 @@ function gotList(list) {
   }
 }
 
+function unlockForm() {
+  const f = document.createElement('form'); f.className = 'unlock'; f.id = 'unlockform';
+  const input = document.createElement('input');
+  input.type = 'password'; input.id = 'unlockpw'; input.placeholder = "Mac's login password"; input.autocomplete = 'off';
+  input.setAttribute('aria-label', "Mac's login password"); input.maxLength = PC.UNLOCK_MAX; input.disabled = unlocking;
+  const b = document.createElement('button'); b.className = 'btn primary'; b.textContent = unlocking ? 'Unlocking\u2026' : 'Unlock'; b.disabled = unlocking;
+  const note = document.createElement('small');
+  note.textContent = unlocking ? PC.UNLOCK_WORKING : unlockNote ? unlockNote.text : PC.UNLOCK_HINT;
+  if (unlockNote && !unlockNote.ok && !unlocking) note.className = 'bad';
+  f.append(input, b, note);
+  f.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const msg = PC.unlockMessage(input.value);
+    input.value = '';
+    if (!msg || !live()) return;
+    unlocking = true; unlockNote = null;
+    send(msg);
+    render();
+    setTimeout(() => { if (unlocking) unlockAnswered({ t: 'unlock', on: false, msg: PC.UNLOCK_NO_ANSWER }); }, PC.UNLOCK_ANSWER_MS);
+  });
+  return f;
+}
+
+function unlockAnswered(m) {
+  if (!unlocking) return;
+  unlocking = false;
+  unlockNote = PC.unlockOutcome(m);
+  toast(unlockNote.text, !unlockNote.ok);
+  if (unlockNote.ok) { unlockNote = null; listError = null; requestList(); }
+  if (!winId) render();
+}
+
 function iconFor(w) {
   if (icons.has(w.id)) return icons.get(w.id);
   const twin = windows.find(x => x.app === w.app && icons.has(x.id));
@@ -321,12 +361,17 @@ function render() {
   const notice = $('notice');
   notice.hidden = !n;
   if (n) {
+    const prev = $('unlockpw'), kept = prev && !unlocking ? { value: prev.value, focused: document.activeElement === prev } : null;
     notice.className = `notice ${n.kind}`;
     const glyph = { locked: '\u{1F512}', error: '⚠︎', empty: '▢', nomatch: '⌕' }[n.kind];
     notice.innerHTML = n.kind === 'loading' ? '<div class="spinner"></div>' : `<div class="glyph">${glyph}</div>`;
     const h = document.createElement('h2'); h.textContent = n.title;
     const p = document.createElement('p'); p.textContent = n.message;
     notice.append(h, p);
+    if (n.kind === 'locked' && PC.mayUnlock(guest)) {
+      notice.append(unlockForm());
+      if (kept) { $('unlockpw').value = kept.value; if (kept.focused) $('unlockpw').focus(); }
+    }
     if (n.kind !== 'loading' && n.kind !== 'nomatch') {
       const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Refresh'; b.onclick = refresh;
       notice.append(b);

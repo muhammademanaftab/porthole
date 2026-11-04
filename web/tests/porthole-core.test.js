@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'askButton', 'clientId', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'guestNotice', 'guestPickerLink', 'guestWindowLink', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'linkRefusal', 'mayInput', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'tokenPath', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'UNLOCK_ANSWER_MS', 'UNLOCK_HINT', 'UNLOCK_MAX', 'UNLOCK_NO_ANSWER', 'UNLOCK_WORKING', 'askButton', 'clientId', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'guestNotice', 'guestPickerLink', 'guestWindowLink', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'linkRefusal', 'mayInput', 'mayUnlock', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'tokenPath', 'unlockMessage', 'unlockOutcome', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)', 'normalize(', '.every(t']) {
     assert.equal(html.includes(copy), false, copy);
@@ -600,3 +600,4 @@ test('whole mac screen ids match the Swift side', () => {
   assert.equal(core.isScreenId(0xFFFFFEFF), false);
 });
 require('./guest.test.js');
+require('./unlock.test.js');

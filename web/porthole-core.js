@@ -209,6 +209,28 @@
   const ICON_TOPIC = 'porthole-icon';
   const LOCKED_LIST = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it (for example with Screen Sharing), then refresh.";
 
+  const LOCKED_CONTROL = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it (for example with Screen Sharing) to control windows.";
+  const UNLOCK_MAX = 256;
+  const UNLOCK_WORKING = 'Typing the password into the lock screen\u2026';
+  const UNLOCK_NO_ANSWER = "The host didn't answer. It may run a Porthole Host that can't unlock its screen yet.";
+  const UNLOCK_ANSWER_MS = 25000;
+  const UNLOCK_HINT = "Type the Mac's login password. Porthole types it into the lock screen and doesn't keep it.";
+
+  const isLockNotice = (msg) => msg === LOCKED_LIST || msg === LOCKED_CONTROL;
+
+  const mayUnlock = (guest) => !guest;
+
+  function unlockTypeable(pw) {
+    return typeof pw === 'string' && pw.length > 0 && pw.length <= UNLOCK_MAX && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(pw);
+  }
+
+  const unlockMessage = (pw) => unlockTypeable(pw) ? { t: 'unlock', s: pw } : null;
+
+  function unlockOutcome(m) {
+    const ok = !!(m && m.on);
+    return { ok, text: (m && m.msg) || (ok ? 'This Mac is unlocked.' : 'The screen is still locked.') };
+  }
+
   const fold = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
   function filterWindows(list, query) {
@@ -267,6 +289,6 @@
     return out;
   }
 
-  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
+  return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, LOCKED_CONTROL, UNLOCK_MAX, UNLOCK_WORKING, UNLOCK_HINT, UNLOCK_NO_ANSWER, UNLOCK_ANSWER_MS, isLockNotice, mayUnlock, unlockTypeable, unlockMessage, unlockOutcome, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
     shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });
