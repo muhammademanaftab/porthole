@@ -125,6 +125,18 @@ var hostP: RemoteParticipant?
 for _ in 0..<50 { hostP = probe.room.remoteParticipants[Participant.Identity(from: "host")]; if hostP != nil { break }; try await Task.sleep(nanoseconds: 100_000_000) }
 guard let hostP else { fail("host not in room") }
 print("PASS  host is in the room")
+if let attempts = env["PORTHOLE_UNLOCK"] {
+    for (i, pw) in attempts.split(separator: "|", omittingEmptySubsequences: false).enumerated() {
+        if i > 0 { try await Task.sleep(nanoseconds: UInt64((Double(env["PORTHOLE_UNLOCK_GAP"] ?? "6") ?? 6) * 1_000_000_000)) }
+        var m = Message(.unlock); m.s = String(pw)
+        let t = Date()
+        try await probe.send(m)
+        let reply = await probe.wait(for: .unlock, timeout: 30)
+        print("UNLOCK attempt \(i + 1): on=\(reply?.on.map(String.init) ?? "nil") msg=\(reply?.msg ?? "no answer") after \(String(format: "%.1f", Date().timeIntervalSince(t))) s")
+        fflush(stdout)
+    }
+    exit(0)
+}
 if env["PORTHOLE_EXPECT_UNPAIR"] != nil {
     print("WAIT  joined as \(probe.room.localParticipant.identity?.stringValue ?? "?"); unpair this Mac on the host now")
     fflush(stdout)
