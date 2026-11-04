@@ -178,12 +178,15 @@ public enum LockScreenTyping {
 
     public static func post(_ events: [CGEvent], stillLocked: () -> Bool, post: (CGEvent) -> Void,
                             pause: () async -> Void) async -> Bool {
+        var stopped = false
         for e in events {
-            guard stillLocked() else { return false }
+            if e.type == .keyDown {
+                if stopped || !stillLocked() { stopped = true; continue }
+            }
             post(e)
             await pause()
         }
-        return true
+        return !stopped
     }
 
     public static func events(_ password: String, source: CGEventSource?) -> [CGEvent] {

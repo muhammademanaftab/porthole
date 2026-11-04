@@ -166,25 +166,25 @@ private func unlockRunTests() {
                     && mid.log == ["check", "type"]))
 
         let all = LockScreenTyping.sequence("abc", source: nil)
+        let downs = all.filter { $0.type == .keyDown }.count
+        let isReturnDown: (CGEvent) -> Bool = { $0.type == .keyDown && $0.getIntegerValueField(.keyboardEventKeycode) == Int64(LockScreenTyping.returnKey) }
         var posted: [CGEvent] = []
         var checks = 0
         let full = await LockScreenTyping.post(all, stillLocked: { checks += 1; return true }, post: { posted.append($0) }, pause: {})
-        out.append(("post: checks the lock before every event and posts them all", full && checks == all.count && posted.count == all.count))
+        out.append(("post: checks the lock before every key down and posts everything", full && checks == downs && posted.count == all.count))
         posted = []
         checks = 0
-        let stopAt = Modifiers.flagKeyCodes.count + 3
-        let partial = await LockScreenTyping.post(all, stillLocked: { checks += 1; return checks <= stopAt }, post: { posted.append($0) }, pause: {})
-        out.append(("post: stops at the first unlocked check", !partial && posted.count == stopAt))
-        out.append(("post: never posts Return after an unlock mid-typing",
-                    !posted.contains { $0.getIntegerValueField(.keyboardEventKeycode) == Int64(LockScreenTyping.returnKey) }))
+        let partial = await LockScreenTyping.post(all, stillLocked: { checks += 1; return checks <= 2 }, post: { posted.append($0) }, pause: {})
+        out.append(("post: after an unlock no further key goes down", !partial && posted.filter { $0.type == .keyDown }.count == 2))
+        out.append(("post: never presses Return after an unlock mid-typing", !posted.contains(where: isReturnDown)))
+        out.append(("post: every key that went down also comes up", posted.filter { $0.type == .keyUp }.count >= 2))
         posted = []
         checks = 0
-        let lastMoment = await LockScreenTyping.post(all, stillLocked: { checks += 1; return checks < all.count }, post: { posted.append($0) }, pause: {})
-        out.append(("post: an unlock right before the final Return up still skips it",
-                    !lastMoment && posted.count == all.count - 1))
+        let lastMoment = await LockScreenTyping.post(all, stillLocked: { checks += 1; return checks < downs }, post: { posted.append($0) }, pause: {})
+        out.append(("post: an unlock right before Return still skips pressing it", !lastMoment && !posted.contains(where: isReturnDown)))
         posted = []
         let none = await LockScreenTyping.post(all, stillLocked: { false }, post: { posted.append($0) }, pause: {})
-        out.append(("post: nothing is posted when unlocked from the start", !none && posted.isEmpty))
+        out.append(("post: nothing is typed when unlocked from the start", !none && !posted.contains { $0.type == .keyDown }))
         results = out
         done.signal()
     }
