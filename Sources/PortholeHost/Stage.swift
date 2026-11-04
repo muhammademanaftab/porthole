@@ -122,8 +122,12 @@ final class Stage {
     static let fullscreenPolicy = FullscreenPolicy(environment: ProcessInfo.processInfo.environment)
 
     func leaveFullscreen(_ id: UInt32) async {
-        guard let live = LiveWindow.lookup(id), let w = AXWindows.window(id: id, pid: live.pid),
-              Self.fullscreenPolicy.shouldExit(isFullscreen: AXWindows.isFullscreen(w) == true) else { return }
+        guard let live = LiveWindow.lookup(id) else { return }
+        guard let w = AXWindows.window(id: id, pid: live.pid) else {
+            Log.info("fullscreen: window \(id) of pid \(live.pid) has no accessibility element")
+            return
+        }
+        guard Self.fullscreenPolicy.shouldExit(isFullscreen: AXWindows.isFullscreen(w) == true) else { return }
         guard AXWindows.setFullscreen(w, false) else { Log.info("fullscreen: could not take window \(id) out of full screen"); return }
         let deadline = Date().addingTimeInterval(FullscreenPolicy.exitTimeout)
         while Date() < deadline {

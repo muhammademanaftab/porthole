@@ -118,8 +118,13 @@ public struct CompanionTracker: Sendable {
         case gone(UInt32, told: Set<String>)
     }
 
+    public static let missesBeforeGone = 2
+    public static let retiredLimit = 64
+
     public private(set) var records: [UInt32: Record] = [:]
     public private(set) var attached: Set<UInt32> = []
+    public private(set) var retired: [UInt32] = []
+    private var misses: [UInt32: Int] = [:]
 
     public init() {}
 
@@ -127,11 +132,26 @@ public struct CompanionTracker: Sendable {
 
     public func mayOpen(_ child: UInt32, by who: String) -> Bool { records[child]?.told.contains(who) == true }
 
+    public func wasCompanion(_ id: UInt32) -> Bool { records[id] == nil && retired.contains(id) }
+
+    private mutating func retire(_ id: UInt32) -> Action? {
+        misses[id] = nil
+        guard let r = records.removeValue(forKey: id) else { return nil }
+        retired.removeAll { $0 == id }
+        retired.append(id)
+        if retired.count > Self.retiredLimit { retired.removeFirst(retired.count - Self.retiredLimit) }
+        return .gone(id, told: r.told)
+    }
+
     public mutating func update(parents: [UInt32: Parent], windows: [WindowSnapshot],
                                 attachedTo: (UInt32, [UInt32]) -> Set<UInt32>) -> [Action] {
         var actions: [Action] = []
+        let byID = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let parentIDs = Set(parents.keys)
         var claimed: [UInt32: (WindowSnapshot, UInt32)] = [:]
+        for (id, r) in records {
+            if parents[r.parent]?.window != nil, let w = byID[id] { claimed[id] = (w, r.parent) }
+        }
         for pid in parents.keys.sorted() {
             guard let p = parents[pid], let pw = p.window else { continue }
             let excluded = parentIDs.union(attached).union(claimed.keys)
@@ -144,13 +164,16 @@ public struct CompanionTracker: Sendable {
             }
             for c in found { claimed[c.id] = (c, pid) }
         }
-        let live = Set(windows.map(\.id))
-        attached.formIntersection(live)
-        for id in records.keys.sorted() where claimed[id] == nil || claimed[id]?.1 != records[id]?.parent {
-            if let r = records.removeValue(forKey: id) { actions.append(.gone(id, told: r.told)) }
+        attached.formIntersection(Set(byID.keys))
+        for id in records.keys.sorted() where claimed[id] == nil {
+            let parentLeft = parents[records[id]?.parent ?? 0] == nil
+            misses[id, default: 0] += 1
+            if parentLeft || misses[id, default: 0] >= Self.missesBeforeGone, let a = retire(id) { actions.append(a) }
         }
         for (id, (c, pid)) in claimed.sorted(by: { $0.key < $1.key }) {
             guard let p = parents[pid], let pw = p.window else { continue }
+            misses[id] = nil
+            retired.removeAll { $0 == id }
             var r = records[id] ?? Record(parent: pid, bounds: c.bounds, told: [])
             let moved = r.bounds != c.bounds
             r.bounds = c.bounds
@@ -165,8 +188,7 @@ public struct CompanionTracker: Sendable {
     }
 
     public mutating func removeAll() -> [Action] {
-        let out = records.keys.sorted().map { Action.gone($0, told: records[$0]?.told ?? []) }
-        records.removeAll()
+        let out = records.keys.sorted().compactMap { retire($0) }
         attached.removeAll()
         return out
     }

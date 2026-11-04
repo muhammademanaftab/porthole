@@ -84,13 +84,27 @@ func companionTests() {
     movedAlert.bounds.origin.x += 20
     let a4 = tr.update(parents: parents(parent, viewers.union(["mac-c"])), windows: [parent, sheet, movedAlert]) { _, _ in [] }
     expect("tracker: a moved companion is offered again to everyone", a4.count, 3)
+    var farAlert = movedAlert
+    farAlert.layer = 0
+    let sticky = tr.update(parents: parents(parent, viewers.union(["mac-c"])), windows: [parent, sheet, farAlert]) { _, _ in [] }
+    check("tracker: once offered it stays a companion even if it no longer looks like one", sticky.isEmpty && tr.parent(of: 12) == 10)
+    let blink = tr.update(parents: parents(parent), windows: [parent, sheet]) { _, _ in [] }
+    check("tracker: missing from one window list is not yet gone", blink.isEmpty && tr.parent(of: 12) == 10)
     let a5 = tr.update(parents: parents(parent), windows: [parent, sheet]) { _, _ in [] }
-    expect("tracker: a dismissed alert is reported gone with who was told", a5, [.gone(12, told: ["mac-a", "mac-b", "mac-c"])])
+    expect("tracker: missing twice, the alert is reported gone with who was told", a5, [.gone(12, told: ["mac-a", "mac-b", "mac-c"])])
     check("tracker: and forgotten", tr.parent(of: 12) == nil)
+    check("tracker: an open for it now is known to be for a closed dialog", tr.wasCompanion(12) && !tr.wasCompanion(11))
     _ = tr.update(parents: parents(parent), windows: [parent, savePanel]) { _, _ in [] }
     let a6 = tr.update(parents: [:], windows: [savePanel]) { _, _ in [] }
     expect("tracker: companions go when their parent stops being shared", a6, [.gone(15, told: viewers)])
     _ = tr.update(parents: parents(parent), windows: [parent, savePanel]) { _, _ in [] }
     expect("tracker: switching the feature off closes every companion", tr.removeAll(), [.gone(15, told: viewers)])
     check("tracker: nothing left after that", tr.records.isEmpty)
+    var many = CompanionTracker()
+    for i in 0..<100 {
+        let w = WindowSnapshot(id: UInt32(1000 + i), pid: 100, owner: "Scratch", layer: 8, bounds: CGRect(x: 300, y: 200, width: 200, height: 100))
+        _ = many.update(parents: parents(parent), windows: [parent, w]) { _, _ in [] }
+        _ = many.update(parents: [:], windows: []) { _, _ in [] }
+    }
+    expect("tracker: it remembers only the last 64 closed dialogs", many.retired.count, CompanionTracker.retiredLimit)
 }

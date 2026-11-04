@@ -78,7 +78,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         contentView = content
         contentMinSize = CGSize(width: 100, height: 80)
         show(.opening(app))
-        if companion { hasShadow = true } else { center() }
+        if companion { hasShadow = true; alphaValue = 0 } else { center() }
         makeFirstResponder(inputView)
     }
 
@@ -90,6 +90,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         if let d = track.dimensions {
             inputView.contentPixels = CGSize(width: Int(d.width), height: Int(d.height))
             if phase?.clearsOnPicture == true { show(nil) }
+            if isCompanion { alphaValue = 1 }
         }
         updatePictureMode()
     }
@@ -119,6 +120,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
 
     func show(_ next: PortalPhase?) {
         if case .opening = next, track?.dimensions != nil || isCompanion { phase = nil } else if isCompanion, next == .reconnecting { phase = nil } else { phase = next }
+        if isCompanion, phase != nil { alphaValue = 1 }
         overlay.show(phase)
     }
 
@@ -141,6 +143,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
             guard track === self.track else { return }
             self.inputView.contentPixels = CGSize(width: Int(d.width), height: Int(d.height))
             if self.phase?.clearsOnPicture == true { self.show(nil) }
+            if self.isCompanion { self.alphaValue = 1 }
             self.updatePictureMode()
         }
     }

@@ -77,8 +77,7 @@ public enum FullscreenPolicy: String, Equatable, Sendable {
     }
 
     public static func exitDone(stillFullscreen: Bool?, before: CGRect, now: CGRect?) -> Bool {
-        guard stillFullscreen == false else { return false }
-        guard let now else { return true }
+        guard stillFullscreen == false, let now, now.width > 0 else { return false }
         return now != before
     }
 }

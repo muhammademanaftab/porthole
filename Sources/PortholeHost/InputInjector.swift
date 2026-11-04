@@ -115,8 +115,11 @@ final class InputInjector {
     }
 
     func resize(_ m: Message) -> (asked: CGSize, actual: CGSize)? {
-        guard let id = m.win, let live = LiveWindow.lookup(id), let asked = resizeTarget(w: m.w, h: m.h),
-              let ax = AXWindows.window(id: id, pid: live.pid) else { return nil }
+        guard let id = m.win, let live = LiveWindow.lookup(id), let asked = resizeTarget(w: m.w, h: m.h) else { return nil }
+        guard let ax = AXWindows.window(id: id, pid: live.pid) else {
+            Log.info("resize: window \(id) of pid \(live.pid) has no accessibility element")
+            return nil
+        }
         let plan = ResizePlan.make(window: live.bounds, asked: asked, areas: Self.usableAreas())
         if let origin = plan.origin { AXWindows.setPosition(ax, origin) }
         AXWindows.setSize(ax, plan.size)

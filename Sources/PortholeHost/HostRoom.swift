@@ -207,6 +207,11 @@ final class HostRoom: NSObject, RoomDelegate {
     private func open(_ id: UInt32, by who: String, screen: CGSize?, prefs: StreamPrefs) async {
         let companion = tracker.parent(of: id) != nil
         if companion && !tracker.mayOpen(id, by: who) { return }
+        if tracker.wasCompanion(id) {
+            var reply = Message(.error); reply.win = id; reply.msg = "That dialog has closed."
+            await send(reply, to: who)
+            return
+        }
         let found = companion ? (try? await WindowCatalog.window(id: id)) ?? nil
             : (try? await WindowCatalog.shareable(onScreenOnly: false))?.first { $0.windowID == id }
         guard let found else {

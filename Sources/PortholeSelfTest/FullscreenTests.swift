@@ -22,6 +22,8 @@ func fullscreenTests() {
     check("exit: still full screen is not done", !FullscreenPolicy.exitDone(stillFullscreen: true, before: before, now: before))
     check("exit: an unknown attribute is not done", !FullscreenPolicy.exitDone(stillFullscreen: nil, before: before, now: before))
     check("exit: out of full screen but not yet moved waits for the frame", !FullscreenPolicy.exitDone(stillFullscreen: false, before: before, now: before))
+    check("exit: a window briefly missing from the window list is not done yet", !FullscreenPolicy.exitDone(stillFullscreen: false, before: before, now: nil))
+    check("exit: a zero frame mid-animation is not done yet", !FullscreenPolicy.exitDone(stillFullscreen: false, before: before, now: .zero))
     check("exit: out and at its old size is done",
           FullscreenPolicy.exitDone(stillFullscreen: false, before: before, now: CGRect(x: 200, y: 120, width: 900, height: 600)))
 }
