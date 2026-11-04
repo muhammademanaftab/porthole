@@ -10,9 +10,17 @@ public struct AccessToken {
     }
 
     public func make(identity: String, room: String, canPublish: Bool, ttl: TimeInterval = 86_400,
-                     now: Date = Date()) -> String {
+                     now: Date = Date(), roomAdmin: Bool = false) -> String {
         let header: [String: Any] = ["alg": "HS256", "typ": "JWT"]
         let iat = Int(now.timeIntervalSince1970)
+        var video: [String: Any] = [
+            "room": room,
+            "roomJoin": true,
+            "canPublish": canPublish,
+            "canSubscribe": true,
+            "canPublishData": true,
+        ]
+        if roomAdmin { video["roomAdmin"] = true }
         let claims: [String: Any] = [
             "iss": apiKey,
             "sub": identity,
@@ -20,13 +28,7 @@ public struct AccessToken {
             "nbf": iat - 10,
             "iat": iat,
             "exp": iat + Int(ttl),
-            "video": [
-                "room": room,
-                "roomJoin": true,
-                "canPublish": canPublish,
-                "canSubscribe": true,
-                "canPublishData": true,
-            ] as [String: Any],
+            "video": video,
         ]
         let h = Self.b64(try! JSONSerialization.data(withJSONObject: header, options: [.sortedKeys]))
         let c = Self.b64(try! JSONSerialization.data(withJSONObject: claims, options: [.sortedKeys]))

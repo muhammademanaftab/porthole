@@ -107,7 +107,8 @@ let cfgURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathCompon
 guard let pw = env["PORTHOLE_PW"] ?? ((try? JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL))) as? [String: Any])?["password"] as? String
 else { fail("no host config") }
 
-let (data, _) = try await URLSession.shared.data(from: tokenURL(hostAddress: hostAddress, password: pw, name: "probe")!)
+let credential: ViewerCredential = env["PORTHOLE_DEVICE"].flatMap { id in env["PORTHOLE_SECRET"].map { .device(id: id, secret: $0) } } ?? .password(pw)
+let (data, _) = try await URLSession.shared.data(from: tokenURL(hostAddress: hostAddress, credential: credential, name: "probe")!)
 guard let tok = try JSONSerialization.jsonObject(with: data) as? [String: String], let url = tok["url"], let token = tok["token"] else { fail("token endpoint") }
 print("PASS  token issued (\(url))")
 
@@ -124,6 +125,14 @@ var hostP: RemoteParticipant?
 for _ in 0..<50 { hostP = probe.room.remoteParticipants[Participant.Identity(from: "host")]; if hostP != nil { break }; try await Task.sleep(nanoseconds: 100_000_000) }
 guard let hostP else { fail("host not in room") }
 print("PASS  host is in the room")
+if env["PORTHOLE_EXPECT_UNPAIR"] != nil {
+    print("WAIT  joined as \(probe.room.localParticipant.identity?.stringValue ?? "?"); unpair this Mac on the host now")
+    fflush(stdout)
+    for _ in 0..<600 where probe.room.connectionState != .disconnected { try await Task.sleep(nanoseconds: 100_000_000) }
+    guard probe.room.connectionState == .disconnected else { fail("still connected 60 s after waiting for the unpair") }
+    print("PASS  the host disconnected this viewer after unpairing")
+    exit(0)
+}
 
 var listReply: Message?
 for _ in 0..<10 where listReply == nil {

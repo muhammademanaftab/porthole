@@ -4,6 +4,7 @@ import PortholeCore
 @MainActor
 final class ConnectWindow: NSWindow, NSTextFieldDelegate {
     var onSubmit: ((_ address: String, _ name: String?, _ secret: String?) -> Void)?
+    var onRequestPairing: ((_ address: String, _ name: String?) -> Void)?
     var onRefresh: (() -> Void)?
     var onCancel: (() -> Void)?
 
@@ -95,7 +96,7 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
         return b
     }
 
-    func show(_ hosts: [DiscoveredHost], scanning: Bool, preferTailscale: Bool) {
+    func show(_ hosts: [DiscoveredHost], scanning: Bool, preferTailscale: Bool, hasAccess: (DiscoveredHost) -> Bool = { _ in true }) {
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         targets.removeAll { $0.tag >= 0 }
         rows = []
@@ -110,11 +111,13 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
             b.alignment = .left
             b.lineBreakMode = .byTruncatingTail
             b.attributedTitle = rowTitle(host, address: addr)
-            b.image = NSImage(systemSymbolName: host.status == .notFound ? "desktopcomputer.trianglebadge.exclamationmark" : "desktopcomputer",
-                              accessibilityDescription: nil)
+            let trusted = hasAccess(host)
+            let symbol = host.status == .notFound ? "desktopcomputer.trianglebadge.exclamationmark" : trusted ? "desktopcomputer" : "lock.fill"
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: trusted ? nil : "Not paired")
             b.imagePosition = .imageLeading
+            b.toolTip = trusted ? nil : "Not paired yet. Pick it to ask that Mac to show a pairing code."
             b.state = addr == address.stringValue ? .on : .off
-            let t = ClosureTarget { [weak self] in self?.choose(host, address: addr) }
+            let t = ClosureTarget { [weak self] in self?.choose(host, address: addr, trusted: trusted) }
             t.tag = i
             targets.append(t)
             b.target = t; b.action = #selector(ClosureTarget.fire)
@@ -132,12 +135,13 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
         return s
     }
 
-    private func choose(_ host: DiscoveredHost, address addr: String) {
+    private func choose(_ host: DiscoveredHost, address addr: String, trusted: Bool) {
         address.stringValue = addr
         chosenName = host.name
         for (b, a) in rows { b.state = a == addr ? .on : .off }
         resetSecret()
         makeFirstResponder(address)
+        if !trusted && host.status == .online { onRequestPairing?(addr, host.name) }
     }
 
     func fill(_ addr: String) {
@@ -168,9 +172,9 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate {
         if !secret.isHidden { secret.stringValue = ""; makeFirstResponder(secret) }
     }
 
-    func setBusy(_ busy: Bool) {
+    func setBusy(_ busy: Bool, _ label: String = "Pairing…") {
         connectButton.isEnabled = !busy
-        connectButton.title = busy ? "Pairing…" : "Connect"
+        connectButton.title = busy ? label : "Connect"
     }
 
     private func resetSecret() {

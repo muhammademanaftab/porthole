@@ -35,17 +35,26 @@ public struct WebRoutes {
     public var suffix: () -> String
     public var pairing: PairingDesk?
     public var hostName: String
+    public var trust: TrustStore?
+    public var hostID: String?
+    public var onPairRequest: ((PairRequester, String) -> Void)?
+    public var onUnpair: ((PairedDevice) -> Void)?
+    public var localSecret: String?
+    public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
+    static let mutatingPaths: Set<String> = ["/pair", "/pair/request", "/local/paircode", "/local/unpair"]
 
     public init(password: String, livekitPort: Int, tokens: AccessToken, webRoot: URL?,
-                suffix: @escaping () -> String = { randomSecret(bytes: 3) }, pairing: PairingDesk? = nil, hostName: String = "Mac") {
+                suffix: @escaping () -> String = { randomSecret(bytes: 3) }, pairing: PairingDesk? = nil, hostName: String = "Mac",
+                trust: TrustStore? = nil, hostID: String? = nil) {
         self.password = password; self.livekitPort = livekitPort; self.tokens = tokens
         self.webRoot = webRoot; self.suffix = suffix
         self.pairing = pairing; self.hostName = hostName
+        self.trust = trust; self.hostID = hostID
     }
 
-    public func respond(to request: String) -> HTTPResponse {
+    public func respond(to request: String, fromLoopback: Bool = false) -> HTTPResponse {
         let lines = request.components(separatedBy: "\r\n")
         let parts = lines.first?.split(separator: " ") ?? []
         guard parts.count >= 2 else { return HTTPResponse("400 Bad Request", "text/plain", "bad request") }
@@ -58,10 +67,17 @@ public struct WebRoutes {
               hostLine != nil || parts.count < 3 || parts[2] != "HTTP/1.1" else {
             return HTTPResponse("400 Bad Request", "text/plain", "bad request")
         }
-        if parts[0] == "HEAD" && comps.path == "/pair" {
+        if parts[0] == "HEAD" && Self.mutatingPaths.contains(comps.path) {
             return HTTPResponse("405 Method Not Allowed", "text/plain", "method not allowed", headers: [("Allow", "GET")])
         }
-        var response = route(comps, hostHeader: hostLine.map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) } ?? "")
+        let hostHeader = hostLine.map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) } ?? ""
+        let local = fromLoopback && isLocalHostHeader(hostHeader) && localSecret.map { secret in
+            lines.dropFirst().contains { line in
+                guard line.lowercased().hasPrefix(localRouteHeader.lowercased() + ":") else { return false }
+                return constantTimeEqual(String(line.dropFirst(localRouteHeader.count + 1)).trimmingCharacters(in: .whitespaces), secret)
+            }
+        } == true
+        var response = comps.path.hasPrefix("/local/") ? localRoute(comps, allowed: local) : route(comps, hostHeader: hostHeader)
         if parts[0] == "HEAD" { response.sendsBody = false }
         return response
     }
@@ -75,17 +91,26 @@ public struct WebRoutes {
             }
             return HTTPResponse("200 OK", "text/html; charset=utf-8", html)
         case "/token":
-            guard query["pw"] == password else {
+            let identity: String
+            switch authorizeToken(query: query, password: password, verify: { id, secret in trust?.verify(id: id, secret: secret) }) {
+            case .refused:
                 return HTTPResponse("403 Forbidden", "application/json", #"{"error":"wrong password"}"#)
+            case .unpaired:
+                return Self.json("403 Forbidden", ["error": "This Mac isn't paired with \(hostName) any more. Pair it again.", "unpaired": true])
+            case .password:
+                identity = Self.viewerIdentity(name: query["name"], suffix: suffix())
+            case .device(let device):
+                identity = pairedIdentity(name: query["name"], suffix: suffix(), device: device.id)
             }
-            let identity = Self.viewerIdentity(name: query["name"], suffix: suffix())
-            let token = tokens.make(identity: identity, room: "porthole", canPublish: false)
+            let token = tokens.make(identity: identity, room: "porthole", canPublish: false, ttl: Self.viewerTokenTTL)
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
             return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         case "/hello":
-            return HTTPResponse("200 OK", "application/json", HostHello(name: hostName, version: portholeProtocolVersion).json)
+            return HTTPResponse("200 OK", "application/json", HostHello(name: hostName, version: portholeProtocolVersion, id: hostID).json)
         case "/pair":
-            return pair(query["code"] ?? "")
+            return pair(query["code"] ?? "", device: query["device"], name: query["name"])
+        case "/pair/request":
+            return pairRequest(device: query["device"] ?? "", name: query["name"])
         case "/favicon.ico":
             return HTTPResponse("204 No Content", "image/x-icon", Data())
         default:
@@ -98,15 +123,65 @@ public struct WebRoutes {
         }
     }
 
-    private func pair(_ code: String) -> HTTPResponse {
-        guard let pairing else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
-        let outcome = pairing.redeem(code)
-        if outcome == .accepted {
-            let body = (try? JSONSerialization.data(withJSONObject: ["password": password])) ?? Data()
-            return HTTPResponse("200 OK", "application/json", body)
+    private func pair(_ code: String, device: String?, name: String?) -> HTTPResponse {
+        guard let pairing, let trust else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        guard let device else {
+            return Self.json("400 Bad Request", ["error": "This copy of Porthole is too old to pair with \(hostName). Update it, or use the host's password."])
         }
-        let body = (try? JSONSerialization.data(withJSONObject: ["error": pairMessage(outcome) ?? ""])) ?? Data()
-        return HTTPResponse("403 Forbidden", "application/json", body)
+        guard DeviceIdentity.isValidID(device) else { return Self.json("400 Bad Request", ["error": "That isn't a Porthole device ID."]) }
+        let outcome = pairing.redeem(code, device: device)
+        guard outcome == .accepted else { return Self.json("403 Forbidden", ["error": pairMessage(outcome) ?? ""]) }
+        guard let secret = trust.pair(id: device, name: cleanDeviceName(name)) else {
+            return Self.json("500 Internal Server Error", ["error": "The host couldn't save the pairing."])
+        }
+        var body: [String: Any] = ["secret": secret, "host": hostName]
+        if let hostID { body["host_id"] = hostID }
+        return Self.json("200 OK", body)
+    }
+
+    private func pairRequest(device: String, name: String?) -> HTTPResponse {
+        guard let pairing, trust != nil else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        guard DeviceIdentity.isValidID(device) else { return Self.json("400 Bad Request", ["error": "That isn't a Porthole device ID."]) }
+        let who = PairRequester(id: device, name: cleanDeviceName(name))
+        switch pairing.request(from: who) {
+        case .throttled:
+            return Self.json("429 Too Many Requests", ["error": "Too many pairing requests. Wait a few minutes and try again."])
+        case .busy(let seconds):
+            return Self.json("409 Conflict", ["error": "Another Mac is pairing with \(hostName) right now. Try again in \(seconds) s."])
+        case .issued(let code), .same(let code):
+            onPairRequest?(who, code)
+            return Self.json("200 OK", ["requested": true, "host": hostName])
+        }
+    }
+
+    private func localRoute(_ comps: URLComponents, allowed: Bool) -> HTTPResponse {
+        guard allowed, let pairing, let trust else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        let query = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        switch comps.path {
+        case "/local/paircode":
+            let current = pairing.currentOrIssue()
+            var body: [String: Any] = ["code": current.code, "seconds": current.secondsLeft]
+            if let who = current.requester { body["for"] = who.name; body["device"] = who.id }
+            return Self.json("200 OK", body)
+        case "/local/unpair":
+            let who = query["who"] ?? ""
+            switch trust.unpair(who) {
+            case .found(let device):
+                onUnpair?(device)
+                return Self.json("200 OK", ["id": device.id, "name": device.name])
+            case .none:
+                return Self.json("404 Not Found", ["error": "No paired Mac matches \"\(who)\"."])
+            case .ambiguous(let list):
+                return Self.json("409 Conflict", ["error": "Several paired Macs match; use the device ID.",
+                                                  "matches": list.map { ["id": $0.id, "name": $0.name] }])
+            }
+        default:
+            return HTTPResponse("404 Not Found", "text/plain", "not found")
+        }
+    }
+
+    static func json(_ status: String, _ obj: [String: Any]) -> HTTPResponse {
+        HTTPResponse(status, "application/json", (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data())
     }
 
     public static func isServable(_ name: String) -> Bool {

@@ -106,8 +106,11 @@ func pairingTests() {
     let keys = AccessToken(apiKey: "key", apiSecret: "secret")
     var clock = t0
     let routeDesk = PairingDesk(clock: { clock }, random: { 246_810 })
+    let trustDir = FileManager.default.temporaryDirectory.appendingPathComponent("porthole-pairing-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: trustDir) }
     let routes = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: keys, webRoot: nil, suffix: { "s" },
-                           pairing: routeDesk, hostName: "Leo\u{2019}s Mac mini")
+                           pairing: routeDesk, hostName: "Leo\u{2019}s Mac mini", trust: TrustStore(directory: trustDir))
+    let dev = "&device=0123456789abcdef"
 
     let hello = routes.respond(to: get("/hello"))
     check("hello route: 200 JSON", hello.status == "200 OK" && hello.contentType == "application/json")
@@ -118,27 +121,27 @@ func pairingTests() {
     check("hello route: never leaks the password", !String(decoding: hello.body, as: UTF8.self).contains("pw-123"))
     expect("hello route: its JSON parses back", HostHello.parse(hello.body), HostHello(name: "Leo\u{2019}s Mac mini", version: 1))
 
-    let none = routes.respond(to: get("/pair?code=246810"))
+    let none = routes.respond(to: get("/pair?code=246810" + dev))
     check("pair route: with no code issued is 403 with a hint",
           none.status == "403 Forbidden" && (body(none)?["error"] as? String)?.contains("Pair a New Viewer") == true)
     _ = routeDesk.issue()
-    let wrong = routes.respond(to: get("/pair?code=111111"))
+    let wrong = routes.respond(to: get("/pair?code=111111" + dev))
     check("pair route: wrong code is 403 and says how many tries are left",
           wrong.status == "403 Forbidden" && body(wrong)?["error"] as? String == "Wrong code. 4 tries left."
           && !String(decoding: wrong.body, as: UTF8.self).contains("pw-123"))
     let head = routes.respond(to: get("/pair?code=246810", method: "HEAD"))
     check("pair route: HEAD is refused so it cannot burn the code", head.status == "405 Method Not Allowed")
-    let ok = routes.respond(to: get("/pair?code=246%20810"))
-    check("pair route: right code returns the password", ok.status == "200 OK" && ok.contentType == "application/json"
-          && body(ok)?["password"] as? String == "pw-123")
-    expect("pair route: body has only the password", Set(body(ok)?.keys.map { $0 } ?? []), ["password"])
-    let reuse = routes.respond(to: get("/pair?code=246810"))
-    check("pair route: the code works once", reuse.status == "403 Forbidden" && body(reuse)?["password"] == nil)
+    let ok = routes.respond(to: get("/pair?code=246%20810" + dev))
+    check("pair route: right code returns a device secret", ok.status == "200 OK" && ok.contentType == "application/json"
+          && (body(ok)?["secret"] as? String)?.isEmpty == false)
+    expect("pair route: body has the secret and host name, never the password", Set(body(ok)?.keys.map { $0 } ?? []), ["secret", "host"])
+    let reuse = routes.respond(to: get("/pair?code=246810" + dev))
+    check("pair route: the code works once", reuse.status == "403 Forbidden" && body(reuse)?["secret"] == nil)
     _ = routeDesk.issue()
     clock = t0.addingTimeInterval(121)
-    let late = routes.respond(to: get("/pair?code=246810"))
+    let late = routes.respond(to: get("/pair?code=246810" + dev))
     check("pair route: expired code is refused", late.status == "403 Forbidden" && (body(late)?["error"] as? String)?.contains("expired") == true)
-    let missing = routes.respond(to: get("/pair"))
+    let missing = routes.respond(to: get("/pair?device=0123456789abcdef"))
     check("pair route: missing code is refused", missing.status == "403 Forbidden")
     expect("pair route: POST is still 405", routes.respond(to: get("/pair?code=1", method: "POST")).status, "405 Method Not Allowed")
 

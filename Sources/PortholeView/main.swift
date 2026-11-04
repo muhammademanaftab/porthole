@@ -25,12 +25,12 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         let args = viewerArguments(Array(CommandLine.arguments.dropFirst()))
         if let host = args.host, let pw = args.password {
-            connect(host: host, password: pw)
+            connect(host: host, credential: .password(pw))
             return
         }
         let host = args.host ?? UserDefaults.standard.string(forKey: "host")
-        if let host, let pw = PasswordStore.password(for: host) {
-            connect(host: host, password: pw, savedPassword: true)
+        if let host, let (cred, id) = PasswordStore.credential(for: host) {
+            connect(host: host, credential: cred, saved: true, hostID: id)
         } else {
             showConnect(address: host, ask: args.host.map { askText(nil, $0) })
         }
@@ -86,7 +86,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         connectWindow = w
         discovery.onChange = { [weak self, weak w] in
             guard let self, let w else { return }
-            w.show(self.discovery.hosts, scanning: self.discovery.scanning, preferTailscale: self.discovery.tailscaleRunning)
+            w.show(self.discovery.hosts, scanning: self.discovery.scanning, preferTailscale: self.discovery.tailscaleRunning,
+                   hasAccess: PasswordStore.hasAccess)
         }
         w.onRefresh = { [weak self] in self?.discovery.refresh() }
         w.onCancel = { [weak self, weak w] in
@@ -96,11 +97,30 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             self.discovery.stop()
         }
         w.onSubmit = { [weak self] address, name, secret in self?.submit(address: address, name: name, secret: secret) }
+        w.onRequestPairing = { [weak self] address, name in self?.requestPairing(address: address, name: name) }
         return w
     }
 
     func askText(_ name: String?, _ address: String) -> String {
         "Type the pairing code from \(name ?? address): on that Mac, click the Porthole Host menu-bar icon and choose Pair a New Viewer…. Its password works too."
+    }
+
+    func requestPairing(address: String, name: String?) {
+        guard let w = connectWindow else { return }
+        w.setBusy(true, "Asking…")
+        Task {
+            let reply = await HostDiscovery.requestPairing(address: address, device: PasswordStore.device.id, name: PasswordStore.deviceName)
+            w.setBusy(false)
+            switch reply {
+            case .shown(let host):
+                w.ask("\(host) is showing a pairing code for this Mac. Type it here; after that this Mac can view it without a password.")
+            case .older:
+                w.ask(askText(name, address))
+            case .refused(let why):
+                w.ask(askText(name, address))
+                w.showError(why)
+            }
+        }
     }
 
     func submit(address: String, name: String?, secret: String?) {
@@ -110,39 +130,48 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             return
         }
         guard let secret, !secret.isEmpty else {
-            if let pw = PasswordStore.password(for: address) {
-                startConnection(address: address, name: name, password: pw, saved: true)
+            if let (cred, id) = PasswordStore.credential(for: address) {
+                startConnection(address: address, name: name, credential: cred, saved: true, hostID: id)
             } else {
-                w.ask(askText(name, address))
+                requestPairing(address: address, name: name)
             }
             return
         }
         guard looksLikePairingCode(secret) else {
-            startConnection(address: address, name: name, password: secret, saved: false)
+            startConnection(address: address, name: name, credential: .password(secret), saved: false)
             return
         }
         w.setBusy(true)
         Task {
-            let reply = await HostDiscovery.pair(address: address, code: secret)
+            let device = PasswordStore.device
+            let reply = await HostDiscovery.pair(address: address, code: secret, device: device.id, name: PasswordStore.deviceName)
             w.setBusy(false)
             switch reply {
-            case .password(let pw): startConnection(address: address, name: name, password: pw, saved: false)
+            case .paired(let deviceSecret, let id, let hostName):
+                let key = hostKeyForTrust(hostID: id, address: address)
+                guard PasswordStore.savePairing(hostID: key, name: hostName ?? name ?? address, address: address, secret: deviceSecret) else {
+                    w.showError("Paired, but the Keychain refused to keep the pairing. Try again.")
+                    return
+                }
+                startConnection(address: address, name: name ?? hostName, credential: .device(id: device.id, secret: deviceSecret),
+                                saved: true, hostID: key)
+            case .password(let pw): startConnection(address: address, name: name, credential: .password(pw), saved: false)
             case .refused(let why): w.showError(why)
             }
         }
     }
 
-    func startConnection(address: String, name: String?, password: String, saved: Bool) {
+    func startConnection(address: String, name: String?, credential: ViewerCredential, saved: Bool, hostID: String? = nil) {
         connectWindow?.close()
         discovery.stop()
-        connect(host: address, password: password, name: name, savedPassword: saved)
+        connect(host: address, credential: credential, name: name, saved: saved, hostID: hostID)
     }
 
-    func connect(host: String, password: String, name: String? = nil, savedPassword: Bool = false) {
+    func connect(host: String, credential: ViewerCredential, name: String? = nil, saved: Bool = false, hostID: String? = nil) {
         for p in portals.values { p.close() }
         if let old = connection { Task { await old.disconnect() } }
         picker?.close()
-        let c = Connection(hostAddress: host, password: password)
+        let c = Connection(hostAddress: host, credential: credential)
         connection = c
         c.muted = muted
         let picker = PickerWindow(hostName: name ?? host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
@@ -161,13 +190,19 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             do {
                 try await c.connect()
                 UserDefaults.standard.set(host, forKey: "host")
-                if !PasswordStore.save(password, for: host) { UserDefaults.standard.set(password, forKey: "password") }
+                if case .password(let password) = credential, !PasswordStore.save(password, for: host) {
+                    UserDefaults.standard.set(password, forKey: "password")
+                }
                 PasswordStore.knownHosts = rememberHost(PasswordStore.knownHosts, KnownHost(name: name ?? host, address: host))
                 for _ in 0..<50 where c.hostParticipant == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
                 c.requestList()
             } catch {
                 picker.showError(error.localizedDescription)
-                if savedPassword && (error as NSError).domain == "Porthole" && (error as NSError).code == 401 {
+                let err = error as NSError
+                if err.domain == "Porthole" && err.code == 403, case .device = credential {
+                    if let hostID { PasswordStore.forgetPairing(hostID: hostID) }
+                    showConnect(address: host, ask: err.localizedDescription + " Click Connect to ask \(name ?? host) for a new code.")
+                } else if saved && err.domain == "Porthole" && err.code == 401 {
                     showConnect(address: host, ask: "The saved password for \(name ?? host) was refused. " + askText(name, host))
                 }
             }
@@ -246,6 +281,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
+
+if let status = ViewerCLI.run(Array(CommandLine.arguments.dropFirst())) { exit(status) }
 
 MainActor.assumeIsolated {
     let app = NSApplication.shared

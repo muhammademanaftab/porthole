@@ -18,6 +18,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private var clipTimer: Timer?
     private var lockWarnedAt: [String: Date] = [:]
     var onChange: (() -> Void)?
+    var accepts: ((String) -> Bool)?
     var onRestart: ((String, Bool) -> String?)?
     private(set) var isConnected = false
 
@@ -51,7 +52,7 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func clipboardReceived(_ text: String, from who: String) {
-        guard registry.activeViewers.contains(who), clip.incoming(text) else { return }
+        guard accepts?(who) ?? true, registry.activeViewers.contains(who), clip.incoming(text) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
@@ -95,7 +96,10 @@ final class HostRoom: NSObject, RoomDelegate {
                           forTopic topic: String, encryptionType: EncryptionType) {
         guard topic == portholeTopic, let m = Message.decode(data),
               let who = participant?.identity?.stringValue else { return }
-        Task { @MainActor in await self.handle(m, from: who) }
+        Task { @MainActor in
+            guard self.accepts?(who) ?? true else { return }
+            await self.handle(m, from: who)
+        }
     }
 
     nonisolated func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {

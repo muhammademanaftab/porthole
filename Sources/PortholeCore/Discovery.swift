@@ -21,13 +21,15 @@ public func isTailscaleAddress(_ s: String) -> Bool {
 public struct HostHello: Equatable, Sendable {
     public var name: String
     public var version: Int
+    public var id: String?
 
-    public init(name: String, version: Int) {
-        self.name = name; self.version = version
+    public init(name: String, version: Int, id: String? = nil) {
+        self.name = name; self.version = version; self.id = id
     }
 
     public var json: Data {
-        let obj: [String: Any] = ["app": "porthole", "name": name, "version": version]
+        var obj: [String: Any] = ["app": "porthole", "name": name, "version": version]
+        if let id { obj["id"] = id }
         return (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data()
     }
 
@@ -35,7 +37,8 @@ public struct HostHello: Equatable, Sendable {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               obj["app"] as? String == "porthole", let version = obj["version"] as? Int, version >= 1 else { return nil }
         let name = (obj["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return HostHello(name: name.isEmpty ? "Mac" : name, version: version)
+        let id = (obj["id"] as? String).flatMap { DeviceIdentity.isValidID($0) ? $0 : nil }
+        return HostHello(name: name.isEmpty ? "Mac" : name, version: version, id: id)
     }
 }
 
@@ -115,8 +118,9 @@ public func peerDisplayName(_ peer: TailscalePeer) -> String {
 
 public enum BonjourTXT {
     public static func make(name: String, tailscaleIP: String?, localHost: String?,
-                            port: Int = Int(HostConfig.defaultHTTPPort)) -> [String: String] {
+                            port: Int = Int(HostConfig.defaultHTTPPort), id: String? = nil) -> [String: String] {
         var txt = ["v": String(portholeProtocolVersion), "name": clip(name, bytes: 200), "port": String(port)]
+        if let id, DeviceIdentity.isValidID(id) { txt["id"] = id }
         if let tailscaleIP, isTailscaleAddress(tailscaleIP) { txt["ts"] = tailscaleIP }
         if let localHost, !localHost.isEmpty { txt["host"] = clip(localHost, bytes: 200) }
         return txt
@@ -130,7 +134,7 @@ public enum BonjourTXT {
         let lan = txt["host"].flatMap { $0.isEmpty ? nil : $0 }
         guard ts != nil || lan != nil else { return nil }
         return DiscoveredHost(name: name, tailscaleIP: ts, lanHost: lan, port: port ?? Int(HostConfig.defaultHTTPPort),
-                              status: .online, viaBonjour: true)
+                              status: .online, viaBonjour: true, hostID: txt["id"].flatMap { DeviceIdentity.isValidID($0) ? $0 : nil })
     }
 
     static func clip(_ s: String, bytes: Int) -> String {
@@ -157,11 +161,13 @@ public struct DiscoveredHost: Equatable, Sendable {
     public var viaBonjour: Bool
     public var viaTailscale: Bool
     public var saved: Bool
+    public var hostID: String?
 
     public init(name: String, tailscaleIP: String? = nil, lanHost: String? = nil, port: Int = Int(HostConfig.defaultHTTPPort),
-                status: Status, viaBonjour: Bool = false, viaTailscale: Bool = false, saved: Bool = false) {
+                status: Status, viaBonjour: Bool = false, viaTailscale: Bool = false, saved: Bool = false, hostID: String? = nil) {
         self.name = name; self.tailscaleIP = tailscaleIP; self.lanHost = lanHost; self.port = port
         self.status = status; self.viaBonjour = viaBonjour; self.viaTailscale = viaTailscale; self.saved = saved
+        self.hostID = hostID
     }
 
     public func address(preferTailscale: Bool) -> String {
@@ -190,6 +196,7 @@ public struct DiscoveredHost: Equatable, Sendable {
     }
 
     func matches(_ o: DiscoveredHost) -> Bool {
+        if let a = hostID, let b = o.hostID, a != b { return false }
         if let a = tailscaleIP, let b = o.tailscaleIP { return a == b }
         if let a = lanHost?.lowercased(), let b = o.lanHost?.lowercased(), a == b { return true }
         return normalizedHostName(name) == normalizedHostName(o.name)
@@ -203,6 +210,7 @@ public struct DiscoveredHost: Equatable, Sendable {
         viaBonjour = viaBonjour || o.viaBonjour
         viaTailscale = viaTailscale || o.viaTailscale
         saved = saved || o.saved
+        hostID = hostID ?? o.hostID
         if name == tailscaleIP || name == lanHost || name.isEmpty { name = o.name }
     }
 }

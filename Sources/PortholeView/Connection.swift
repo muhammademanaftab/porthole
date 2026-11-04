@@ -6,7 +6,7 @@ import PortholeCore
 @MainActor
 final class Connection: NSObject, RoomDelegate {
     let hostAddress: String
-    let password: String
+    let credential: ViewerCredential
     let room = Room()
     var onWindows: (([WindowInfo]) -> Void)?
     var onError: ((String) -> Void)?
@@ -18,9 +18,9 @@ final class Connection: NSObject, RoomDelegate {
     private var listening = SharedUse<String, UInt32>()
     var muted = false { didSet { applyVolume() } }
 
-    init(hostAddress: String, password: String) {
+    init(hostAddress: String, credential: ViewerCredential) {
         self.hostAddress = hostAddress
-        self.password = password
+        self.credential = credential
     }
 
     var hostParticipant: RemoteParticipant? {
@@ -28,16 +28,17 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     func connect() async throws {
-        guard let url = tokenURL(hostAddress: hostAddress, password: password,
+        guard let tokenAt = tokenURL(hostAddress: hostAddress, credential: credential,
                                  name: shortHostName(ProcessInfo.processInfo.hostName)) else {
             throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
                 "\"\(hostAddress)\" isn't a host address. Use a name or IP, optionally with :port."])
         }
-        let (data, resp) = try await URLSession.shared.data(from: url)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200,
-              let obj = try JSONSerialization.jsonObject(with: data) as? [String: String],
-              let url = obj["url"], let token = obj["token"] else {
-            throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: "The host refused the password, or isn't running."])
+        let (data, resp) = try await URLSession.shared.data(from: tokenAt)
+        let url: String, token: String
+        switch parseTokenReply(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data) {
+        case .ok(let u, let t): url = u; token = t
+        case .unpaired(let why): throw NSError(domain: "Porthole", code: 403, userInfo: [NSLocalizedDescriptionKey: why])
+        case .refused(let why): throw NSError(domain: "Porthole", code: 401, userInfo: [NSLocalizedDescriptionKey: why])
         }
         room.add(delegate: self)
         try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
