@@ -4,8 +4,7 @@ Share single windows from a Mac (the host) to your other machines: as real windo
 
 ## Parts
 
-- **Porthole Host** (`porthole-host`): menu-bar app on the Mac whose windows you share. Runs a local LiveKit server, captures windows, recreates input.
-- **Porthole** (`porthole-view`): Mac viewer. Each remote window opens as a native window.
+- **Porthole** (`Porthole.app`, executable `porthole-host`): one app on every Mac, like similar apps. Viewing is always on: each remote window opens as a native window. **Share this Mac** (Settings › Sharing, or `PORTHOLE_HOSTING=0|1` for one run) adds the host role in the same process: a local LiveKit server, window capture, input. A Mac that only shares stays in the menu bar until a viewer window opens. `Contents/MacOS/porthole-view` is a link to the same executable for the viewer commands.
 - **Browser viewer**: served by the host at `http://<host>:7878/?pw=<password>`.
 
 ## Build
@@ -14,7 +13,7 @@ Needs macOS 14+ and the Xcode Command Line Tools, plus `brew install livekit`.
 
 ```
 scripts/test.sh
-scripts/bundle.sh          # dist/Porthole Host.app, dist/Porthole.app
+scripts/bundle.sh          # dist/Porthole.app
 ```
 
 `scripts/test.sh` runs the Swift self-test (`swift run PortholeSelfTest`) and the browser tests (`node --test web/`).
@@ -26,7 +25,7 @@ Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Acc
 
 ## Use
 
-1. On the host, open Porthole Host and grant Screen Recording and Accessibility.
+1. On the host, open Porthole, turn on Settings › Sharing › Share this Mac and grant Screen Recording and Accessibility.
 2. Copy the browser link or password from its menu-bar icon.
 3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). A host this Mac hasn't paired with shows a padlock; picking it asks that host to show a 6-digit code on its screen (valid 2 minutes, single use, 5 tries). Type the code once and this Mac may view that host from then on, with no password. Pairing is one way. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
 
@@ -50,11 +49,11 @@ porthole-view request <host>    # ask the host to show a code for this Mac
 porthole-view pair <host> <code>
 ```
 
-Run them from the app bundles (`"/Applications/Porthole Host.app/Contents/MacOS/porthole-host" paircode`) so the Keychain recognises the binary. Pairing requests also print their code to the host's standard output; `PORTHOLE_PAIR_HEADLESS=1` prints it without opening the window. `PORTHOLE_HOME` moves the host's and viewer's state folder (for a second, isolated instance).
+Run them from the app bundles (`/Applications/Porthole.app/Contents/MacOS/porthole-host paircode`) so the Keychain recognises the binary. Pairing requests also print their code to the host's standard output; `PORTHOLE_PAIR_HEADLESS=1` prints it without opening the window. `PORTHOLE_HOME` moves the host's and viewer's state folder (for a second, isolated instance).
 
 ## Share links (guests)
 
-A share link lets someone without a paired Mac or the password watch one window, or pick among this Mac's windows, in a browser. Porthole Host's menu has Share Window…, Share Picker…, Shared Links… and the Allow Remote Control switch; on the command line:
+A share link lets someone without a paired Mac or the password watch one window, or pick among this Mac's windows, in a browser. Porthole's menu-bar menu has Share Window…, Share Picker…, Shared Links… and the Allow Remote Control switch; on the command line:
 
 ```
 porthole share [window] [--control] [--wifi] [--ttl 2h]   # window = ID or part of "App Title"; none = the picker
@@ -101,11 +100,11 @@ The host captures the display with ScreenCaptureKit, leaving out Porthole Host's
 
 ## Install on the Mac mini
 
-`scripts/deploy-mini.sh` checks the mini answers SSH (and stops with a clear message if not), builds `dist/Porthole Host.app` under the build lock with `SWIFT_JOBS=3`, copies it over SSH with tar, verifies its signature before touching anything, quits the running host (SIGTERM, then SIGKILL), swaps it into `/Applications` (the old one becomes `Porthole Host.app.previous` only once the new one answers; if it doesn't, the old one is put back and restarted), restarts the watchdog agent with `launchctl kickstart -k` so it runs the new binary, waits for `/hello`, checks exactly one host runs and prints `porthole doctor`. `--dry-run` prints every step without building or contacting the mini; `--no-build` installs the bundle already in `dist/`. `MINI_HOST`, `MINI_USER` and `MINI_KEY` change the target.
+`scripts/deploy-mini.sh` checks the mini answers SSH (and stops with a clear message if not), builds `dist/Porthole.app` under the build lock with `SWIFT_JOBS=3`, copies it over SSH with tar, verifies its signature before touching anything, quits the running host (SIGTERM, then SIGKILL), installs it as `/Applications/Porthole.app` with Share this Mac on (a tar of the previous apps is the rollback; if the new one doesn't answer, they are put back and restarted), restarts the watchdog agent with `launchctl kickstart -k` so it runs the new binary (or, coming from `Porthole Host.app`, boots out the old app's agent so the new app registers its own), removes the old `Porthole Host.app` once the new app answers, waits for `/hello`, checks exactly one host runs and prints `porthole doctor`. `--dry-run` prints every step without building or contacting the mini; `--no-build` installs the bundle already in `dist/`. `MINI_HOST`, `MINI_USER` and `MINI_KEY` change the target.
 
 ## Keep running
 
-Porthole Host's Settings… (⌘, in its menu) has "Keep Porthole Host running on this Mac", on by default. It registers a launch agent with ServiceManagement (`Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist`, shown in System Settings > General > Login Items as Porthole Host). The agent runs the host binary with `watchdog`, a small loop with no UI that:
+Porthole's Settings › Sharing (with Share this Mac on) has "Keep Porthole running on this Mac", on by default. It registers a launch agent with ServiceManagement (`Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist`, shown in System Settings > General > Login Items as Porthole Host). The agent runs the host binary with `watchdog`, a small loop with no UI that:
 
 - opens the host at login,
 - relaunches it when it disappears without saying why (`crash`),
