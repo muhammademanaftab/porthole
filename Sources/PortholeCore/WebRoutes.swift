@@ -41,10 +41,18 @@ public struct WebRoutes {
     public var onUnpair: ((PairedDevice) -> Void)?
     public var localSecret: String?
     public var localStatus: (() -> [String: Any])?
+    public var shares: ShareLinkStore?
+    public var guestControl: (() -> Bool)?
+    public var resolveWindow: ((String) -> WindowPick)?
+    public var shareAddresses: (() -> (lan: String?, tailnet: String?))?
+    public var httpPort: UInt16 = HostConfig.defaultHTTPPort
+    public var onSharesChanged: (() -> Void)?
+    public var onUnshare: ((ShareLink) -> Void)?
+    public var now: () -> Date = Date.init
     public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
-    static let mutatingPaths: Set<String> = ["/pair", "/pair/request", "/local/paircode", "/local/unpair"]
+    static let mutatingPaths: Set<String> = ["/pair", "/pair/request", "/local/paircode", "/local/unpair", "/local/share", "/local/unshare"]
 
     public init(password: String, livekitPort: Int, tokens: AccessToken, webRoot: URL?,
                 suffix: @escaping () -> String = { randomSecret(bytes: 3) }, pairing: PairingDesk? = nil, hostName: String = "Mac",
@@ -92,6 +100,7 @@ public struct WebRoutes {
             }
             return HTTPResponse("200 OK", "text/html; charset=utf-8", html)
         case "/token":
+            if let share = query["share"] { return guestToken(share, client: query["cid"], hostHeader: hostHeader) }
             let identity: String
             switch authorizeToken(query: query, password: password, verify: { id, secret in trust?.verify(id: id, secret: secret) }) {
             case .refused:
@@ -122,6 +131,56 @@ public struct WebRoutes {
             }
             return HTTPResponse("200 OK", Self.contentType(for: name), body)
         }
+    }
+
+    private func guestToken(_ token: String, client: String?, hostHeader: String) -> HTTPResponse {
+        guard let shares, let link = shares.verify(token) else {
+            return Self.json("403 Forbidden", ["error": "This link has expired or was turned off. Ask for a new one.", "expired": true])
+        }
+        let ttl = min(Self.viewerTokenTTL, link.expires.timeIntervalSince(now()))
+        guard ttl >= 1 else { return Self.json("403 Forbidden", ["error": "This link has expired. Ask for a new one.", "expired": true]) }
+        let identity = GuestIdentity.make(link: link.id, client: client)
+        let token = tokens.make(identity: identity, room: "porthole", canPublish: false, ttl: ttl)
+        var guest: [String: Any] = ["link": link.id, "label": link.label, "control": RemoteControlSwitch.controlsAtOnce(link, switchOn: guestControl?() ?? false),
+                                    "expires": ISO8601DateFormatter().string(from: link.expires), "host": hostName]
+        if let w = link.window { guest["window"] = w }
+        return Self.json("200 OK", ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token, "guest": guest])
+    }
+
+    public func mintShare(window target: String?, control: Bool, wifiOnly: Bool, ttl: TimeInterval?) -> HTTPResponse {
+        guard let shares else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        var window: UInt32?
+        var label = ShareLinks.pickerLabel
+        if let target, !target.trimmingCharacters(in: .whitespaces).isEmpty {
+            switch resolveWindow?(target) ?? .none {
+            case .found(let w):
+                window = w.id
+                label = w.portalTitle
+            case .none:
+                return Self.json("404 Not Found", ["error": "No shareable window matches \"\(target)\"."])
+            case .ambiguous(let list):
+                return Self.json("409 Conflict", ["error": "Several windows match \"\(target)\"; use the window ID.",
+                                                  "matches": list.map { ["id": $0.id, "app": $0.app, "title": $0.title] }])
+            }
+        }
+        guard let minted = shares.mint(window: window, label: label, control: control, ttl: ttl ?? ShareLinks.defaultTTL) else {
+            return Self.json("500 Internal Server Error", ["error": "The host couldn't save the link."])
+        }
+        let addrs: (lan: String?, tailnet: String?) = shareAddresses?() ?? (nil, nil)
+        let urls = ShareURLs.make(token: minted.token, window: window, lan: addrs.lan, tailnet: addrs.tailnet, port: httpPort, wifiOnly: wifiOnly)
+        onSharesChanged?()
+        var body = Self.linkJSON(minted.link)
+        body["links"] = urls.map { ["kind": $0.kind, "url": $0.url] }
+        body["allowRemoteControl"] = guestControl?() ?? false
+        if urls.isEmpty { body["warning"] = wifiOnly ? "This Mac has no Wi-Fi or local network address." : "This Mac has no local network or tailnet address." }
+        return Self.json("200 OK", body)
+    }
+
+    static func linkJSON(_ l: ShareLink) -> [String: Any] {
+        var o: [String: Any] = ["id": l.id, "label": l.label, "control": l.control,
+                                "expires": ISO8601DateFormatter().string(from: l.expires), "created": ISO8601DateFormatter().string(from: l.created)]
+        if let w = l.window { o["window"] = w }
+        return o
     }
 
     private func pair(_ code: String, device: String?, name: String?) -> HTTPResponse {
@@ -162,6 +221,26 @@ public struct WebRoutes {
         guard allowed, let pairing, let trust else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
         let query = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         switch comps.path {
+        case "/local/share":
+            return mintShare(window: query["window"], control: query["control"] == "1", wifiOnly: query["wifi"] == "1",
+                             ttl: query["ttl"].flatMap(TimeInterval.init))
+        case "/local/shares":
+            guard let shares else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+            return Self.json("200 OK", ["links": shares.links().map(Self.linkJSON), "allowRemoteControl": guestControl?() ?? false])
+        case "/local/unshare":
+            guard let shares else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+            let id = query["id"] ?? ""
+            if id == "all" {
+                let gone = shares.links()
+                shares.revokeAll()
+                for l in gone { onUnshare?(l) }
+                onSharesChanged?()
+                return Self.json("200 OK", ["revoked": gone.count])
+            }
+            guard let gone = shares.revoke(id: id) else { return Self.json("404 Not Found", ["error": "No share link has the ID \"\(id)\"."]) }
+            onUnshare?(gone)
+            onSharesChanged?()
+            return Self.json("200 OK", Self.linkJSON(gone))
         case "/local/paircode":
             let current = pairing.currentOrIssue()
             var body: [String: Any] = ["code": current.code, "seconds": current.secondsLeft]

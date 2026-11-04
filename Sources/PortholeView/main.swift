@@ -21,6 +21,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var connectWindow: ConnectWindow?
     let discovery = HostDiscovery()
     var openObserver: NSObjectProtocol?
+    var pendingRecent: RecentPortal?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         setUpMainMenu()
@@ -75,6 +76,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let typed = edit.addItem(withTitle: "Paste as Keystrokes", action: #selector(InputCaptureView.pasteAsKeystrokes(_:)), keyEquivalent: "v")
+        typed.keyEquivalentModifierMask = [.command, .option, .shift]
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.addItem(.separator())
         edit.addItem(withTitle: "Find…", action: #selector(PickerWindow.performFindPanelAction(_:)), keyEquivalent: "f")
@@ -137,6 +140,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         w.cancelQuits = connection == nil
         if let address { w.fill(address) }
         if let ask { w.ask(ask) }
+        w.showRecents(RecentPortals.forConnect(RecentPortals.load(in: portholeSupportDirectory())))
         discovery.start()
         w.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -159,11 +163,31 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         w.onSubmit = { [weak self] address, name, secret in self?.submit(address: address, name: name, secret: secret) }
         w.onRequestPairing = { [weak self] address, name in self?.requestPairing(address: address, name: name) }
+        w.onRecent = { [weak self] p in self?.reopenRecent(p) }
         return w
     }
 
     func askText(_ name: String?, _ address: String) -> String {
         "Type the pairing code from \(name ?? address): on that Mac, click the Porthole Host menu-bar icon and choose Pair a New Viewer…. Its password works too."
+    }
+
+    func reopenRecent(_ p: RecentPortal) {
+        VLog.info("recent: reopening \(p.app) — \(p.title) on \(p.hostName) (\(p.host))")
+        if let c = connection, RecentPortals.sameHost(c.hostAddress, p.host) {
+            pendingRecent = p
+            connectWindow?.close()
+            discovery.stop()
+            picker?.makeKeyAndOrderFront(nil)
+            c.requestList()
+            return
+        }
+        guard let (cred, id) = PasswordStore.credential(for: p.host) else {
+            connectWindow?.fill(p.host)
+            requestPairing(address: p.host, name: p.hostName)
+            return
+        }
+        pendingRecent = p
+        startConnection(address: p.host, name: p.hostName, credential: cred, saved: true, hostID: id)
     }
 
     func requestPairing(address: String, name: String?) {
@@ -209,6 +233,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             w.setBusy(false)
             switch reply {
             case .paired(let deviceSecret, let id, let hostName):
+                Sounds.play(.paired)
                 let key = hostKeyForTrust(hostID: id, address: address)
                 guard PasswordStore.savePairing(hostID: key, name: hostName ?? name ?? address, address: address, secret: deviceSecret) else {
                     w.showError("Paired, but the Keychain refused to keep the pairing. Try again.")
@@ -217,7 +242,9 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 startConnection(address: address, name: name ?? hostName, credential: .device(id: device.id, secret: deviceSecret),
                                 saved: true, hostID: key)
             case .password(let pw): startConnection(address: address, name: name, credential: .password(pw), saved: false)
-            case .refused(let why): w.showError(why)
+            case .refused(let why):
+                Sounds.play(.pairingFailed)
+                w.showError(why)
             }
         }
     }
@@ -239,6 +266,8 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         connection = c
         c.muted = muted
         let picker = PickerWindow(hostName: name ?? host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
+        picker.hostAddress = host
+        picker.recents = { RecentPortals.load(in: portholeSupportDirectory()) }
         self.picker = picker
         picker.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -337,6 +366,13 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     }
 
     func autoOpen(_ list: [WindowInfo]) {
+        if let p = pendingRecent, let c = connection, RecentPortals.sameHost(c.hostAddress, p.host) {
+            pendingRecent = nil
+            if let w = RecentPortals.match(p, in: list) { open(w) } else {
+                picker?.showError("\(RecentPortals.chipTitle(p)) isn't open on \(p.hostName) any more.")
+            }
+            return
+        }
         guard let info = autoOpenWindow(autoOpenMatch, in: list) else { return }
         autoOpenMatch = nil
         open(info)
@@ -351,6 +387,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         let portal = PortalWindow(windowID: info.id, title: info.portalTitle, subtitle: hostName, app: info.app,
                                   size: CGSize(width: info.w, height: info.h), connection: c)
         portal.onClose = { [weak self] in
+            Sounds.play(.portalClosed)
             self?.connection?.close(info.id)
             self?.portals[info.id] = nil
             self?.tiles.remove(info.id)
@@ -422,6 +459,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             guard let portal else { return }
             if fit, let w = reply.w, let h = reply.h { portal.fit(remote: CGSize(width: w, height: h)) }
             portal.attach(track)
+            if fit { Sounds.play(.portalOpened) }
         }
         let host = hostName
         let attempt = portal.beginRequest()

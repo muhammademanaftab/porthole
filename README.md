@@ -30,6 +30,14 @@ Set `SIGN_ID` to a code-signing identity so macOS keeps Screen Recording and Acc
 2. Copy the browser link or password from its menu-bar icon.
 3. On another Mac: open Porthole. The Connect window lists hosts found with Bonjour (same network) and Tailscale (online macOS peers answering `/hello`). A host this Mac hasn't paired with shows a padlock; picking it asks that host to show a 6-digit code on its screen (valid 2 minutes, single use, 5 tries). Type the code once and this Mac may view that host from then on, with no password. Pairing is one way. `open dist/Porthole.app --args <host> <password>` still works, or open the link in a browser.
 
+## Typing text
+
+Typed keys travel as key codes so shortcuts work. Committed text travels as text instead: dictation, the emoji and symbols palette, input methods (Japanese, Chinese, Korean and other IMEs, where the viewer's text system composes and only the result is sent), and Edit › Paste as Keystrokes (⌥⇧⌘V), which types the viewer's clipboard into the shared window without touching the host's clipboard. The host types it in key events carrying up to 200 UTF-16 units each, split only between characters (a flag or a family emoji is never cut) and with each line break sent as Return. `PORTHOLE_TEXT_BATCH=0` types one key pair per character, for an app that mishandles a key event carrying more than one character; a number sets the units per event (at most 2000). Measured on macOS 26 with `CGEventKeyboardSetUnicodeString` posted to the HID event tap: 1 to 16000 units per event arrived exactly in an AppKit text view, and 200 to 2000 in a WebKit text area; the old 20-unit limit is gone. 200 is the default because it is what a similar app ships and leaves a wide margin for apps that were not measured. One text message carries at most 4000 units (the viewer splits longer text), and the host types at most 20000 units from one message.
+
+## Sound effects
+
+Porthole (the viewer) plays a quiet system sound when a shared window opens (Pop) or closes (Bottle), and when pairing works (Glass) or a code is refused (Basso). Settings › General › Sound Effects, on by default; `PORTHOLE_SOUNDS=0` silences every cue for one run and `PORTHOLE_SOUNDS=1` plays them with the setting off. macOS's own "Play user interface sound effects", when off, silences them too.
+
 ## Pairing
 
 Trust is per Mac. Each Mac has a device ID in `~/Library/Application Support/Porthole/identity.json`. The host keeps the Macs paired with it in `paired.json` (0600, secrets stored as SHA-256); the viewer keeps each host's secret in the Keychain. The host menu has Pair a New Viewer… (a code for whoever types it first) and Paired Macs… (Unpair removes a Mac and disconnects it at once). The viewer only sends a host's secret to the address it paired at. A request never replaces another Mac's pending code, and every 10 wrong codes pause pairing (1 minute, doubling up to a day; kept in `pairing-budget.json` across restarts). Viewer tokens last 10 minutes; messages from an unpaired Mac are ignored and it is disconnected. Pairing needs this version of the viewer: `/pair` no longer hands out the password. The CLI talks to the running host on 127.0.0.1 with the per-launch secret in `local-secret` (0600).
@@ -44,6 +52,24 @@ porthole-view pair <host> <code>
 
 Run them from the app bundles (`"/Applications/Porthole Host.app/Contents/MacOS/porthole-host" paircode`) so the Keychain recognises the binary. Pairing requests also print their code to the host's standard output; `PORTHOLE_PAIR_HEADLESS=1` prints it without opening the window. `PORTHOLE_HOME` moves the host's and viewer's state folder (for a second, isolated instance).
 
+## Share links (guests)
+
+A share link lets someone without a paired Mac or the password watch one window, or pick among this Mac's windows, in a browser. Porthole Host's menu has Share Window…, Share Picker…, Shared Links… and the Allow Remote Control switch; on the command line:
+
+```
+porthole share [window] [--control] [--wifi] [--ttl 2h]   # window = ID or part of "App Title"; none = the picker
+porthole share --list
+porthole share --revoke <id|all>
+```
+
+- Each link carries its own random token (24 bytes, only its SHA-256 is kept in `share-links.json`, 0600), never the host password. It works for 24 hours unless `--ttl` (1 minute to 30 days) or the menu says otherwise, and is revoked from Shared Links… or `--revoke`; revoking or expiry disconnects its guests at once (a timer fires at the exact expiry; a 15 s sweep backs it up).
+- Two links are printed: one for this Mac's Wi-Fi or local network address, which a phone on the same network can open, and one for its tailnet address. `--wifi` prints the Wi-Fi link alone.
+- A link is view only unless made with `--control` (Guests may type and click). Allow Remote Control, off by default, is one switch for every link: on, a control link may type and click at once and a view-only guest's Ask to Control is answered yes at once; off, every link watches and a guest's ask shows a prompt on the host (a floating panel, the menu's Asking to Control section and Shared Links…). `PORTHOLE_SHARE_ALLOW_CONTROL=0|1` sets it for one run without saving.
+- The host enforces all of it, whatever the page sends: a guest's LiveKit identity is `guest-<link>-<client>`; key, text, mouse, scroll and resize messages from a guest without control are dropped and logged (`[trust] guest …: dropped …`); a window link lists, opens, gets icons for and can subscribe to only its window and that window's dialogs (LiveKit track subscription permissions: while a guest is in the room only paired Macs and password viewers see every track); the mixed app sound reaches a window guest only while no other window is shared; guests never get the host clipboard, can set it only while controlling, get thumbnails only on picker links, can't pair, can't restart the host. The Mac viewer ignores data messages from anyone but the host.
+- The browser page in guest mode sends no input while view only and shows Ask to Control in its bar. One Ask panel per link at a time, with a 30 s cooldown after it closes; further asks wait in the menu and Shared Links…. The Ask panel, Share and Shared Links windows and Paired Macs ignore events the host injected, so a controlling guest can never click Allow for itself.
+- While any link is live, and for 11 minutes after the last one is revoked or expires (the guest token lifetime plus a minute), LiveKit subscriptions are closed by default and granted per participant; paired Macs and password viewers keep every track.
+- Known limitation: guests can see the LiveKit identities in the room, which carry viewers' Mac names (and device IDs for paired Macs).
+
 ## Command line
 
 Both app bundles carry the same `porthole` command in `Contents/MacOS`. `scripts/install-cli.sh` symlinks it into `~/bin` (or `/usr/local/bin`, or `--dir DIR`); nothing is installed unless you run it.
@@ -57,12 +83,13 @@ porthole trail [minutes] [--since 2h] [--all]   # stage, park/unpark, open/close
 porthole why-quit [n]                # last n host runs: start, end, uptime, pid, and why it ended
 porthole report [--out path] [--since 1d]       # ~/Desktop/Porthole-Report-<date>.zip, secrets scrubbed, nothing uploaded
 porthole env [--set] [--json]        # every PORTHOLE_* flag with meaning, default and current value
+porthole share [window] [--control] [--wifi] | share --list | share --revoke <id|all>   # guest links (asks the running host)
 porthole machines | ls <host> | open <host> <windowID|title> | recent [n]   # run through porthole-view
 porthole paircode | devices | unpair <who> | request <host> | pair <host> <code>
 porthole version
 ```
 
-Logs live in `~/Library/Logs/Porthole/`: `host.log` (the host and its watchdog) and `viewer.log`, each rotated at 10 MB with three old generations. Lines read `<UTC time> <level> <role>:<pid> [<category>] <text>`; older lines without the prefix still parse. `PORTHOLE_LOG=debug` turns on debug lines for one process. The doctor asks the running host over `/local/status` on 127.0.0.1 with the local secret, so permissions are the host's, not the terminal's. The viewer records the last 20 portals in `recent-portals.json`; `recent n` reopens one, matching the window again by ID, or app and title. `open` and `recent n` hand the window to Porthole when it is already running (switching it to that host if needed) and start Porthole only when it isn't. `why-quit` calls a run a crash only when a matching crash report exists; a run that vanished with no exit marker and no report is listed as gone without a trace. `porthole report` masks passwords, tokens and secrets (and any unknown `PORTHOLE_*` variable named like one) and shortens 16-character device IDs.
+Logs live in `~/Library/Logs/Porthole/`: `host.log` (the host and its watchdog) and `viewer.log`, each rotated at 10 MB with three old generations. Lines read `<UTC time> <level> <role>:<pid> [<category>] <text>`; older lines without the prefix still parse. `PORTHOLE_LOG=debug` turns on debug lines for one process. The doctor asks the running host over `/local/status` on 127.0.0.1 with the local secret, so permissions are the host's, not the terminal's. The viewer records the last 20 portals in `recent-portals.json`. The picker shows a Recent row above the windows (up to 6 of this host's recent portals that are open now, matched again by window ID or app and title; hidden while searching) and the Connect window shows the last 5 across hosts; one click reopens the window, connecting to its host first with the saved pairing or password when needed. `recent n` reopens one, matching the window again by ID, or app and title. `open` and `recent n` hand the window to Porthole when it is already running (switching it to that host if needed) and start Porthole only when it isn't. `why-quit` calls a run a crash only when a matching crash report exists; a run that vanished with no exit marker and no report is listed as gone without a trace. `porthole report` masks passwords, tokens and secrets (and any unknown `PORTHOLE_*` variable named like one) and shortens 16-character device IDs.
 
 ## Whole Mac
 

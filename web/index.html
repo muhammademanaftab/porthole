@@ -83,7 +83,9 @@
   #bar .sep { width: 1px; height: 16px; background: rgba(255,255,255,.2); }
   #bar button { padding: 4px 10px; border-radius: 7px; border: 0; background: rgba(255,255,255,.1); color: inherit; cursor: pointer; white-space: nowrap; font-size: 12px; }
   #bar button:hover, #bar button:focus-visible { background: rgba(255,255,255,.2); outline: none; }
-  #snd, #clip { display: none; }
+  #snd, #clip, #ask { display: none; }
+  #ask { background: var(--accent) !important; }
+  #ask:disabled { opacity: .7; cursor: default; }
   #snd.ask { background: var(--accent); }
   #overlay { position: fixed; inset: 0; z-index: 2; display: none; place-items: center; background: rgba(0,0,0,.55); }
   #overlay.on { display: grid; }
@@ -125,6 +127,7 @@
     <span id="wtitle">Porthole</span>
     <button id="snd" title="Turn the app's sound on or off in this tab">Sound on</button>
     <button id="clip" title="Copy the Mac's clipboard to this computer">Copy here</button>
+    <button id="ask" title="Ask the Mac's owner to let you type and click in this window">Ask to Control</button>
     <button id="fit" title="Resize the window on the Mac to fill this tab">Fit to tab</button>
   </div>
   <div id="overlay"><div class="hud"><div class="spinner" id="ospin"></div><h2 id="otitle"></h2><p id="otext"></p><div class="actions" id="oacts" hidden><a class="btn" id="oback" href="?">All Windows</a><button class="btn primary" id="oretry">Try Again</button></div></div></div>
@@ -136,6 +139,8 @@
 const LK = window.LivekitClient;
 const params = new URLSearchParams(location.search);
 const winId = params.get('win') ? Number(params.get('win')) : null;
+const share = params.get('share');
+let guest = null, controlling = false, asking = false;
 const $ = (id) => document.getElementById(id);
 const isMac = /Mac/.test(navigator.platform);
 let room, hostP, listed = false, opened = false, firstFrame = false;
@@ -196,15 +201,40 @@ function imageHandler(store, type, after) {
   };
 }
 
+function guestCid() {
+  let cid = sessionStorage.getItem('cid');
+  if (!cid) { cid = PC.clientId(window.crypto); sessionStorage.setItem('cid', cid); }
+  return cid;
+}
+
 async function connect(pw) {
   setLink('Connecting…');
-  const r = await fetch(`/token?pw=${encodeURIComponent(pw)}&name=browser`);
+  const r = await fetch(PC.tokenPath(share ? { share, cid: guestCid() } : { pw }));
+  if (share && r.status === 403) {
+    const why = PC.linkRefusal(r.status, await r.json().catch(() => null)) || 'This link was refused.';
+    sessionStorage.removeItem('reconnects');
+    setLink('Link not valid', 'bad');
+    listError = why;
+    if (winId) { $('picker').style.display = 'none'; $('stage').style.display = 'block'; overlay('failed', why); $('oretry').hidden = true; }
+    else render();
+    return;
+  }
   if (r.status === 403) { sessionStorage.removeItem('reconnects'); showPassword('That password was refused. Try again.'); return; }
   if (!r.ok) throw new Error(`the host answered HTTP ${r.status}`);
-  sessionStorage.setItem('pw', pw);
-  $('back').href = PC.pickerLink(pw);
+  const reply = await r.json();
+  const { url, token } = reply;
+  if (share) {
+    guest = reply.guest || {};
+    controlling = !!guest.control;
+    if (guest.window && !winId) { location.replace(PC.guestWindowLink(share, guest.window)); return; }
+    $('back').href = PC.guestPickerLink(share);
+    if (guest.window) { $('back').hidden = true; $('oback').hidden = true; }
+  } else {
+    sessionStorage.setItem('pw', pw);
+    $('back').href = PC.pickerLink(pw);
+  }
   $('oback').href = $('back').href;
-  const { url, token } = await r.json();
+  showGuest();
   room = new LK.Room({ adaptiveStream: false, dynacast: false });
   room.on(LK.RoomEvent.DataReceived, onData);
   room.registerTextStreamHandler(PC.CLIP_TOPIC, async (reader, info) => {
@@ -236,11 +266,18 @@ function requestList() {
 }
 
 function onData(payload, participant, kind, topic) {
-  if (topic !== 'porthole') return;
+  if (topic !== 'porthole' || !participant || participant.identity !== 'host') return;
   const m = JSON.parse(new TextDecoder().decode(payload));
   if (m.t === 'windows') { listed = true; gotList(m.list || []); }
   else if (m.t === 'opened' && m.win === winId && !opened) { opened = true; subscribe(m.track); if (PC.isAudioTrack(m.audio)) listen(m.audio); }
   else if (m.t === 'closed' && m.win === winId) overlay('closed');
+  else if (m.t === 'control') {
+    const was = controlling;
+    controlling = !!m.on; asking = false; showGuest();
+    if (m.msg) toast(m.msg, true);
+    else if (controlling && !was) toast('You may type and click in this window now.');
+    else if (!controlling && was) toast('Control was turned off. You can keep watching.', true);
+  }
   else if (m.t === 'error') {
     if (winId && m.win === winId && !opened) overlay('failed', m.msg);
     else if (winId) toast(m.msg, true);
@@ -303,7 +340,7 @@ function render() {
   $('list').replaceChildren(...shown.map(w => {
     const a = document.createElement('a');
     a.className = 'card'; a.target = '_blank'; a.dataset.id = w.id;
-    a.href = PC.windowLink(pw, w.id);
+    a.href = share ? PC.guestWindowLink(share, w.id) : PC.windowLink(pw, w.id);
     a.title = PC.portalTitle(w);
     a.innerHTML = '<div class="shot"></div><div class="meta"><span class="blank"></span><div><b></b><span></span></div></div>';
     a.querySelector('b').textContent = w.title || w.app;
@@ -394,7 +431,29 @@ function subscribe(trackName) {
 $('video').addEventListener('loadeddata', () => {
   firstFrame = true;
   if (phase === 'opening' || phase === 'reconnecting') overlay(null);
-  toast('Connected. Click the window to control it.');
+  toast(PC.guestNotice(guest, controlling), !!guest && !controlling);
+});
+
+const allowed = () => PC.mayInput(guest, controlling);
+function viewOnly() {
+  showBar(5000);
+  toast(asking ? 'Waiting for the host to answer.' : 'View only. Choose Ask to Control to type and click.');
+}
+function showGuest() {
+  const b = PC.askButton(guest, controlling, asking);
+  $('ask').style.display = b.show ? 'inline-block' : 'none';
+  $('ask').textContent = b.text;
+  $('ask').disabled = b.disabled;
+  $('fit').style.display = allowed() ? '' : 'none';
+  if (b.show) showBar(6000);
+}
+$('ask').addEventListener('click', e => {
+  e.stopPropagation();
+  if (!room || controlling || asking) return;
+  asking = true; showGuest();
+  send({ t: 'ask', win: winId });
+  toast('Asked the host. You can keep watching meanwhile.');
+  video.focus();
 });
 
 let barTimer;
@@ -466,20 +525,24 @@ const pointer = PC.createPointer(winId, isMac);
 video.addEventListener('contextmenu', e => e.preventDefault());
 video.addEventListener('pointerdown', e => {
   unlockSound();
+  if (!allowed()) { viewOnly(); return; }
   const out = pointer.down(e, geom(), performance.now()); if (!out) return;
   video.focus(); video.setPointerCapture(e.pointerId);
   send(out.msg, out.reliable);
   e.preventDefault();
 });
 function pointerUp(e) {
+  if (!allowed()) return;
   const out = pointer.up(e, geom()); if (out) send(out.msg, out.reliable);
 }
 video.addEventListener('pointerup', e => { pointerUp(e); if (e.pointerType === 'touch') toggleBar(); });
 video.addEventListener('pointercancel', pointerUp);
 video.addEventListener('pointermove', e => {
+  if (!allowed()) return;
   const out = pointer.move(e, geom(), performance.now()); if (out) send(out.msg, out.reliable);
 });
 video.addEventListener('wheel', e => {
+  if (!allowed()) return;
   const p = norm(e); if (!p) return;
   const { dx, dy } = PC.scrollDelta(e);
   send({ t: 'scroll', win: winId, x: p.x, y: p.y, dx, dy });
@@ -490,6 +553,7 @@ const swallowedUp = new Set();
 function onKey(e, down) {
   if (!winId || !room) return;
   if (down) unlockSound();
+  if (!allowed()) { if (down && !e.repeat && !e.metaKey && !e.ctrlKey) viewOnly(); return; }
   const r = PC.keyMessages(e, down, isMac, winId, swallowedUp);
   if (r.prevent) e.preventDefault();
   for (const m of r.send) send(m);
@@ -517,7 +581,7 @@ $('clip').addEventListener('click', e => {
   video.focus();
 });
 window.addEventListener('paste', async e => {
-  if (!winId) return;
+  if (!winId || !allowed()) return;
   e.preventDefault();
   const s = e.clipboardData.getData('text');
   if (!room || !PC.clipFits(s)) return;
@@ -530,7 +594,7 @@ window.addEventListener('paste', async e => {
 });
 
 if (PC.isScreenId(winId)) $('fit').hidden = true;
-function fitToTab() { if (winId && room) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); toast('Resized the window to fit this tab.'); } }
+function fitToTab() { if (winId && room && allowed()) { send({ t: 'resize', win: winId, w: innerWidth, h: innerHeight }); toast('Resized the window to fit this tab.'); } }
 $('fit').addEventListener('click', e => { e.stopPropagation(); fitToTab(); video.focus(); });
 
 function showPassword(msg) {
@@ -542,9 +606,11 @@ function showPassword(msg) {
 }
 $('pwform').addEventListener('submit', e => { e.preventDefault(); $('pwform').hidden = true; $('notice').hidden = false; connect($('pw').value); });
 
-const pw = params.get('pw') || sessionStorage.getItem('pw');
-if (pw) connect(pw).catch(err => {
-  if (sessionStorage.getItem('reconnects')) scheduleReconnect(0, 0); else showPassword('Could not connect: ' + err.message);
+const pw = share ? null : params.get('pw') || sessionStorage.getItem('pw');
+if (share || pw) connect(pw).catch(err => {
+  if (sessionStorage.getItem('reconnects')) scheduleReconnect(0, 0);
+  else if (share) { listError = 'Could not connect: ' + err.message; if (winId) overlay('failed', listError); else render(); }
+  else showPassword('Could not connect: ' + err.message);
 }); else showPassword();
 </script>
 </body>

@@ -36,6 +36,17 @@ final class HostRoom: NSObject, RoomDelegate {
     var onChange: (() -> Void)?
     var accepts: ((String) -> Bool)?
     var onRestart: ((String, Bool) -> String?)?
+    var guestLink: ((String) -> ShareLink?)?
+    var guestControlSwitch: () -> Bool = { false }
+    var shareLinksExist: () -> Bool = { false }
+    var onGuestAsk: ((String, ShareLink) -> Void)?
+    var onGuestRefused: ((String) -> Void)?
+    var onGuestsChanged: (() -> Void)?
+    private(set) var controlling: Set<String> = []
+    private(set) var asking: [String: ShareLink] = [:]
+    private var guestsSeen: Set<String> = []
+    private var trackSender = TrackPlanSender()
+    private var trackRetry: Task<Void, Never>?
     private(set) var isConnected = false
 
     var openWindowCount: Int { parentIDs.count }
@@ -67,7 +78,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private func pollClipboard() {
         let pb = NSPasteboard.general
         guard let text = clip.outgoing(changeCount: pb.changeCount, text: { pb.string(forType: .string) }) else { return }
-        let to = registry.activeViewers
+        let to = registry.activeViewers.filter { !GuestIdentity.isGuest($0) }
         guard !to.isEmpty else { return }
         Log.info("clipboard: sending \(text.utf8.count) bytes to \(to.count) viewer(s)")
         let opts = StreamTextOptions(topic: clipboardTopic, destinationIdentities: to.map { Participant.Identity(from: $0) })
@@ -77,7 +88,14 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     private func clipboardReceived(_ text: String, from who: String) {
-        guard accepts?(who) ?? true, registry.activeViewers.contains(who), clip.incoming(text) else { return }
+        guard accepts?(who) ?? true, registry.activeViewers.contains(who) else { return }
+        if GuestIdentity.isGuest(who) {
+            guard let link = guestLink?(who), GuestAccess.allows(.clipboardFromGuest, link: link, controlling: controlling.contains(who)) else {
+                Log.info("clipboard: dropped \(text.utf8.count) bytes from view-only guest \(who)", .trust)
+                return
+            }
+        }
+        guard clip.incoming(text) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
@@ -133,7 +151,15 @@ final class HostRoom: NSObject, RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
-        Log.info("viewer joined: \(participant.identity?.stringValue ?? "?")")
+        let who = participant.identity?.stringValue ?? "?"
+        Log.info("viewer joined: \(who)")
+        Task { @MainActor in
+            await self.updateTrackPermissions()
+            if GuestIdentity.isGuest(who), self.guestLink?(who) == nil {
+                Log.info("guest \(who) has no live share link; disconnecting it", .trust)
+                self.onGuestRefused?(who)
+            }
+        }
     }
 
     nonisolated func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
@@ -148,6 +174,13 @@ final class HostRoom: NSObject, RoomDelegate {
             for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
             for id in self.registry.releaseAll(by: who) { await self.stopSession(id) }
             self.applyPrefs()
+            if GuestIdentity.isGuest(who) {
+                self.controlling.remove(who)
+                self.asking[who] = nil
+                self.guestsSeen.remove(who)
+                self.onGuestsChanged?()
+            }
+            await self.updateTrackPermissions()
         }
     }
 
@@ -162,13 +195,34 @@ final class HostRoom: NSObject, RoomDelegate {
 
     private func handle(_ m: Message, from who: String) async {
         if m.t != .mouse && m.t != .key { Log.info("\(m.t.rawValue) from \(who)") } else { Log.debug("\(m.t.rawValue) from \(who) win \(m.win ?? 0)") }
+        var guest: ShareLink?
+        if GuestIdentity.isGuest(who) {
+            guard let link = guestLink?(who) else {
+                Log.info("guest \(who): its share link expired or was revoked; dropped \(m.t.rawValue) and disconnecting it", .trust)
+                onGuestRefused?(who)
+                return
+            }
+            guest = link
+            await noteGuest(who, link)
+            let tracker = tracker
+            guard let request = GuestAccess.request(for: m, parent: { tracker.parent(of: $0) }),
+                  GuestAccess.allows(request, link: link, controlling: controlling.contains(who)) else {
+                Log.info("guest \(who): dropped \(m.t.rawValue)\(m.win.map { " for window \($0)" } ?? "") (link \(link.id), \(controlling.contains(who) ? "controlling" : "view only"))", .trust)
+                if m.t == .open {
+                    var reply = Message(.error); reply.win = m.win; reply.msg = "This link doesn't share that window."
+                    await send(reply, to: who)
+                }
+                return
+            }
+            if m.t == .ask { await guestAsked(who, link); return }
+        }
         switch m.t {
         case .list:
             var reply = Message(.windows)
             Power.wakeDisplay()
             do {
                 let windows = try await WindowCatalog.list()
-                reply.list = screenEntries(for: who) + windows
+                reply.list = guest.map { GuestAccess.visible(windows, link: $0) } ?? (screenEntries(for: who) + windows)
                 if windows.isEmpty, Session.isScreenLocked {
                     Log.info("screen is locked; no windows to list")
                     var warn = Message(.error); warn.msg = Session.lockedListMessage
@@ -297,6 +351,7 @@ final class HostRoom: NSObject, RoomDelegate {
                 if audio.isLive { reply.audio = Message.audioTrackName }
             }
             if let live = LiveWindow.lookup(id) { reply.w = live.bounds.width; reply.h = live.bounds.height }
+            await updateTrackPermissions()
             await send(reply, to: who)
             await warnIfLocked(who)
         } catch {
@@ -339,6 +394,7 @@ final class HostRoom: NSObject, RoomDelegate {
         if sessions.isEmpty { stage.becameEmpty() }
         applyPrefs()
         onChange?()
+        await updateTrackPermissions()
     }
 
     func windowClosed(_ id: UInt32) async {
@@ -463,6 +519,104 @@ final class HostRoom: NSObject, RoomDelegate {
         Log.info("screen is locked; warning \(who)")
         var m = Message(.error); m.msg = Session.lockedMessage
         await send(m, to: who)
+    }
+
+    private func noteGuest(_ who: String, _ link: ShareLink) async {
+        guard !guestsSeen.contains(who) else { return }
+        guestsSeen.insert(who)
+        Log.info("guest \(who) on link \(link.id) (\(link.isPicker ? "picker" : "window \(link.window ?? 0)"), \(link.control ? "control link" : "view-only link"))", .trust)
+        if RemoteControlSwitch.controlsAtOnce(link, switchOn: guestControlSwitch()) {
+            await setControl(who, true, why: "control link and Allow Remote Control is on")
+        } else {
+            await sendControlState(who)
+        }
+        onGuestsChanged?()
+    }
+
+    private func guestAsked(_ who: String, _ link: ShareLink) async {
+        switch RemoteControlSwitch.answer(ask: link, switchOn: guestControlSwitch(), controlling: controlling.contains(who)) {
+        case .alreadyControlling: await sendControlState(who)
+        case .granted: await setControl(who, true, why: "asked, and Allow Remote Control is on")
+        case .prompt:
+            guard asking[who] == nil else { return }
+            Log.info("guest \(who) asks to control (link \(link.id)); waiting for the host", .trust)
+            asking[who] = link
+            onGuestAsk?(who, link)
+            onGuestsChanged?()
+        }
+    }
+
+    func answerAsk(_ who: String, allow: Bool) {
+        Task {
+            guard asking.removeValue(forKey: who) != nil else { return }
+            if allow { await setControl(who, true, why: "the host allowed it") } else {
+                Log.info("guest \(who): the host refused control", .trust)
+                var m = Message(.control); m.on = false; m.msg = "The host didn't allow control. You can keep watching."
+                await send(m, to: who)
+            }
+            onGuestsChanged?()
+        }
+    }
+
+    func setControl(_ who: String, _ on: Bool, why: String) async {
+        if on { controlling.insert(who) } else {
+            controlling.remove(who)
+            input.releaseAllButtons()
+        }
+        asking[who] = nil
+        Log.info("guest \(who) \(on ? "may control now" : "is view only now") (\(why))", .trust)
+        await sendControlState(who)
+        onGuestsChanged?()
+    }
+
+    private func sendControlState(_ who: String) async {
+        var m = Message(.control); m.on = controlling.contains(who)
+        await send(m, to: who)
+    }
+
+    func controlSwitchChanged() {
+        Task {
+            let on = guestControlSwitch()
+            for who in guestIdentities {
+                guard let link = guestLink?(who) else { continue }
+                if on, asking[who] != nil || link.control { await setControl(who, true, why: "Allow Remote Control was turned on") }
+                if !on, controlling.contains(who) { await setControl(who, false, why: "Allow Remote Control was turned off") }
+            }
+        }
+    }
+
+    var guestIdentities: [String] {
+        room.remoteParticipants.keys.map(\.stringValue).filter(GuestIdentity.isGuest).sorted()
+    }
+
+    func updateTrackPermissions() async {
+        let participants = room.remoteParticipants.values.compactMap { p -> TrackGrantPlan.Participant? in
+            guard let sid = p.sid?.stringValue, let id = p.identity?.stringValue else { return nil }
+            return TrackGrantPlan.Participant(sid: sid, identity: id)
+        }
+        let tracks = room.localParticipant.trackPublications.values.map { TrackGrantPlan.Track(sid: $0.sid.stringValue, name: $0.name) }
+        let tracker = tracker
+        let links = Dictionary(participants.map { ($0.identity, guestLink?($0.identity)) }, uniquingKeysWith: { a, _ in a })
+        let plan = TrackGrantPlan.make(participants: participants, tracks: tracks, link: { links[$0] ?? nil },
+                                       parent: { tracker.parent(of: $0) }, sharedParents: Set(parentIDs), linksExist: shareLinksExist())
+        guard trackSender.shouldSend(plan) else { return }
+        trackSender.sending(plan)
+        let perms = plan.grants.map { ParticipantTrackPermission(participantSid: $0.participantSid, allTracksAllowed: $0.allTracks, allowedTrackSids: $0.trackSids) }
+        do {
+            try await room.localParticipant.setTrackSubscriptionPermissions(allParticipantsAllowed: plan.allParticipantsAllowed, trackPermissions: perms)
+            let guests = plan.grants.filter { !$0.allTracks }
+            Log.info(plan.allParticipantsAllowed ? "track permissions: every viewer may subscribe (no share links, no guests)"
+                     : "track permissions: \(plan.grants.count - guests.count) viewer(s) see every track, \(guests.count) guest(s) see \(guests.map { String($0.trackSids.count) }.joined(separator: ",")) track(s)", .trust)
+        } catch {
+            trackSender.failed()
+            Log.warn("track permissions update failed: \(error.localizedDescription); retrying in 1 s", .trust)
+            trackRetry?.cancel()
+            trackRetry = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.updateTrackPermissions()
+            }
+        }
     }
 
     func send(_ m: Message, to who: String) async {

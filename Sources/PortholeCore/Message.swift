@@ -24,6 +24,7 @@ public struct Message: Codable, Equatable, Sendable {
         case restart
         case sized
         case companion
+        case ask, control
     }
 
     public enum MouseKind: String, Codable, Sendable {
@@ -60,6 +61,7 @@ public struct Message: Codable, Equatable, Sendable {
     public var of: UInt32?
     public var pw: Double?
     public var ph: Double?
+    public var on: Bool?
 
     public init(_ t: Kind) { self.t = t }
 

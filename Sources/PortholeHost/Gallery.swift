@@ -14,7 +14,7 @@ enum HostGallery {
     }
 
     private static func settings(_ app: HostApp, tab: Int) {
-        let w = SettingsWindow(link: { "http://100.70.1.20:7878/?pw=gallery-password" }, password: { "gallery-password" }, trust: app.trust)
+        let w = SettingsWindow(link: { "http://100.70.1.20:7878/?pw=gallery-password" }, password: { "gallery-password" }, trust: app.trust, guests: app.guests)
         app.settingsWindow = w
         w.present(tab: tab)
     }

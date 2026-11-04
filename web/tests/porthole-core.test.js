@@ -357,7 +357,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'askButton', 'clientId', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'guestNotice', 'guestPickerLink', 'guestWindowLink', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'linkRefusal', 'mayInput', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'tokenPath', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)', 'normalize(', '.every(t']) {
     assert.equal(html.includes(copy), false, copy);
@@ -478,7 +478,7 @@ test('index.html probes the host before reloading and keeps retrying when connec
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   assert.match(html, /if \(await PC\.hostReachable\(fetch\)\) location\.reload\(\); else scheduleReconnect\(0, 0\);/);
   assert.match(html, /PC\.nextReconnectAttempt\(sessionStorage\.getItem\('reconnects'\), upForMs\)/);
-  assert.match(html, /if \(sessionStorage\.getItem\('reconnects'\)\) scheduleReconnect\(0, 0\); else showPassword/);
+  assert.match(html, /if \(sessionStorage\.getItem\('reconnects'\)\) scheduleReconnect\(0, 0\);\s+else if \(share\)[^\n]*\n\s+else showPassword/);
   const reloads = html.split('\n').filter(l => l.includes('location.reload()'));
   assert.equal(reloads.length, 2);
   assert.ok(reloads.some(l => l.includes("$('oretry').addEventListener('click'")));
@@ -599,3 +599,4 @@ test('whole mac screen ids match the Swift side', () => {
   assert.equal(core.isScreenId(0xFFFFFF00), true);
   assert.equal(core.isScreenId(0xFFFFFEFF), false);
 });
+require('./guest.test.js');

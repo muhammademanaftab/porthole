@@ -115,11 +115,20 @@ final class WholeMacPrompt {
     }
 }
 
-final class GuardedPanel: NSPanel {
+class GuardedPanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
-        if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == PortholeEventTag.value { return }
+        if PortholeEventTag.isInjected(event.cgEvent) { return }
         super.sendEvent(event)
     }
+
+    @MainActor
+    static func visibleFrames() -> [CGRect] {
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        return NSApp.windows.compactMap { $0 as? GuardedPanel }.filter(\.isVisible).map { guardedPanelRect($0.frame, primaryHeight: top) }
+    }
+
+    @MainActor
+    static var currentEventInjected: Bool { PortholeEventTag.isInjected(NSApp.currentEvent?.cgEvent) }
 }
 
 final class ClosureButton: NSButton {

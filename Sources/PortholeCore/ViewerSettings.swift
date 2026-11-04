@@ -16,10 +16,12 @@ public struct ViewerSettings: Equatable, Sendable {
     public var level: Double?
     public var hideTitleBar: Bool
     public var playSound: Bool
+    public var soundEffects: Bool
 
-    public init(bitrateKbps: Int? = nil, fps: Int? = nil, level: Double? = nil, hideTitleBar: Bool = false, playSound: Bool = true) {
+    public init(bitrateKbps: Int? = nil, fps: Int? = nil, level: Double? = nil, hideTitleBar: Bool = false, playSound: Bool = true,
+                soundEffects: Bool = true) {
         self.bitrateKbps = bitrateKbps; self.fps = fps; self.level = level
-        self.hideTitleBar = hideTitleBar; self.playSound = playSound
+        self.hideTitleBar = hideTitleBar; self.playSound = playSound; self.soundEffects = soundEffects
     }
 
     public init(lookup: (String) -> Any?) {
@@ -29,11 +31,13 @@ public struct ViewerSettings: Equatable, Sendable {
         if let n = (lookup(Self.levelKey) as? NSNumber)?.doubleValue, StreamPrefs.levels.contains(n) { level = n }
         if let b = lookup(Self.hideTitleBarKey) as? Bool { hideTitleBar = b }
         if let b = lookup(Self.playSoundKey) as? Bool { playSound = b }
+        soundEffects = SoundEffects.setting(lookup(SoundEffects.settingKey))
     }
 
     public var stored: [String: Any?] {
         [Self.bitrateKey: bitrateKbps, Self.fpsKey: fps, Self.levelKey: level,
-         Self.hideTitleBarKey: hideTitleBar, Self.playSoundKey: playSound]
+         Self.hideTitleBarKey: hideTitleBar, Self.playSoundKey: playSound,
+         SoundEffects.settingKey: soundEffects]
     }
 
     public func apply(to m: inout Message) {

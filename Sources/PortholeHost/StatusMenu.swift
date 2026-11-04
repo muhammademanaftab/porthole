@@ -10,6 +10,10 @@ struct HostMenuModel {
     var screenRecording: Bool
     var accessibility: Bool
     var paired: Int
+    var shareLinks = 0
+    var allowControl = false
+    var controlOverridden = false
+    var asks: [(who: String, label: String)] = []
 }
 
 @MainActor
@@ -50,6 +54,26 @@ enum StatusMenu {
             item.toolTip = window.pickerLabel
             menu.addItem(item)
         }
+
+        if !m.asks.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(NSMenuItem.sectionHeader(title: "Asking to Control"))
+            for ask in m.asks {
+                let allow = add(menu, "Allow Guest of \(ask.label)", #selector(HostApp.allowAsk(_:)), "", target, symbol: "hand.raised")
+                allow.representedObject = ask.who
+                let deny = add(menu, "Don't Allow", #selector(HostApp.denyAsk(_:)), "", target)
+                deny.representedObject = ask.who
+                deny.indentationLevel = 1
+            }
+        }
+
+        menu.addItem(.separator())
+        add(menu, "Share Window…", #selector(HostApp.shareWindow), "", target, symbol: "square.and.arrow.up")
+        add(menu, "Share Picker…", #selector(HostApp.sharePicker), "", target, symbol: "square.grid.2x2")
+        add(menu, m.shareLinks == 0 ? "Shared Links…" : "Shared Links (\(m.shareLinks))…", #selector(HostApp.showSharedLinks), "", target, symbol: "link.badge.plus")
+        let control = add(menu, m.controlOverridden ? "Allow Remote Control (set for this run)" : "Allow Remote Control", #selector(HostApp.toggleAllowControl), "", target)
+        control.state = m.allowControl ? .on : .off
+        control.toolTip = "One switch for every share link: on, control links may type and click and a guest who asks is let in at once; off, every link watches and guests ask you."
 
         menu.addItem(.separator())
         add(menu, "Pair a New Viewer…", #selector(HostApp.pairViewer), "p", target, symbol: "plus.circle")

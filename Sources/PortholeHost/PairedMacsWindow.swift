@@ -2,7 +2,7 @@ import AppKit
 import PortholeCore
 
 @MainActor
-final class PairedMacsWindow: NSPanel {
+final class PairedMacsWindow: GuardedPanel {
     private unowned let trust: HostTrust
     private let list = NSStackView()
     private let header = NSTextField(wrappingLabelWithString: "")
@@ -82,5 +82,8 @@ final class PairedMacsWindow: NSPanel {
 final class ClickAction: NSObject {
     private let fn: () -> Void
     init(_ fn: @escaping () -> Void) { self.fn = fn }
-    @objc func fire() { fn() }
+    @MainActor @objc func fire() {
+        guard !GuardedPanel.currentEventInjected else { Log.info("ignored a button press that came from a viewer's input", .trust); return }
+        fn()
+    }
 }

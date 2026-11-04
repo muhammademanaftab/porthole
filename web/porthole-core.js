@@ -110,6 +110,41 @@
 
   const pickerLink = (pw) => `?pw=${encodeURIComponent(pw)}`;
 
+  const guestWindowLink = (share, id) => `?share=${encodeURIComponent(share)}&win=${id}`;
+
+  const guestPickerLink = (share) => `?share=${encodeURIComponent(share)}`;
+
+  function tokenPath(cred) {
+    if (cred && cred.share) {
+      const cid = /^[0-9a-z]{6,24}$/.test(cred.cid || '') ? `&cid=${cred.cid}` : '';
+      return `/token?share=${encodeURIComponent(cred.share)}${cid}&name=browser`;
+    }
+    return `/token?pw=${encodeURIComponent((cred && cred.pw) || '')}&name=browser`;
+  }
+
+  function clientId(cryptoObj) {
+    const b = cryptoObj.getRandomValues(new Uint8Array(6));
+    return [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+
+  const mayInput = (guest, controlling) => !guest || !!controlling;
+
+  function askButton(guest, controlling, asking) {
+    if (!guest || controlling) return { show: false, text: '', disabled: true };
+    return asking ? { show: true, text: 'Asking\u2026', disabled: true } : { show: true, text: 'Ask to Control', disabled: false };
+  }
+
+  function guestNotice(guest, controlling) {
+    if (!guest) return 'Connected. Click the window to control it.';
+    return controlling ? 'Connected. You may type and click in this window.' : 'Connected, view only. Choose Ask to Control to type and click.';
+  }
+
+  function linkRefusal(status, body) {
+    if (status !== 403) return null;
+    if (body && body.expired) return body.error || 'This link has expired or was turned off.';
+    return null;
+  }
+
   const sizeLabel = (w, h) => `${Math.round(w)}\u00d7${Math.round(h)}`;
 
   function randomUUID(cryptoObj) {
@@ -233,5 +268,5 @@
   }
 
   return { THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick,
-    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
+    shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable };
 });

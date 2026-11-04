@@ -88,6 +88,7 @@ public enum CLICommand: Equatable, Sendable {
     case trail(TrailOptions)
     case whyQuit(Int)
     case report(ReportOptions)
+    case share(ShareOptions)
     case forward(CLITool, [String])
 }
 
@@ -103,6 +104,13 @@ Diagnostics
                                           zip logs, samples and readouts to ~/Desktop; nothing is uploaded
   env [--set] [--json]                    every PORTHOLE_* flag with its meaning, default and current value
   version
+
+Sharing (asks the running Porthole Host)
+  share [window] [--control] [--wifi] [--ttl dur] [--json]
+                                          browser links to one window (ID or part of its title) or to the
+                                          window picker: one for this Wi-Fi and one for the tailnet; view only
+                                          unless --control; --wifi prints the Wi-Fi link alone; 24h by default
+  share --list | --revoke <id|all>        the live share links; turn one (or all) off and disconnect its guests
 
 Viewing (runs Porthole's viewer)
   machines [--json]                       Porthole hosts on the tailnet and the local network
@@ -129,6 +137,7 @@ public func parseCLI(_ args: [String]) -> CLICommand {
     case "trail": return parseTrail(rest)
     case "why-quit", "whyquit": return parseWhyQuit(rest)
     case "report": return parseReport(rest)
+    case "share": return parseShare(rest)
     case "paircode", "devices":
         return rest.isEmpty ? .forward(.host, [first]) : .help(error: "\(first) takes no arguments")
     case "unpair":
@@ -151,6 +160,41 @@ public func parseCLI(_ args: [String]) -> CLICommand {
     default:
         return .help(error: "unknown command \"\(first)\"")
     }
+}
+
+func parseShare(_ args: [String]) -> CLICommand {
+    var o = ShareOptions()
+    var words: [String] = []
+    var i = 0
+    while i < args.count {
+        let a = args[i]
+        switch a {
+        case "--control", "-c": o.control = true
+        case "--wifi", "-w": o.wifiOnly = true
+        case "--json": o.json = true
+        case "--list", "-l", "list": o.list = true
+        case "--revoke", "revoke":
+            i += 1
+            guard i < args.count, !args[i].isEmpty, !args[i].hasPrefix("-") else { return .help(error: "share --revoke needs a link ID (or all)") }
+            o.revoke = args[i]
+        case "--ttl", "--expires":
+            i += 1
+            guard i < args.count, let d = parseDuration(args[i]), d >= 60, d <= 30 * 86400 else {
+                return .help(error: "share --ttl needs a duration from 1m to 30d, such as 2h or 7d")
+            }
+            o.ttl = d
+        default:
+            if a.hasPrefix("-") { return .help(error: "share: unknown option \(a)") }
+            words.append(a)
+        }
+        i += 1
+    }
+    if !words.isEmpty { o.window = words.joined(separator: " ") }
+    if (o.list || o.revoke != nil) && (o.window != nil || o.control || o.wifiOnly || o.ttl != nil) {
+        return .help(error: "share --list and --revoke take no window or link options")
+    }
+    if o.list && o.revoke != nil { return .help(error: "share: choose --list or --revoke") }
+    return .share(o)
 }
 
 func parseEnv(_ args: [String]) -> CLICommand {
