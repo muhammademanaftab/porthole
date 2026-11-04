@@ -20,6 +20,11 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     private var icons: [UInt32: NSImage] = [:]
     private var thumbs: [UInt32: NSImage] = [:]
     private var refreshTimer: Timer?
+    private let recentStrip = RecentStrip()
+    private var scrollTopPlain: NSLayoutConstraint?
+    private var scrollTopBelowRecent: NSLayoutConstraint?
+    var recents: () -> [RecentPortal] = { [] }
+    var hostAddress = ""
     var onThumbsWanted: (() -> Void)?
     var onIconWanted: ((UInt32) -> Void)?
 
@@ -74,14 +79,22 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
         let line = NSBox()
         line.boxType = .separator
 
-        for v in [scroll, notice, line, bar] as [NSView] {
+        for v in [scroll, notice, line, bar, recentStrip] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             background.addSubview(v)
         }
+        let plain = scroll.topAnchor.constraint(equalTo: background.topAnchor)
+        let below = scroll.topAnchor.constraint(equalTo: recentStrip.bottomAnchor, constant: 2)
+        scrollTopPlain = plain
+        scrollTopBelowRecent = below
+        contentView = background
         NSLayoutConstraint.activate([
+            recentStrip.topAnchor.constraint(equalTo: (contentLayoutGuide as? NSLayoutGuide)?.topAnchor ?? background.topAnchor, constant: 12),
+            recentStrip.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 20),
+            recentStrip.trailingAnchor.constraint(lessThanOrEqualTo: background.trailingAnchor, constant: -20),
             scroll.leadingAnchor.constraint(equalTo: background.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: background.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: background.topAnchor),
+            plain,
             scroll.bottomAnchor.constraint(equalTo: line.topAnchor),
             notice.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
             notice.centerYAnchor.constraint(equalTo: scroll.centerYAnchor, constant: 10),
@@ -96,7 +109,6 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
             bar.heightAnchor.constraint(equalToConstant: 28),
             statusIcon.widthAnchor.constraint(equalToConstant: 14),
         ])
-        contentView = background
 
         let toolbar = NSToolbar(identifier: "PortholePickerToolbar")
         toolbar.delegate = self
@@ -157,6 +169,20 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     @objc private func searchChanged(_ field: NSSearchField) {
         query = field.stringValue
         apply()
+        showRecents()
+    }
+
+    private func showRecents() {
+        let picks = query.isEmpty && loaded ? RecentPortals.forPicker(recents(), host: hostAddress, windows: all) : []
+        recentStrip.show(picks.map { w in
+            RecentStrip.Item(title: w.displayTitle, detail: w.title.isEmpty ? "Recently open" : w.app, icon: icons[w.id] ?? RecentStrip.icon(bundle: w.bundle),
+                             tooltip: "Reopen \(w.pickerLabel)") { [weak self] in self?.onPick(w) }
+        })
+        let visible = !picks.isEmpty
+        scrollTopPlain?.isActive = !visible
+        scrollTopBelowRecent?.isActive = visible
+        scroll.automaticallyAdjustsContentInsets = !visible
+        if visible { scroll.contentInsets = NSEdgeInsetsZero }
     }
 
     func search(for text: String) {
@@ -193,6 +219,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
             if let icon = localIcon(info) { icons[info.id] = icon } else { onIconWanted?(info.id) }
         }
         apply(keeping: selected)
+        showRecents()
         if !list.isEmpty { onThumbsWanted?() }
         startThumbTimer()
     }

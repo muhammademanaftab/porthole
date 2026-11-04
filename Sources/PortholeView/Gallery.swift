@@ -20,6 +20,15 @@ enum Gallery {
         WindowInfo(id: 5, app: "Finder", title: "", bundle: "com.apple.finder", w: 1100, h: 700),
     ]
 
+    static var recents: [RecentPortal] {
+        let now = Date()
+        return [
+            RecentPortal(host: "studio.local", hostName: "Studio Mac mini", windowID: 2, title: "Groceries", app: "Notes", bundle: "com.apple.Notes", time: now.addingTimeInterval(-240)),
+            RecentPortal(host: "100.70.1.31", hostName: "Office iMac", windowID: 8, title: "Quarterly plan", app: "Pages", bundle: "com.apple.iWork.Pages", time: now.addingTimeInterval(-3 * 3600)),
+            RecentPortal(host: "studio.local", hostName: "Studio Mac mini", windowID: 3, title: "sam — zsh — 120×36", app: "Terminal", bundle: "com.apple.Terminal", time: now.addingTimeInterval(-26 * 3600)),
+        ]
+    }
+
     static func show(_ screen: String) {
         switch screen {
         case "code":
@@ -48,6 +57,7 @@ enum Gallery {
     private static func connect() -> ConnectWindow {
         let w = ConnectWindow()
         w.show(hosts, scanning: false, preferTailscale: true, hasAccess: { host, _ in host.name != "Studio Mac mini" })
+        w.showRecents(RecentPortals.forConnect(recents))
         w.onCancel = { NSApp.terminate(nil) }
         w.makeKeyAndOrderFront(nil)
         keep.append(w)
@@ -56,6 +66,8 @@ enum Gallery {
 
     private static func picker(_ screen: String) {
         let w = PickerWindow(hostName: "Studio Mac mini", onPick: { _ in }, refresh: {})
+        w.hostAddress = "studio.local"
+        w.recents = { recents }
         switch screen {
         case "loading": break
         case "empty": w.show([])

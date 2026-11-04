@@ -59,6 +59,41 @@ public enum RecentPortals {
         return sameApp.count == 1 ? sameApp[0] : nil
     }
 
+    public static let pickerLimit = 6
+    public static let connectLimit = 5
+
+    public static func sameHost(_ a: String, _ b: String) -> Bool {
+        (savedPasswordKey(a) ?? a.lowercased()) == (savedPasswordKey(b) ?? b.lowercased())
+    }
+
+    public static func forPicker(_ list: [RecentPortal], host: String, windows: [WindowInfo], limit: Int = pickerLimit) -> [WindowInfo] {
+        var seen: Set<UInt32> = []
+        var out: [WindowInfo] = []
+        for p in list where sameHost(p.host, host) {
+            guard out.count < limit, let w = match(p, in: windows), !seen.contains(w.id) else { continue }
+            seen.insert(w.id)
+            out.append(w)
+        }
+        return out
+    }
+
+    public static func forConnect(_ list: [RecentPortal], limit: Int = connectLimit) -> [RecentPortal] {
+        var out: [RecentPortal] = []
+        for p in list where !out.contains(where: { $0.same(as: p) }) {
+            out.append(p)
+            if out.count == limit { break }
+        }
+        return out
+    }
+
+    public static func chipTitle(_ p: RecentPortal) -> String { p.title.isEmpty ? p.app : p.title }
+
+    public static func chipDetail(_ p: RecentPortal, now: Date = Date()) -> String {
+        let ago = now.timeIntervalSince(p.time)
+        let when = ago < 60 ? "just now" : "\(formatDuration(ago).split(separator: " ").first ?? "") ago"
+        return "\(p.app.isEmpty || p.title.isEmpty ? "" : "\(p.app) · ")\(p.hostName) · \(when)"
+    }
+
     public static func render(_ list: [RecentPortal], now: Date = Date()) -> String {
         guard !list.isEmpty else { return "No recent portals yet. Open a window in Porthole and it shows up here." }
         return list.enumerated().map { i, p in

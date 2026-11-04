@@ -7,6 +7,8 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
     var onRequestPairing: ((_ address: String, _ name: String?) -> Void)?
     var onRefresh: (() -> Void)?
     var onCancel: (() -> Void)?
+    var onRecent: ((RecentPortal) -> Void)?
+    private let recentStrip = RecentStrip()
 
     private let table = NSTableView()
     private let status = NSTextField(labelWithString: "")
@@ -123,12 +125,13 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
         cancelButton.action = #selector(cancelClicked)
         let buttons = NSStackView(views: [NSView(), cancelButton, connectButton])
 
-        let root = NSStackView(views: [head, well, statusRow, disclosureRow, addressRow, message, buttons])
+        let root = NSStackView(views: [head, recentStrip, well, statusRow, disclosureRow, addressRow, message, buttons])
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 10
         root.edgeInsets = NSEdgeInsets(top: 34, left: 22, bottom: 20, right: 22)
         root.setCustomSpacing(16, after: head)
+        root.setCustomSpacing(14, after: recentStrip)
         root.setCustomSpacing(6, after: well)
         root.setCustomSpacing(4, after: disclosureRow)
         root.setCustomSpacing(16, after: message)
@@ -147,6 +150,14 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
         contentView = background
         setStatus(found: 0, scanning: true)
         center()
+    }
+
+    func showRecents(_ list: [RecentPortal]) {
+        let now = Date()
+        recentStrip.show(list.map { p in
+            RecentStrip.Item(title: RecentPortals.chipTitle(p), detail: RecentPortals.chipDetail(p, now: now), icon: RecentStrip.icon(bundle: p.bundle),
+                             tooltip: "Reopen \(p.title.isEmpty ? p.app : "\(p.app) — \(p.title)") on \(p.hostName)") { [weak self] in self?.onRecent?(p) }
+        })
     }
 
     var cancelQuits = true {
