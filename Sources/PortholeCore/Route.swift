@@ -79,14 +79,19 @@ func ipv4Scope(_ ip: UInt32) -> AddressScope {
 public struct RouteCandidate: Equatable, Sendable {
     public var address: String
     public var scope: AddressScope
-    public var budget: TimeInterval?
+    public var budget: TimeInterval
     public var expectedID: String?
+    public var saved: Bool
 
-    public init(address: String, scope: AddressScope, budget: TimeInterval? = nil, expectedID: String? = nil) {
-        self.address = address; self.scope = scope; self.budget = budget; self.expectedID = expectedID
+    public init(address: String, scope: AddressScope, budget: TimeInterval = RoutePlan.lastBudget, expectedID: String? = nil, saved: Bool = false) {
+        self.address = address; self.scope = scope; self.budget = budget; self.expectedID = expectedID; self.saved = saved
     }
 
-    public var needsHello: Bool { expectedID != nil }
+    public var mustProve: Bool { !saved }
+
+    public var shouldChallenge: Bool { !saved || scope == .local }
+
+    public var trustedWithoutProof: Bool { saved && scope != .local }
 }
 
 public struct LocalSighting: Equatable, Sendable {
@@ -102,6 +107,7 @@ public struct LocalSighting: Equatable, Sendable {
 public enum RoutePlan {
     public static let localBudget: TimeInterval = 1.5
     public static let fallbackBudget: TimeInterval = 6
+    public static let lastBudget: TimeInterval = 10
 
     public static func formatAddress(_ host: String, port: Int) -> String {
         let bracketed = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
@@ -132,34 +138,32 @@ public enum RoutePlan {
         let savedScope = addressScope(savedHost)
         var list: [RouteCandidate] = []
         var seen: Set<String> = []
-        func add(_ address: String, expected: String?, isSaved: Bool = false) {
+        func add(_ address: String) {
             guard let key = savedPasswordKey(address), let (host, _) = splitHostAddress(address), !seen.contains(key) else { return }
-            if !isSaved && expected == nil { return }
             seen.insert(key)
-            list.append(RouteCandidate(address: address, scope: addressScope(host), expectedID: key == savedKey ? nil : expected))
+            let saved = key == savedKey
+            list.append(RouteCandidate(address: address, scope: addressScope(host), expectedID: id, saved: saved))
         }
         let sightedTS = local.compactMap(\.tailscaleIP).map { formatAddress($0, port: savedPort) }
         let tailscaleKnown = (known + sightedTS).filter { a in splitHostAddress(a).map { addressScope($0.host) == .tailscale } ?? false }
-        let localExpected = { (s: LocalSighting) in id ?? s.id }
-        let anyID = id ?? local.lazy.compactMap(\.id).first
         switch mode {
         case .auto:
-            for s in local { add(s.address, expected: localExpected(s)) }
-            add(saved, expected: nil, isSaved: true)
-            for a in tailscaleKnown { add(a, expected: anyID) }
+            for s in local { add(s.address) }
+            add(saved)
+            for a in tailscaleKnown { add(a) }
         case .local:
-            for s in local { add(s.address, expected: localExpected(s)) }
-            if savedScope == .local || savedScope == .loopback { add(saved, expected: nil, isSaved: true) }
+            for s in local { add(s.address) }
+            if savedScope == .local || savedScope == .loopback { add(saved) }
         case .tailscale:
-            if savedScope == .tailscale || savedScope == .other { add(saved, expected: nil, isSaved: true) }
-            for a in tailscaleKnown { add(a, expected: anyID) }
+            if savedScope == .tailscale || savedScope == .other { add(saved) }
+            for a in tailscaleKnown { add(a) }
         }
         for i in list.indices {
             let last = i == list.count - 1
-            if list[i].scope == .local || list[i].scope == .loopback {
-                list[i].budget = last ? nil : localBudget
+            if last {
+                list[i].budget = lastBudget
             } else {
-                list[i].budget = last ? nil : fallbackBudget
+                list[i].budget = list[i].scope == .local || list[i].scope == .loopback ? localBudget : fallbackBudget
             }
         }
         return list
@@ -173,9 +177,8 @@ public enum RoutePlan {
         }
     }
 
-    public static func helloConfirms(_ hello: HostHello?, expectedID: String?) -> Bool {
-        guard let expectedID else { return true }
-        return hello?.id == expectedID
+    public static func stops(status: Int, confirmed: Bool) -> Bool {
+        confirmed && (status == 401 || status == 403)
     }
 }
 
@@ -210,16 +213,26 @@ public struct RouteInfo: Equatable, Sendable {
     public var menuTitle: String { "Connection: \(text)" }
 }
 
-public func classifyRoute(remoteAddress: String?, remoteType: String?, localType: String?, tailscale: TailscaleStatus? = nil) -> RouteKind {
+public func sameIPv6Subnet(_ a: String?, _ b: String?) -> Bool {
+    guard let a, let b, let x = parseIPv6(bareHost(a)), let y = parseIPv6(bareHost(b)) else { return false }
+    guard !(x[0..<10].allSatisfy { $0 == 0 }) else { return false }
+    return x[0..<8] == y[0..<8]
+}
+
+public func classifyRoute(remoteAddress: String?, remoteType: String?, localType: String?, localAddress: String? = nil,
+                          tailscale: TailscaleStatus? = nil) -> RouteKind {
     if remoteType == "relay" || localType == "relay" { return .relayed }
     let address = remoteAddress.map(bareHost) ?? ""
     switch addressScope(address) {
     case .loopback: return .thisMac
     case .local: return .sameNetwork
     case .tailscale:
-        if let peer = tailscale?.peer(withIP: address), peer.isRelayed { return .tailscaleRelay }
-        return .tailscale
-    case .other: return .internet
+        guard let tailscale, parseDottedQuad(address) != nil || parseIPv6(address) != nil else { return .tailscale }
+        guard let peer = tailscale.peer(withIP: address) else { return .internet }
+        return peer.isRelayed ? .tailscaleRelay : .tailscale
+    case .other:
+        if remoteType == "host" && localType == "host" && sameIPv6Subnet(address, localAddress) { return .sameNetwork }
+        return .internet
     }
 }
 
@@ -235,7 +248,7 @@ public struct IceCandidateFacts: Equatable, Sendable {
 
 public func routeInfo(remote: IceCandidateFacts?, local: IceCandidateFacts?, tailscale: TailscaleStatus? = nil) -> RouteInfo? {
     guard let remote, let address = remote.address, !address.isEmpty else { return nil }
-    let kind = classifyRoute(remoteAddress: address, remoteType: remote.type, localType: local?.type, tailscale: tailscale)
+    let kind = classifyRoute(remoteAddress: address, remoteType: remote.type, localType: local?.type, localAddress: local?.address, tailscale: tailscale)
     return RouteInfo(kind: kind, address: bareHost(address))
 }
 

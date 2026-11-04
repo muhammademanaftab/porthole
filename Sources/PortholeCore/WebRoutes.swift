@@ -49,6 +49,7 @@ public struct WebRoutes {
     public var onSharesChanged: (() -> Void)?
     public var onUnshare: ((ShareLink) -> Void)?
     public var now: () -> Date = Date.init
+    public var ownsAddress: ((String) -> Bool)?
     public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
@@ -116,7 +117,16 @@ public struct WebRoutes {
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
             return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         case "/hello":
-            return HTTPResponse("200 OK", "application/json", HostHello(name: hostName, version: portholeProtocolVersion, id: hostID).json)
+            let hello = HostHello(name: hostName, version: portholeProtocolVersion, id: hostID)
+            let trust = self.trust
+            guard let proof = HelloProof.answer(query: query, hostHeader: hostHeader, hostID: hostID, password: password,
+                                                secretHash: { id in trust?.devices().first { $0.id == id }?.secretHash },
+                                                ownsAddress: ownsAddress ?? { _ in false }),
+                  var obj = (try? JSONSerialization.jsonObject(with: hello.json)) as? [String: Any] else {
+                return HTTPResponse("200 OK", "application/json", hello.json)
+            }
+            obj["proof"] = proof
+            return Self.json("200 OK", obj)
         case "/pair":
             return pair(query["code"] ?? "", device: query["device"], name: query["name"])
         case "/pair/request":

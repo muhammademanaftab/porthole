@@ -27,6 +27,7 @@ final class HTTPServer {
         routes.shares = guests?.store
         routes.guestControl = allowControl
         routes.httpPort = config.httpPort
+        routes.ownsAddress = { ownAddresses().contains($0) }
         routes.resolveWindow = { target in pickWindow(target, in: HTTPServer.listWindowsBlocking()) }
         routes.shareAddresses = { (lanAddress(), tailscaleAddress()) }
         routes.onSharesChanged = { [weak guests] in guests?.changedFromCLI() }

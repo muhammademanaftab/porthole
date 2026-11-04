@@ -36,6 +36,30 @@ func lanAddress() -> String? {
     return pickLANAddress(found)
 }
 
+func ownAddresses() -> Set<String> {
+    var out: Set<String> = ["127.0.0.1", "::1", "localhost"]
+    if let local = HTTPServer.localHostName { out.insert(bareHost(local)) }
+    var addrs: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&addrs) == 0, let first = addrs else { return out }
+    defer { freeifaddrs(addrs) }
+    var p: UnsafeMutablePointer<ifaddrs>? = first
+    while let cur = p {
+        defer { p = cur.pointee.ifa_next }
+        guard let sa = cur.pointee.ifa_addr else { continue }
+        var buf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        if sa.pointee.sa_family == UInt8(AF_INET) {
+            var sin = sockaddr_in()
+            memcpy(&sin, sa, MemoryLayout<sockaddr_in>.size)
+            if inet_ntop(AF_INET, &sin.sin_addr, &buf, socklen_t(buf.count)) != nil { out.insert(bareHost(String(cString: buf))) }
+        } else if sa.pointee.sa_family == UInt8(AF_INET6) {
+            var sin6 = sockaddr_in6()
+            memcpy(&sin6, sa, MemoryLayout<sockaddr_in6>.size)
+            if inet_ntop(AF_INET6, &sin6.sin6_addr, &buf, socklen_t(buf.count)) != nil { out.insert(bareHost(String(cString: buf))) }
+        }
+    }
+    return out
+}
+
 @MainActor
 final class HostGuests {
     let store = ShareLinkStore(directory: HostConfig.directory)
