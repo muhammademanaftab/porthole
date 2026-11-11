@@ -53,16 +53,45 @@ enum Gallery {
     }
 
     private static func connect() -> ConnectWindow {
+        let w = buildConnect()
+        w.onCancel = { NSApp.terminate(nil) }
+        w.makeKeyAndOrderFront(nil)
+        return w
+    }
+
+    private static func buildConnect() -> ConnectWindow {
         let w = ConnectWindow()
         w.show(hosts, scanning: false, preferTailscale: true, hasAccess: { host, _ in host.name != "Studio Mac mini" })
         w.showRecents(RecentPortals.forConnect(recents))
-        w.onCancel = { NSApp.terminate(nil) }
-        w.makeKeyAndOrderFront(nil)
         keep.append(w)
         return w
     }
 
     private static func picker(_ screen: String) {
+        buildPicker(screen).makeKeyAndOrderFront(nil)
+    }
+
+    static func snapshots(into dir: URL) -> [String] {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var shots: [(String, NSWindow)] = [("connect", buildConnect())]
+        let code = buildConnect()
+        code.ask("Studio Mac mini is showing a pairing code for this Mac. Type it here; after that this Mac can view it without a password.")
+        shots.append(("code", code))
+        for screen in ["picker", "empty", "locked", "nomatch"] { shots.append((screen, buildPicker(screen))) }
+        var written: [String] = []
+        for (name, w) in shots {
+            guard let view = w.contentView?.superview ?? w.contentView else { continue }
+            view.layoutSubtreeIfNeeded()
+            view.display()
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            let url = dir.appendingPathComponent("\(name).png")
+            if let png = rep.representation(using: .png, properties: [:]), (try? png.write(to: url)) != nil { written.append(url.path) }
+        }
+        return written
+    }
+
+    private static func buildPicker(_ screen: String) -> PickerWindow {
         let w = PickerWindow(hostName: "Studio Mac mini", onPick: { _ in }, refresh: {})
         w.hostAddress = "studio.local"
         w.recents = { recents }
@@ -75,8 +104,8 @@ enum Gallery {
             for (i, info) in windows.enumerated() { if let jpeg = thumbnail(info, hue: CGFloat(i) / CGFloat(windows.count)) { w.setThumb(info.id, jpeg: jpeg) } }
             if screen == "nomatch" { w.search(for: "spreadsheet") }
         }
-        w.makeKeyAndOrderFront(nil)
         keep.append(w)
+        return w
     }
 
     static func thumbnail(_ info: WindowInfo, hue: CGFloat) -> Data? {

@@ -4,6 +4,7 @@ import PortholeCore
 enum HostCLI {
     static func run(_ args: [String]) -> Int32? {
         if args.first == "curtain-preview" { return curtainPreview(args.dropFirst().first) }
+        if args.first == "gallery-snapshots" { return gallerySnapshots(args.dropFirst().first) }
         switch hostPairCommand(args) {
         case .app: return nil
         case .usage(let error):
@@ -14,6 +15,16 @@ enum HostCLI {
         case .devices: return devices()
         case .unpair(let who): return unpair(who)
         }
+    }
+
+    private static func gallerySnapshots(_ path: String?) -> Int32 {
+        guard let path else { fail("gallery-snapshots needs an output folder"); return 2 }
+        let written = MainActor.assumeIsolated { () -> [String] in
+            NSApplication.shared.setActivationPolicy(.prohibited)
+            return Gallery.snapshots(into: URL(fileURLWithPath: path))
+        }
+        written.forEach { print($0) }
+        return written.isEmpty ? 1 : 0
     }
 
     private static func curtainPreview(_ path: String?) -> Int32 {
