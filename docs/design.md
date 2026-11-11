@@ -1,78 +1,57 @@
 # Porthole: design
 
-Personal tool. Share single windows from a Mac host (the Mac mini `leos-mac-mini`) to
-other machines, as real windows (Mac viewer) or a browser tab (Windows laptop, Brave).
-Not a product: no accounts, no billing, no App Store.
+Porthole shares single windows (or a whole screen) from one Mac, the host, to viewers: another Mac running Porthole, or a browser.
 
-## Goals (v1)
+## Parts
 
-1. On the host, list shareable windows (titled, on-screen-capable, not ours, not password managers).
-2. A viewer picks one; it appears live, sharp (native pixel size, Retina), up to 60 fps.
-3. Keyboard, mouse clicks, drags and scroll from the viewer act on that window on the host.
-4. Resizing the viewer window resizes the real window on the host.
-5. Several windows at once, each its own viewer window or browser tab.
-6. Works over Tailscale or LAN.
+One Swift package, built with `swift build`:
 
-Non-goals for v1: audio, clipboard, file transfer, Dock icon per window, "move window over",
-Windows as a host, whole-screen mode, discovery (viewer is given the host address).
+| Target | What it is |
+|---|---|
+| `PortholeCore` | Pure logic with no UI: messages, pairing, trust, routes, share links, input mapping, the watchdog's rules. Everything here is unit tested. |
+| `PortholeApp` | `Porthole.app` (executable `porthole-host`). The viewer and the host run in one process; hosting is behind **Share this Mac**. |
+| `PortholeCLI` | The `porthole` command: diagnostics, logs, share links, and hand-offs to the app. |
+| `PortholeTile` | A tiny helper app per open portal, so each shared window has its own Dock icon and Cmd-Tab entry. |
+| `VirtualDisplayBridge` | Objective-C declarations for the virtual display used on headless Macs. |
+| `PortholeSelfTest` | The test runner (`scripts/test.sh`). |
+| `PortholeProbe` | A headless viewer for manual end-to-end checks. |
 
-## Architecture
+`web/` holds the browser viewer: `index.html`, `porthole-core.js` (logic shared with its tests) and the LiveKit browser client.
 
-Swift Package (`swift build`, Command Line Tools only, no Xcode), three targets plus tests:
+## Host
 
-- `PortholeCore` (library): wire protocol, input event model, coordinate mapping. Pure Swift, unit tested.
-- `PortholeHost` (menu-bar app, runs on the mini):
-  - `WindowCatalog`: ScreenCaptureKit `SCShareableContent` → list of `{id, app, title, w, h}`.
-  - `WindowStreamer`: `SCStream` with `SCContentFilter(desktopIndependentWindow:)`, pixel size =
-    window points × backing scale, BGRA/NV12 frames → `VTCompressionSession` H.264, real-time,
-    no B-frames, keyframe on request and every 2 s.
-  - `InputInjector`: keyboard via `CGEvent` `postToPid`; mouse: raise window (AX `kAXRaiseAction`
-    + `NSRunningApplication.activate`), then post `CGEvent` at global point mapped from
-    normalized (0..1) window coordinates; scroll via scroll-wheel CGEvents. Resize via AX `kAXSizeAttribute`.
-  - `Server`: Network.framework `NWListener` with WebSocket protocol on one port (default 7878).
-    HTTP GET `/` serves the browser viewer page (embedded resource). Token required (`?t=`).
-- `PortholeView` (Mac viewer app, runs on this Mac): connect to `host:port`, show window picker,
-  each chosen window = `NSWindow` with `AVSampleBufferDisplayLayer`, sized to remote size; local
-  events → input messages; window resize → resize message (debounced).
-- Browser viewer (`web/index.html`, plain JS): WebSocket + WebCodecs `VideoDecoder` → canvas.
-  Ctrl maps to Cmd for shortcuts.
+- **Capture.** ScreenCaptureKit captures each shared window on its own stream, at native pixel size. Frames are published as a LiveKit video track named after the window ID, HEVC for Macs with an H.264 backup for browsers. If encoding gets too slow the capture scale steps down and recovers later.
+- **Stage.** Windows a viewer opens are moved to a virtual display (the Stage) sized to the viewer's screen, so they can be any size and stay out of the way. On a Mac with no screen the Stage also stands in as the main display. It is released ten minutes after the last window closes.
+- **Input.** Keys, text, clicks and scrolling arrive as small JSON messages on a LiveKit data channel and are posted as system events. Mouse points are clamped to the window. Resizing uses Accessibility.
+- **Sound and clipboard.** Sound from the shared apps is mixed into one audio track. Text on the clipboard is synced both ways, up to 1 MB, skipping password-manager items.
+- **Whole Mac.** A display can be shared like a window, with an optional privacy curtain that hides the physical screens and blocks local input.
+- **Servers.** The app runs a bundled `livekit-server` on port 7880 and a small HTTP server on port 7878 that serves the browser page, hands out room tokens and answers pairing.
+- **Watchdog.** A launch agent registered with ServiceManagement runs the same binary in watchdog mode. It reads a heartbeat file and relaunches the app after a crash or a hang, but not after a normal quit.
 
-## Wire protocol
+## Viewer
 
-One WebSocket per viewed window plus one control socket for the list. Messages:
+- **Finding hosts.** Bonjour (`_porthole._tcp`) on the local network, and `tailscale status` across networks. For a paired host the viewer tries the same-network address first and falls back to the saved or Tailscale address.
+- **Portals.** Each opened window is an `NSWindow` showing the video track. Local events become input messages. Dialogs and panels of the shared app open as their own small portals.
+- **Reconnecting.** A lost connection is retried with a growing delay, and open portals come back by themselves.
 
-- Text (JSON) control: `list` → `{windows:[...]}`; `open {id}`; `input {...}`; `resize {w,h}`;
-  `keyframe`; host → `meta {w,h,scale,title}`; `closed`.
-- Binary video: `[1 byte type=1][1 byte flags: bit0 keyframe][8 bytes pts µs][Annex-B H.264]`.
-  Keyframes carry SPS/PPS inline so any decoder (VideoToolbox, WebCodecs `avc` with
-  Annex-B) can start from them.
+## Trust
 
-Backpressure: per-connection send in flight count; if > 2 frames unsent, drop non-key frames
-and request a keyframe when caught up. Latest frame wins.
+- **Pairing.** The host shows a 6-digit code. Viewer and host run a password-authenticated key exchange (SPEKE over P-256) keyed by the code and the viewer's device ID, so the code never crosses the network and a man in the middle gets one guess per code. The host then sends a random device secret sealed under the exchanged key. The host keeps only a hash of it; the viewer keeps it in the Keychain.
+- **Tokens.** To connect, a paired viewer sends its device ID, a fresh nonce and an HMAC keyed by the secret's hash. The host answers with the LiveKit URL and a ten-minute room token, sealed under a key derived from the same hash and nonce. The viewer refuses any answer it cannot open.
+- **Same-network proof.** Before using an address it found on the local network, the viewer asks `/hello` with a nonce and checks an HMAC that covers the address, so another machine cannot pose as the host there.
+- **Browser password.** Browsers use the host password from the menu. Wrong guesses are throttled per source address.
+- **Share links.** A link carries a random token; the host stores only its hash. Guests get LiveKit track permissions for their window alone, their input is dropped unless the link allows control, and then keys are typed only while that window has the keyboard.
+- **Limits.** The host keeps guess budgets for pairing codes, browser passwords and the lock-screen password, and they survive a restart.
 
-## Security
+Port 7878 and LiveKit signalling are plain HTTP and WebSocket. Media and data are encrypted by WebRTC. Across untrusted networks Porthole is meant to run over Tailscale.
 
-Bind to all interfaces but require a token (random, stored in host's
-`~/Library/Application Support/Porthole/token`, shown in the menu). Traffic is encrypted by
-Tailscale; on plain LAN it is not (accepted for personal use).
+## Files
 
-## Errors
-
-- Missing Screen Recording / Accessibility permission: menu shows it and opens System Settings.
-- Window closed on host: stream sends `closed`, viewer window closes with a note.
-- Disconnect: viewer retries every 2 s, keeps last frame visible.
-- Headless host with no display: documented need for HDMI dummy plug.
-
-## Signing
-
-Self-signed code-signing certificate "Porthole Dev" in the login keychain so TCC grants persist
-across rebuilds. `scripts/bundle.sh` builds `.app` bundles with Info.plist and signs them.
+Everything lives in `~/Library/Application Support/Porthole` (config, pairings, share links, markers; private files are mode 0600) and `~/Library/Logs/Porthole`. `porthole doctor` reads them, and `porthole report` zips them with secrets removed.
 
 ## Testing
 
-- Unit (`swift test`): protocol encode/decode, coordinate mapping, key code mapping JS→mac.
-- Local end-to-end on this Mac: run host, open a TextEdit window with known text, connect a
-  headless test client, assert frames decode at expected size, send keystrokes, assert TextEdit
-  content changed (AppleScript).
-- Browser: open viewer page in Brave/Playwright against local host, check canvas renders.
-- Real: Windows laptop Brave → mini; this Mac viewer → mini.
+- `scripts/test.sh` runs the Swift checks and the web tests.
+- `scripts/check-bundle.sh` checks a built `dist/Porthole.app`.
+- `scripts/check-deploy-restore.sh` simulates failures in the deploy script's rollback.
+- Input and capture are tested on a real second Mac; tests on the Mac you work on never inject input.
