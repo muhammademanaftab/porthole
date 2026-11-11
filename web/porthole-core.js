@@ -108,9 +108,19 @@
   const pickerStatus = (n) => n === 0 ? 'No windows to share on the host.'
     : `${n} window${n === 1 ? '' : 's'} on the host. Each opens in its own tab.`;
 
-  const windowLink = (pw, id) => `?pw=${encodeURIComponent(pw)}&win=${id}`;
+  const windowLink = (pw, id) => `?win=${id}#pw=${encodeURIComponent(pw)}`;
 
-  const pickerLink = (pw) => `?pw=${encodeURIComponent(pw)}`;
+  const pickerLink = (pw) => `?#pw=${encodeURIComponent(pw)}`;
+
+  function passwordInAddress(search, hash) {
+    const fromHash = new URLSearchParams(String(hash || '').replace(/^#/, '')).get('pw');
+    const query = new URLSearchParams(search || '');
+    const pw = fromHash || query.get('pw');
+    if (!pw) return null;
+    query.delete('pw');
+    const rest = query.toString();
+    return { pw, clean: rest ? `?${rest}` : '?' };
+  }
 
   const guestWindowLink = (share, id) => `?share=${encodeURIComponent(share)}&win=${id}`;
 
@@ -375,5 +385,5 @@
     return { kind, address: host, label: ROUTE_LABELS[kind], text: `${ROUTE_LABELS[kind]} (${host})` };
   }
 
-  return { addressScope, routeKind, sameIPv6Subnet, selectedRoute, ROUTE_LABELS, THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick, shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable, LOCKED_CONTROL, UNLOCK_MAX, UNLOCK_WORKING, UNLOCK_HINT, UNLOCK_NO_ANSWER, UNLOCK_ANSWER_MS, isLockNotice, mayUnlock, unlockTypeable, unlockMessage, unlockOutcome };
+  return { addressScope, routeKind, sameIPv6Subnet, selectedRoute, ROUTE_LABELS, THUMB_TOPIC, ICON_TOPIC, LOCKED_LIST, filterWindows, pickerNotice, countLabel, statusLine, staleIds, portalTitle, streamWindow, iconRequests, isScreen, isScreenId, randomUUID, ensureRandomUUID, AUDIO_TRACK, isAudioTrack, soundLabel, CLIP_TOPIC, CLIP_MAX_BYTES, clipFits, pasteKeys, KEYS, MODIFIER_CODES, MOVE_INTERVAL, PIXELS_PER_LINE, RETRY, mods, norm, btnOf, dragButton, countClick, shouldSendMove, scrollDelta, createPointer, keyMessages, retry, pickerStatus, windowLink, pickerLink, passwordInAddress, guestWindowLink, guestPickerLink, tokenPath, clientId, mayInput, askButton, guestNotice, linkRefusal, sizeLabel, reconnectDelay, RECONNECT_DELAYS, nextReconnectAttempt, STABLE_CONNECTION, hostReachable, LOCKED_CONTROL, UNLOCK_MAX, UNLOCK_WORKING, UNLOCK_HINT, UNLOCK_NO_ANSWER, UNLOCK_ANSWER_MS, isLockNotice, mayUnlock, unlockTypeable, unlockMessage, unlockOutcome };
 });

@@ -123,7 +123,7 @@
     <label class="search" id="searchbox" hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5" stroke-linecap="round"/></svg><input id="q" type="search" placeholder="Search windows" autocomplete="off" aria-label="Search windows"></label>
     <button class="icon-btn" id="refresh" title="Refresh (R)" aria-label="Refresh" hidden><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.5 1.5v3h-3"/></svg></button>
   </header>
-  <form id="pwform" hidden><h2>Enter the host password</h2><p id="pwhint">It is in the Porthole Host menu on the Mac, under Copy Password.</p><input id="pw" type="password" placeholder="Password" autocomplete="current-password"><button class="btn primary">Connect</button></form>
+  <form id="pwform" hidden><h2>Enter the host password</h2><p id="pwhint">It is in the Porthole menu on the Mac, under Copy Password.</p><input id="pw" type="password" placeholder="Password" autocomplete="current-password"><button class="btn primary">Connect</button></form>
   <div class="notice" id="notice"><div class="spinner"></div><h2>Connecting…</h2><p>Asking the host for its windows.</p></div>
   <div id="list"></div>
 </div>
@@ -264,7 +264,7 @@ async function connect(pw) {
   for (let i = 0; i < 50 && !room.remoteParticipants.get('host'); i++) await new Promise(r => setTimeout(r, 100));
   hostP = room.remoteParticipants.get('host');
   if (!hostP) {
-    listError = 'Connected, but the host is not in the room. Is Porthole Host running?';
+    listError = 'Connected, but the host is not in the room. Is Porthole sharing on that Mac?';
     if (winId) overlay('failed', listError); else render();
     return;
   }
@@ -683,7 +683,9 @@ function showPassword(msg) {
 }
 $('pwform').addEventListener('submit', e => { e.preventDefault(); $('pwform').hidden = true; $('notice').hidden = false; connect($('pw').value); });
 
-const pw = share ? null : params.get('pw') || sessionStorage.getItem('pw');
+const inAddress = share ? null : PC.passwordInAddress(location.search, location.hash);
+if (inAddress) { sessionStorage.setItem('pw', inAddress.pw); history.replaceState(null, '', inAddress.clean); }
+const pw = share ? null : sessionStorage.getItem('pw');
 if (share || pw) connect(pw).catch(err => {
   if (sessionStorage.getItem('reconnects')) scheduleReconnect(0, 0);
   else if (share) { listError = 'Could not connect: ' + err.message; if (winId) overlay('failed', listError); else render(); }

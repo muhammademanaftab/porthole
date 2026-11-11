@@ -345,7 +345,7 @@ test('pickerStatus says window or windows', () => {
 });
 
 test('windowLink percent-encodes the password', () => {
-  assert.equal(windowLink('a b&c=d#e/ő', 42), '?pw=a%20b%26c%3Dd%23e%2F%C5%91&win=42');
+  assert.equal(windowLink('a b&c=d#e/ő', 42), '?win=42#pw=a%20b%26c%3Dd%23e%2F%C5%91');
 });
 
 test('sizeLabel rounds the point size', () => {
@@ -366,7 +366,7 @@ test('index.html loads porthole-core.js first, uses exactly the shared helpers a
   assert.ok(tag > 0);
   assert.ok(tag < html.indexOf('<script>'));
   const used = [...new Set([...html.matchAll(/\bPC\.(\w+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'UNLOCK_ANSWER_MS', 'UNLOCK_HINT', 'UNLOCK_MAX', 'UNLOCK_NO_ANSWER', 'UNLOCK_WORKING', 'askButton', 'clientId', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'guestNotice', 'guestPickerLink', 'guestWindowLink', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'linkRefusal', 'mayInput', 'mayUnlock', 'mods', 'nextReconnectAttempt', 'norm', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'selectedRoute', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'tokenPath', 'unlockMessage', 'unlockOutcome', 'windowLink']);
+  assert.deepEqual(used, ['CLIP_TOPIC', 'ICON_TOPIC', 'RETRY', 'THUMB_TOPIC', 'UNLOCK_ANSWER_MS', 'UNLOCK_HINT', 'UNLOCK_MAX', 'UNLOCK_NO_ANSWER', 'UNLOCK_WORKING', 'askButton', 'clientId', 'clipFits', 'createPointer', 'ensureRandomUUID', 'filterWindows', 'guestNotice', 'guestPickerLink', 'guestWindowLink', 'hostReachable', 'iconRequests', 'isAudioTrack', 'isScreen', 'isScreenId', 'keyMessages', 'linkRefusal', 'mayInput', 'mayUnlock', 'mods', 'nextReconnectAttempt', 'norm', 'passwordInAddress', 'pasteKeys', 'pickerLink', 'pickerNotice', 'portalTitle', 'reconnectDelay', 'retry', 'scrollDelta', 'selectedRoute', 'sizeLabel', 'soundLabel', 'staleIds', 'statusLine', 'streamWindow', 'tokenPath', 'unlockMessage', 'unlockOutcome', 'windowLink']);
   for (const name of used) assert.notEqual(core[name], undefined, name);
   for (const copy of ['function mods', 'KEYS =', 'deltaMode', 'Math.min(r.width', 'function retry', '&win=${', 'Math.round(w.w)', 'normalize(', '.every(t']) {
     assert.equal(html.includes(copy), false, copy);
@@ -560,8 +560,18 @@ test('iconRequests asks once per app, in list order, up to a limit', () => {
 });
 
 test('pickerLink goes back to the window list with the same password', () => {
-  assert.equal(core.pickerLink('a b&c'), '?pw=a%20b%26c');
-  assert.equal(core.windowLink('a b&c', 7), core.pickerLink('a b&c') + '&win=7');
+  assert.equal(core.pickerLink('a b&c'), '?#pw=a%20b%26c');
+});
+
+test('the password travels in the fragment and is taken out of the address', () => {
+  assert.deepEqual(core.passwordInAddress('?win=7', '#pw=a%20b%26c'), { pw: 'a b&c', clean: '?win=7' });
+  assert.deepEqual(core.passwordInAddress('', '#pw=x'), { pw: 'x', clean: '?' });
+  assert.deepEqual(core.passwordInAddress('?pw=old%2Bstyle&win=3', ''), { pw: 'old+style', clean: '?win=3' });
+  assert.equal(core.passwordInAddress('?win=3', ''), null);
+  assert.equal(core.passwordInAddress('?share=t', '#x=1'), null);
+  const link = core.windowLink('p w', 9);
+  const [search, hash] = [link.slice(0, link.indexOf('#')), link.slice(link.indexOf('#'))];
+  assert.deepEqual(core.passwordInAddress(search, hash), { pw: 'p w', clean: '?win=9' });
 });
 
 test('statusLine lets a connection problem win over the window count', () => {

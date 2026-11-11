@@ -17,9 +17,9 @@ func networkTests() {
     expect("dotted quad: all ones", dottedQuad(.max), "255.255.255.255")
 
     expect("viewer link: host, port and URL-safe password", viewerLink(host: "100.64.0.1", port: 7878, password: "abc_-9"),
-           "http://100.64.0.1:7878/?pw=abc_-9")
+           "http://100.64.0.1:7878/#pw=abc_-9")
     expect("viewer link: password is percent-encoded", viewerLink(host: "mini", port: 7878, password: "a b&c=d+e#f/ő"),
-           "http://mini:7878/?pw=a%20b%26c%3Dd%2Be%23f%2F%C5%91")
+           "http://mini:7878/#pw=a%20b%26c%3Dd%2Be%23f%2F%C5%91")
 
     let addresses: [(String, String, Int)] = [
         ("mini", "mini", 7878), ("100.64.0.1:9000", "100.64.0.1", 9000), ("[::1]:9000", "[::1]", 9000),

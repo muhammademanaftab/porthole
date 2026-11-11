@@ -11,7 +11,7 @@ public func dottedQuad(_ ip: UInt32) -> String {
 private let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 public func viewerLink(host: String, port: UInt16, password: String) -> String {
-    "http://\(host):\(port)/?pw=\(password.addingPercentEncoding(withAllowedCharacters: unreserved) ?? "")"
+    "http://\(host):\(port)/#pw=\(password.addingPercentEncoding(withAllowedCharacters: unreserved) ?? "")"
 }
 
 public func splitHostAddress(_ address: String, defaultPort: Int = Int(HostConfig.defaultHTTPPort)) -> (host: String, port: Int)? {
