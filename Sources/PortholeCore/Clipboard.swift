@@ -37,4 +37,16 @@ public struct ClipboardSync: Sendable {
     public mutating func applied(changeCount: Int) { seenChange = changeCount }
 
     public static func fits(_ text: String) -> Bool { !text.isEmpty && text.utf8.count <= maxBytes }
+
+    public static func collect<S: AsyncSequence>(_ chunks: S, declaredBytes: Int?) async throws -> String? where S.Element == String {
+        if let declaredBytes, declaredBytes > maxBytes { return nil }
+        var text = ""
+        var bytes = 0
+        for try await chunk in chunks {
+            bytes += chunk.utf8.count
+            guard bytes <= maxBytes else { return nil }
+            text += chunk
+        }
+        return text
+    }
 }

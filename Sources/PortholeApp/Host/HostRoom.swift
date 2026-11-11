@@ -64,8 +64,13 @@ final class HostRoom: NSObject, RoomDelegate {
         room.add(delegate: self)
         AppAudio.prepare()
         try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
-            let text = try await reader.readAll()
-            await self?.clipboardReceived(text, from: identity.stringValue)
+            let who = identity.stringValue
+            guard await self?.mayPaste(who) == true else { return }
+            guard let text = try await ClipboardSync.collect(reader, declaredBytes: reader.info.totalLength) else {
+                Log.info("clipboard: dropped an oversized stream from \(who)", .trust)
+                return
+            }
+            await self?.clipboardReceived(text, from: who)
         }
         clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollClipboard() }
@@ -89,15 +94,19 @@ final class HostRoom: NSObject, RoomDelegate {
         } }
     }
 
-    private func clipboardReceived(_ text: String, from who: String) {
-        guard accepts?(who) ?? true, registry.activeViewers.contains(who) else { return }
+    private func mayPaste(_ who: String) -> Bool {
+        guard accepts?(who) ?? true, registry.activeViewers.contains(who) else { return false }
         if GuestIdentity.isGuest(who) {
             guard let link = guestLink?(who), GuestAccess.allows(.clipboardFromGuest, link: link, controlling: controlling.contains(who)) else {
-                Log.info("clipboard: dropped \(text.utf8.count) bytes from view-only guest \(who)", .trust)
-                return
+                Log.info("clipboard: refused a stream from view-only guest \(who)", .trust)
+                return false
             }
         }
-        guard clip.incoming(text) else { return }
+        return true
+    }
+
+    private func clipboardReceived(_ text: String, from who: String) {
+        guard mayPaste(who), clip.incoming(text) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)

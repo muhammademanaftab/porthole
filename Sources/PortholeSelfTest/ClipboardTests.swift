@@ -40,4 +40,21 @@ func clipboardTests() {
     expect("active viewers are those with a live window", reg.activeViewers, ["a", "b"])
     _ = reg.release(1, by: "a")
     expect("a viewer who closed their window is no longer active", reg.activeViewers, ["b"])
+    func collected(_ chunks: [String], declared: Int?) -> String? {
+        let done = DispatchSemaphore(value: 0)
+        let box = ClipBox()
+        Task.detached {
+            box.value = try? await ClipboardSync.collect(AsyncStream { c in chunks.forEach { c.yield($0) }; c.finish() }, declaredBytes: declared)
+            done.signal()
+        }
+        done.wait()
+        return box.value
+    }
+    expect("clipboard stream: chunks are joined", collected(["ab", "cd"], declared: 4), "abcd")
+    expect("clipboard stream: a declared size over the cap is refused unread", collected(["x"], declared: ClipboardSync.maxBytes + 1), nil)
+    let chunk = String(repeating: "x", count: 400_000)
+    expect("clipboard stream: reading stops once the cap is passed", collected([chunk, chunk, chunk], declared: nil), nil)
+    expect("clipboard stream: exactly the cap is kept", collected([chunk, chunk, String(repeating: "x", count: 200_000)], declared: nil)?.utf8.count, ClipboardSync.maxBytes)
 }
+
+final class ClipBox: @unchecked Sendable { var value: String? }

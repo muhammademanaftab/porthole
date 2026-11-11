@@ -15,4 +15,9 @@ func httpResponseTests() {
     head.sendsBody = false
     check("http head: HEAD keeps the real Content-Length but sends no body",
           head.head.contains("Content-Length: 1234\r\n") && head.serialized == Data(head.head.utf8))
+    let headers = Data("GET /hello HTTP/1.1\r\nHost: x\r\n".utf8)
+    expect("http limits: a partial request waits for more", HTTPLimits.step(headers, complete: false), .more)
+    expect("http limits: a full header block is ready", HTTPLimits.step(headers + Data("\r\n".utf8), complete: false), .ready)
+    expect("http limits: a client that closes mid-request is refused", HTTPLimits.step(headers, complete: true), .refuse)
+    expect("http limits: an endless header is refused", HTTPLimits.step(Data(count: HTTPLimits.maxRequestBytes), complete: false), .refuse)
 }

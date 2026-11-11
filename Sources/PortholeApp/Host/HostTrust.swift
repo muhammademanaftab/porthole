@@ -34,10 +34,12 @@ final class HostTrust: NSObject, RoomDelegate {
     func presentNewCode() { window.present() }
 
     nonisolated func requested(by who: PairRequester, code: String) {
-        print("Pairing request from \(who.name) (\(who.id)): code \(displayPairingCode(code))")
-        fflush(stdout)
         Log.info("pairing request from \(who.name) (\(who.id))", .trust)
-        guard showsPairingWindow() else { return }
+        guard showsPairingWindow() else {
+            print("Pairing request from \(who.name) (\(who.id)): code \(displayPairingCode(code))")
+            fflush(stdout)
+            return
+        }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 Power.wakeDisplay()

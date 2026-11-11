@@ -97,7 +97,7 @@ final class HostApp: NSObject {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
             state = "Sharing"
-            Log.info("host ready", .host); print("Porthole host ready.\n  Browser: \(browserLink)\n  Mac viewer: porthole-view \(tailscaleAddress() ?? "<this-mac>") \(config.password)")
+            Log.info("host ready", .host)
             fflush(stdout)
         } catch {
             state = "Error: \(error.localizedDescription)"

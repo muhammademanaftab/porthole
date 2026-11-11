@@ -87,13 +87,39 @@ final class HTTPServer {
         listener.start(queue: queue)
     }
 
+    private var open = 0
+
     private func serve(_ conn: NWConnection) {
+        guard open < HTTPLimits.maxConnections else { conn.cancel(); return }
+        open += 1
+        let pending = PendingRequest()
+        conn.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .failed: conn.cancel()
+            case .cancelled:
+                if !pending.closed { pending.closed = true; self?.open -= 1 }
+            default: break
+            }
+        }
         conn.start(queue: queue)
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
-            guard let self, let data, let req = String(data: data, encoding: .utf8) else { conn.cancel(); return }
-            let loopback = Self.isLoopback(conn.endpoint)
-            let source = Self.sourceHost(conn.endpoint)
-            conn.send(content: self.routes.respond(to: req, fromLoopback: loopback, source: source).serialized, completion: .contentProcessed { _ in conn.cancel() })
+        queue.asyncAfter(deadline: .now() + HTTPLimits.requestSeconds) { if !pending.answered { conn.cancel() } }
+        queue.asyncAfter(deadline: .now() + HTTPLimits.totalSeconds) { conn.cancel() }
+        read(conn, pending)
+    }
+
+    private func read(_ conn: NWConnection, _ pending: PendingRequest) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: HTTPLimits.maxRequestBytes) { [weak self] data, _, complete, error in
+            guard let self, let data, error == nil else { conn.cancel(); return }
+            pending.bytes.append(data)
+            switch HTTPLimits.step(pending.bytes, complete: complete) {
+            case .more: self.read(conn, pending)
+            case .refuse: conn.cancel()
+            case .ready:
+                guard let req = String(data: pending.bytes, encoding: .utf8) else { conn.cancel(); return }
+                pending.answered = true
+                let reply = self.routes.respond(to: req, fromLoopback: Self.isLoopback(conn.endpoint), source: Self.sourceHost(conn.endpoint))
+                conn.send(content: reply.serialized, completion: .contentProcessed { _ in conn.cancel() })
+            }
         }
     }
 
@@ -115,6 +141,12 @@ final class HTTPServer {
         default: return false
         }
     }
+}
+
+final class PendingRequest: @unchecked Sendable {
+    var bytes = Data()
+    var answered = false
+    var closed = false
 }
 
 final class WindowListBox: @unchecked Sendable {

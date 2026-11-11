@@ -187,8 +187,8 @@ final class Connection: NSObject, RoomDelegate {
         guard !handlersReady else { return }
         room.add(delegate: self)
         try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in
-            guard identity.stringValue == "host" else { return }
-            let text = try await reader.readAll()
+            guard identity.stringValue == "host",
+                  let text = try await ClipboardSync.collect(reader, declaredBytes: reader.info.totalLength) else { return }
             Task { @MainActor [weak self] in self?.onClipboard?(text) }
         }
         try await room.registerByteStreamHandler(for: iconTopic) { [weak self] reader, identity in
