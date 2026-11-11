@@ -281,12 +281,13 @@ public struct TrackGrantPlan: Equatable, Sendable {
     }
 
     public static func make(participants: [Participant], tracks: [Track], link: (String) -> ShareLink?,
-                            parent: (UInt32) -> UInt32?, sharedParents: Set<UInt32>, linksExist: Bool = false) -> TrackGrantPlan {
-        guard linksExist || participants.contains(where: { GuestIdentity.isGuest($0.identity) }) else {
+                            parent: (UInt32) -> UInt32?, sharedParents: Set<UInt32>, linksExist: Bool = false,
+                            accepted: (String) -> Bool = { _ in true }) -> TrackGrantPlan {
+        guard linksExist || participants.contains(where: { GuestIdentity.isGuest($0.identity) || !accepted($0.identity) }) else {
             return TrackGrantPlan(allParticipantsAllowed: true, grants: [])
         }
         let grants = participants.sorted { $0.identity < $1.identity }.map { p -> TrackGrant in
-            guard GuestIdentity.isGuest(p.identity) else { return TrackGrant(participantSid: p.sid, allTracks: true, trackSids: []) }
+            guard GuestIdentity.isGuest(p.identity) else { return TrackGrant(participantSid: p.sid, allTracks: accepted(p.identity), trackSids: []) }
             guard let l = link(p.identity) else { return TrackGrant(participantSid: p.sid, allTracks: false, trackSids: []) }
             let sids = tracks.filter { t in
                 if let win = Message.windowID(fromTrackName: t.name) { return GuestAccess.covers(l, win: win, parent: parent(win)) }

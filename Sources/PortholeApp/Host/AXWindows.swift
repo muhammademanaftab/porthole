@@ -67,6 +67,16 @@ enum AXWindows {
         return value as? String
     }
 
+    static func focusedElementPID() -> pid_t? {
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.25)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &value) == .success,
+              let v = value, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        var pid: pid_t = 0
+        return AXUIElementGetPid(v as! AXUIElement, &pid) == .success ? pid : nil
+    }
+
     static func focusedWindowID(pid: pid_t) -> UInt32? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app(pid), kAXFocusedWindowAttribute as CFString, &value) == .success,

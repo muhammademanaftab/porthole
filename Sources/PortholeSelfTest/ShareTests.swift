@@ -170,6 +170,10 @@ private func trackPlanTests() {
     let armed = TrackGrantPlan.make(participants: [mac], tracks: tracks, link: { _ in nil }, parent: parent, sharedParents: [77], linksExist: true)
     check("track plan: while any share link is live the default is closed before a guest joins",
           !armed.allParticipantsAllowed && armed.grants == [TrackGrant(participantSid: "PA_mac", allTracks: true, trackSids: [])])
+    let old = TrackGrantPlan.Participant(sid: "PA_old", identity: "view-Old-xyz.fedcba9876543210")
+    let afterUnpair = TrackGrantPlan.make(participants: [mac, old], tracks: tracks, link: { _ in nil }, parent: parent, sharedParents: [77], accepted: { $0 != old.identity })
+    check("track plan: an unpaired Mac still in the room gets no tracks while the others keep theirs",
+          !afterUnpair.allParticipantsAllowed && afterUnpair.grants == [TrackGrant(participantSid: "PA_mac", allTracks: true, trackSids: []), TrackGrant(participantSid: "PA_old", allTracks: false, trackSids: [])])
     let fresh = TrackGrantPlan.make(participants: [], tracks: tracks, link: { _ in nil }, parent: parent, sharedParents: [], linksExist: true)
     check("track plan: a guest who joins before the next update sees nothing", !fresh.allParticipantsAllowed && fresh.grants.isEmpty)
     let g1 = TrackGrantPlan.Participant(sid: "PA_g1", identity: "guest-0a1b2c3d-aaaaaa")

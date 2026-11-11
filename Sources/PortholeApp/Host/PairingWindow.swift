@@ -2,7 +2,7 @@ import AppKit
 import PortholeCore
 
 @MainActor
-final class PairingWindow: NSPanel, NSWindowDelegate {
+final class PairingWindow: GuardedPanel, NSWindowDelegate {
     private let desk: PairingDesk
     private let codeLabel = NSTextField(labelWithString: "")
     private let intro = NSTextField(wrappingLabelWithString: "")

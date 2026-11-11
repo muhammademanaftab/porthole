@@ -100,4 +100,23 @@ private func injectedClickTests() {
     let tagged = PortholeEventTag.source().flatMap { CGEvent(mouseEventSource: $0, mouseType: .leftMouseDown, mouseCursorPosition: CGPoint(x: 300, y: 200), mouseButton: .left) }
     check("guarded panels: a click the host injected carries the tag the panels ignore", PortholeEventTag.isInjected(tagged))
     check("guarded panels: a person's click does not", !PortholeEventTag.isInjected(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: .zero, mouseButton: .left)))
+    let cmd: Modifiers = [.command], ctrl: Modifiers = [.control]
+    let blocked: [(String, UInt16, Modifiers)] = [
+        ("Spotlight", 49, cmd), ("Finder search", 49, [.command, .option]), ("input source", 49, ctrl), ("app switcher", 48, cmd),
+        ("force quit", 53, [.command, .option]), ("Mission Control", 126, ctrl), ("a space", 124, ctrl), ("desktop 2", 19, ctrl),
+        ("screenshot", 21, [.command, .shift]), ("lock screen", 12, [.command, .control]), ("log out", 12, [.command, .shift]),
+        ("menu bar focus", 120, ctrl), ("the Dock", 2, [.command, .option]), ("the Mission Control key", 160, []), ("show desktop", 103, []),
+    ]
+    for (name, code, mods) in blocked { check("guest keys: \(name) is a system shortcut", GuestKeys.isSystemShortcut(code: code, mods: mods)) }
+    let allowed: [(String, UInt16, Modifiers)] = [
+        ("a letter", 0, []), ("space", 49, []), ("shift-space", 49, [.shift]), ("tab", 48, []), ("copy", 8, cmd), ("save", 1, cmd),
+        ("an arrow", 124, []), ("word left", 123, [.option]), ("line start", 123, cmd), ("escape", 53, []), ("quit the app", 12, cmd), ("a digit", 19, []),
+    ]
+    for (name, code, mods) in allowed { check("guest keys: \(name) is typed", !GuestKeys.isSystemShortcut(code: code, mods: mods)) }
+    check("guest typing: the shared window has the keyboard", GuestKeys.mayType(frontmostPID: 7, focusedWindow: 40, focusedElementPID: 7, window: 40, owner: 7))
+    check("guest typing: another app is in front", !GuestKeys.mayType(frontmostPID: 9, focusedWindow: 40, focusedElementPID: 9, window: 40, owner: 7))
+    check("guest typing: another window of the app has the keyboard", !GuestKeys.mayType(frontmostPID: 7, focusedWindow: 41, focusedElementPID: 7, window: 40, owner: 7))
+    check("guest typing: Spotlight or another panel holds the text focus", !GuestKeys.mayType(frontmostPID: 7, focusedWindow: 40, focusedElementPID: 300, window: 40, owner: 7))
+    check("guest typing: an app without a readable focused element still types", GuestKeys.mayType(frontmostPID: 7, focusedWindow: 40, focusedElementPID: nil, window: 40, owner: 7))
+    check("guest typing: an unreadable focused window is refused", !GuestKeys.mayType(frontmostPID: 7, focusedWindow: nil, focusedElementPID: 7, window: 40, owner: 7))
 }

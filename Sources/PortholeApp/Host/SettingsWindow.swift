@@ -4,6 +4,11 @@ import PortholeCore
 
 @MainActor
 final class SettingsWindow: NSWindow, NSWindowDelegate {
+    override func sendEvent(_ event: NSEvent) {
+        if PortholeEventTag.isInjected(event.cgEvent) { return }
+        super.sendEvent(event)
+    }
+
     enum Tab: Int { case general, windows, stream, sharing, help }
 
     private let tabs = SettingsTabs()

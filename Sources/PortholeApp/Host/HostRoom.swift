@@ -266,7 +266,7 @@ final class HostRoom: NSObject, RoomDelegate {
             guard let id = m.win, registry.acceptsInput(id, from: who) else { return }
             if WholeMac.isScreen(id) { screenInput(m, id); return }
             await warnIfLocked(who)
-            input.handle(m)
+            input.handle(m, confined: GuestIdentity.isGuest(who))
             sessions[id]?.noteInput()
             if m.t == .resize {
                 guard resizes.offer(id, ResizeJob(message: m, who: who)) else { return }
@@ -616,7 +616,8 @@ final class HostRoom: NSObject, RoomDelegate {
         let tracker = tracker
         let links = Dictionary(participants.map { ($0.identity, guestLink?($0.identity)) }, uniquingKeysWith: { a, _ in a })
         let plan = TrackGrantPlan.make(participants: participants, tracks: tracks, link: { links[$0] ?? nil },
-                                       parent: { tracker.parent(of: $0) }, sharedParents: Set(parentIDs), linksExist: shareLinksExist())
+                                       parent: { tracker.parent(of: $0) }, sharedParents: Set(parentIDs), linksExist: shareLinksExist(),
+                                       accepted: { [accepts] in accepts?($0) ?? true })
         guard trackSender.shouldSend(plan) else { return }
         trackSender.sending(plan)
         let perms = plan.grants.map { ParticipantTrackPermission(participantSid: $0.participantSid, allTracksAllowed: $0.allTracks, allowedTrackSids: $0.trackSids) }

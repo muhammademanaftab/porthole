@@ -17,9 +17,10 @@ final class InputInjector {
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 
-    func handle(_ m: Message) {
+    func handle(_ m: Message, confined: Bool = false) {
         guard let id = m.win, let live = LiveWindow.lookup(id) else { return }
         let focus: () -> Void = { [weak self] in self?.focus(id: id, live: live) }
+        if confined, m.t == .key || m.t == .text, !guestMayType(m, id: id, live: live, focus: focus) { return }
         switch m.t {
         case .mouse: mouse(m, bounds: live.bounds, focus: focus)
         case .scroll: scroll(m, bounds: live.bounds)
@@ -40,6 +41,22 @@ final class InputInjector {
         case .text: text(m, focus: none)
         default: break
         }
+    }
+
+    private func guestMayType(_ m: Message, id: UInt32, live: LiveWindow, focus: () -> Void) -> Bool {
+        if m.t == .key, let code = m.code {
+            if Modifiers.flagKeyCodes.contains(code) || m.down == false { return true }
+            if GuestKeys.isSystemShortcut(code: code, mods: Modifiers(rawValue: m.mods ?? 0)) {
+                Log.info("input: dropped a system shortcut from a share-link guest (key \(code))", .trust)
+                return false
+            }
+        }
+        focus()
+        let ok = GuestKeys.mayType(frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                                   focusedWindow: AXWindows.focusedWindowID(pid: live.pid),
+                                   focusedElementPID: AXWindows.focusedElementPID(), window: id, owner: live.pid)
+        if !ok { Log.debug("input: dropped a guest's typing because window \(id) doesn't have the keyboard") }
+        return ok
     }
 
     private func focus(id: UInt32, live: LiveWindow) {
