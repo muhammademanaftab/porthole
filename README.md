@@ -2,7 +2,7 @@
 
 Use another Mac's windows as if they were on the Mac in front of you.
 
-> **Early release (0.1.0).** Porthole is checked by its automated tests and has been used daily between two Macs, but the newest pairing and connection code has not had much real-world use yet. Expect rough edges, and please report what you find.
+> **Early release (0.1.0).** Porthole is checked by its automated tests, but the newest pairing and connection code has not been tried between real Macs yet. Expect rough edges, and please report what you find.
 
 <p align="center"><img src="docs/images/connect.png" width="520" alt="Porthole's Connect window listing Macs on the network, with paired and unpaired Macs"></p>
 
