@@ -55,6 +55,8 @@ func connectUITests() {
     expect("status text: online", mini.statusText, "Online")
     expect("status text: older", old.statusText, "Older host")
     expect("status text: offline", gone.statusText, "Offline")
+    expect("badge label: paired, not paired, needs update, offline", [HostBadge.ready, .needsPairing, .older, .offline].map(\.label), ["Paired", "Not paired", "Needs update", "Offline"])
+    expect("badge action: an unpaired Mac offers Pair", [HostBadge.ready, .needsPairing, .older, .offline].map(\.action), ["Connect", "Pair…", "Connect", "Connect"])
     expect("detail: address and both routes", mini.detail(address: "100.64.0.2"), "100.64.0.2 · this network and Tailscale")
     let saved = DiscoveredHost(name: "x", lanHost: "x.local", status: .notFound, saved: true)
     expect("detail: saved host with no route", saved.detail(address: "x.local"), "x.local · saved")
@@ -63,7 +65,7 @@ func connectUITests() {
     check("badge help text for every badge", [HostBadge.ready, .needsPairing, .older, .offline].allSatisfy { !$0.help.isEmpty })
 
     expect("connect status: scanning with nothing yet", connectStatus(found: 0, scanning: true), "Looking for Macs…")
-    expect("connect status: nothing found", connectStatus(found: 0, scanning: false), "No Macs found. Connect by address below.")
+    expect("connect status: nothing found", connectStatus(found: 0, scanning: false), "No Macs found. On the other Mac, turn on Share this Mac in Porthole’s Settings, or connect by address below.")
     expect("connect status: one Mac", connectStatus(found: 1, scanning: false), "1 Mac online")
     expect("connect status: several, still scanning", connectStatus(found: 3, scanning: true), "3 Macs online, still looking…")
 }

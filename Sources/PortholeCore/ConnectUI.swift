@@ -69,10 +69,21 @@ public extension DiscoveredHost {
 }
 
 public extension HostBadge {
+    var label: String {
+        switch self {
+        case .ready: return "Paired"
+        case .needsPairing: return "Not paired"
+        case .older: return "Needs update"
+        case .offline: return "Offline"
+        }
+    }
+
+    var action: String { self == .needsPairing ? "Pair…" : "Connect" }
+
     var help: String {
         switch self {
         case .ready: return "Paired. Connect to see its windows."
-        case .needsPairing: return "Not paired yet. Connect to ask that Mac for a pairing code."
+        case .needsPairing: return "Not paired yet. Pair to ask that Mac for a pairing code."
         case .older: return "This Mac runs an older Porthole. Connect with its password."
         case .offline: return "Not found right now. It may be asleep or off this network."
         }
@@ -81,7 +92,7 @@ public extension HostBadge {
 
 public func connectStatus(found: Int, scanning: Bool) -> String {
     if scanning && found == 0 { return "Looking for Macs…" }
-    if found == 0 { return "No Macs found. Connect by address below." }
+    if found == 0 { return "No Macs found. On the other Mac, turn on Share this Mac in Porthole’s Settings, or connect by address below." }
     return "\(found) Mac\(found == 1 ? "" : "s") online\(scanning ? ", still looking…" : "")"
 }
 

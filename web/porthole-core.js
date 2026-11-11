@@ -219,9 +219,9 @@
 
   const THUMB_TOPIC = 'porthole-thumb';
   const ICON_TOPIC = 'porthole-icon';
-  const LOCKED_LIST = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it (for example with Screen Sharing), then refresh.";
+  const LOCKED_LIST = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it to see them.";
 
-  const LOCKED_CONTROL = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it (for example with Screen Sharing) to control windows.";
+  const LOCKED_CONTROL = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it to control windows.";
   const UNLOCK_MAX = 256;
   const UNLOCK_WORKING = 'Typing the password into the lock screen\u2026';
   const UNLOCK_NO_ANSWER = "The host didn't answer. It may run an older Porthole that can't unlock its screen yet.";

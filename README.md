@@ -2,6 +2,10 @@
 
 Use another Mac's windows as if they were on the Mac in front of you.
 
+> **Early release (0.1.0).** Porthole is checked by its automated tests and has been used daily between two Macs, but the newest pairing and connection code has not had much real-world use yet. Expect rough edges, and please report what you find.
+
+<p align="center"><img src="docs/images/connect.png" width="520" alt="Porthole's Connect window listing Macs on the network, with paired and unpaired Macs"></p>
+
 Porthole shares single windows, not the whole desktop: each one opens as its own window on your Mac, with its own Dock icon, sharp on a Retina screen, at up to 60 frames a second. Type, click, scroll and resize, and the real window on the other Mac follows. A browser on any computer or phone works as a viewer too.
 
 - **One window at a time, or the whole screen.** Open as many windows as you like, each in its own portal, or pick "This Mac's Screen".

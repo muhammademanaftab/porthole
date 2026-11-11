@@ -81,7 +81,9 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
         spinner.isDisplayedWhenStopped = false
         status.textColor = .secondaryLabelColor
         status.font = .systemFont(ofSize: 12)
-        status.lineBreakMode = .byTruncatingTail
+        status.lineBreakMode = .byWordWrapping
+        status.maximumNumberOfLines = 2
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let refresh = NSButton(image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")!,
                                target: self, action: #selector(refreshClicked))
         refresh.bezelStyle = .accessoryBarAction
@@ -185,6 +187,7 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
         } else if current.isEmpty, let i = rows.firstIndex(where: { $0.host.status != .notFound }) {
             table.selectRowIndexes([i], byExtendingSelection: false)
         }
+        updateAction()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -202,6 +205,12 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
         address.stringValue = rows[i].address
         chosenName = rows[i].host.name
         message.isHidden = true
+        updateAction()
+    }
+
+    private func updateAction() {
+        let i = table.selectedRow
+        connectButton.title = rows.indices.contains(i) ? rows[i].host.badge(trusted: rows[i].trusted).action : "Connect"
     }
 
     @objc private func doubleClicked() {
@@ -284,7 +293,7 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
 
     func setBusy(_ busy: Bool, _ label: String = "Pairing…") {
         connectButton.isEnabled = !busy
-        connectButton.title = busy ? label : "Connect"
+        if busy { connectButton.title = label } else { updateAction() }
         codeSheet?.setBusy(busy)
     }
 
@@ -348,7 +357,7 @@ final class HostCell: NSTableCellView {
     func configure(_ host: DiscoveredHost, address: String, badge: HostBadge) {
         name.stringValue = host.name
         detail.stringValue = host.detail(address: address)
-        state.stringValue = host.statusText
+        state.stringValue = badge.label
         dot.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7, weight: .regular))
         switch badge {
@@ -360,7 +369,7 @@ final class HostCell: NSTableCellView {
         symbol.contentTintColor = badge == .offline ? .tertiaryLabelColor : .labelColor
         name.textColor = badge == .offline ? .secondaryLabelColor : .labelColor
         toolTip = badge.help
-        setAccessibilityLabel("\(host.name), \(host.statusText)\(badge == .needsPairing ? ", not paired" : "")")
+        setAccessibilityLabel("\(host.name), \(badge.label)")
     }
 }
 

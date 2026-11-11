@@ -2,8 +2,8 @@ import CoreGraphics
 import Foundation
 
 public enum LockNotice {
-    public static let list = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it (for example with Screen Sharing), then refresh."
-    public static let control = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it (for example with Screen Sharing) to control windows."
+    public static let list = "This Mac's screen is locked, and macOS hides all windows while it is locked. Unlock it to see them."
+    public static let control = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it to control windows."
 }
 
 public extension WindowInfo {
