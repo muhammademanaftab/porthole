@@ -257,7 +257,7 @@ final class GuestAskPanel: GuardedPanel {
 
     init(link: ShareLink, answer: @escaping (Bool) -> Void) {
         super.init(contentRect: CGRect(x: 0, y: 0, width: 380, height: 160), styleMask: [.titled], backing: .buffered, defer: false)
-        title = "Porthole Host"
+        title = "Porthole"
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         level = .floating

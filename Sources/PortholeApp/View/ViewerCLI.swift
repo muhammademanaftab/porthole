@@ -44,7 +44,7 @@ enum ViewerCLI {
             print("On a Mac with no screen, run porthole-host paircode there to see it.")
             return 0
         case .older:
-            fail("\(host) runs an older Porthole Host without pairing requests. Choose Pair a New Viewer… on it, then porthole-view pair \(host) <code>.")
+            fail("\(host) runs an older Porthole without pairing requests. Choose Pair a New Viewer… on it, then porthole-view pair \(host) <code>.")
             return 1
         case .refused(let why):
             fail(why)

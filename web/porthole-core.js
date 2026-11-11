@@ -224,7 +224,7 @@
   const LOCKED_CONTROL = "This Mac's screen is locked, so typing and clicks go to the lock screen. Unlock it (for example with Screen Sharing) to control windows.";
   const UNLOCK_MAX = 256;
   const UNLOCK_WORKING = 'Typing the password into the lock screen\u2026';
-  const UNLOCK_NO_ANSWER = "The host didn't answer. It may run a Porthole Host that can't unlock its screen yet.";
+  const UNLOCK_NO_ANSWER = "The host didn't answer. It may run an older Porthole that can't unlock its screen yet.";
   const UNLOCK_ANSWER_MS = 25000;
   const UNLOCK_HINT = "Type the Mac's login password. Porthole types it into the lock screen and doesn't keep it.";
 

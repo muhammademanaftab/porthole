@@ -313,7 +313,7 @@ private func trailTests() {
 
 private func whyQuitTests() {
     let log = [
-        line("2026-11-04T08:00:00Z", .info, "watchdog", 5, .watchdog, "watchdog started (pid 5, app /Applications/Porthole Host.app, hang limit 60 s)"),
+        line("2026-11-04T08:00:00Z", .info, "watchdog", 5, .watchdog, "watchdog started (pid 5, app /Applications/Porthole.app, hang limit 60 s)"),
         line("2026-11-04T08:00:00Z", .info, "watchdog", 5, .watchdog, "watchdog launch reason=login"),
         line("2026-11-04T08:00:01Z", .info, "host", 100, .host, "host started version=0.1.0 launchedBy=watchdog previousExit=none"),
         line("2026-11-04T08:10:00Z", .info, "host", 100, .host, "quitting (quit)"),

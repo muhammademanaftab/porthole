@@ -37,7 +37,7 @@ final class ConnectWindow: NSWindow, NSTextFieldDelegate, NSTableViewDataSource,
         icon.imageScaling = .scaleProportionallyUpOrDown
         let heading = NSTextField(labelWithString: "Choose a Mac")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
-        let sub = NSTextField(wrappingLabelWithString: "Macs running Porthole Host on this network and your tailnet. A padlock means this Mac hasn't paired with it yet.")
+        let sub = NSTextField(wrappingLabelWithString: "Macs sharing with Porthole on this network and your tailnet. A padlock means this Mac hasn't paired with it yet.")
         sub.textColor = .secondaryLabelColor
         sub.font = .systemFont(ofSize: 12)
         let headText = NSStackView(views: [heading, sub])

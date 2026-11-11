@@ -167,7 +167,7 @@ func watchdogTests() {
     expect("restart is sent as t=restart", json(restart.encoded())?["t"] as? String, "restart")
 
     var raw: [UInt8] = [2, 0, 0, 0]
-    raw += Array("/Applications/Porthole Host.app/Contents/MacOS/porthole-host".utf8) + [0, 0, 0]
+    raw += Array("/Applications/Porthole.app/Contents/MacOS/porthole-host".utf8) + [0, 0, 0]
     raw += Array("Contents/MacOS/porthole-host".utf8) + [0] + Array("watchdog".utf8) + [0]
     raw += Array("PORTHOLE_COMMAND=watchdog".utf8) + [0]
     let parsed = ProcessArguments(procargs: raw)

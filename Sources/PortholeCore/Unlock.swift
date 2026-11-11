@@ -30,7 +30,7 @@ public enum UnlockRefusal: Equatable, Sendable {
         case .notLocked: return "This Mac's screen isn't locked."
         case .noPassword: return "Type the Mac's login password first."
         case .untypeable: return "That password has characters Porthole can't type into the lock screen."
-        case .noPermission: return "Porthole Host needs Accessibility permission on the Mac to type into the lock screen."
+        case .noPermission: return "Porthole needs Accessibility permission on the Mac to type into the lock screen."
         case .busy: return "Porthole is already typing a password into the lock screen. Wait for the result."
         case .tooSoon(let s): return "Wait \(s) s before trying again."
         case .pausedAfterFailures(let s): return "Too many wrong passwords. Try again in \(UnlockLimiter.minutesLabel(s))."
@@ -308,7 +308,7 @@ public enum UnlockPrompt {
 
     public static let answerTimeout: TimeInterval = 25
 
-    public static let noAnswer = "The host didn't answer. It may run a Porthole Host that can't unlock its screen yet."
+    public static let noAnswer = "The host didn't answer. It may run an older Porthole that can't unlock its screen yet."
 
     public static func isBusyReply(_ m: Message) -> Bool {
         m.t == .unlock && m.on != true && m.msg == UnlockRefusal.busy.message

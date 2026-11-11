@@ -11,7 +11,7 @@ enum Power {
         for type in [kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionTypePreventUserIdleSystemSleep] {
             var id: IOPMAssertionID = 0
             if IOPMAssertionCreateWithName(type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                           "Porthole Host is sharing windows" as CFString, &id) == kIOReturnSuccess {
+                                           "Porthole is sharing windows" as CFString, &id) == kIOReturnSuccess {
                 assertions.append(id)
             }
         }
@@ -26,7 +26,7 @@ enum Power {
 
     static func wakeDisplay() {
         var id: IOPMAssertionID = 0
-        IOPMAssertionDeclareUserActivity("Porthole Host waking the display" as CFString, kIOPMUserActiveLocal, &id)
+        IOPMAssertionDeclareUserActivity("Porthole waking the display" as CFString, kIOPMUserActiveLocal, &id)
     }
 }
 

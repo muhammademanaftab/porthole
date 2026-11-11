@@ -116,7 +116,7 @@ final class SharingTab: NSViewController {
         toggleNote.stringValue = overridden
             ? "Set by \(HostingSwitch.envKey) for this run."
             : on ? "Your other Macs and browsers can view this Mac's windows. Porthole stays in the menu bar while no window from another Mac is open here."
-            : "Off: this Mac only views other Macs. On: it shares its windows too, like Porthole Host did, and keeps a menu-bar icon."
+            : "Off: this Mac only views other Macs. On: it shares its windows too and keeps a menu-bar icon."
         let current = on ? host() : nil
         if current !== shown || (current != nil && body.isEmpty) { rebuild(current) }
         for pane in body {

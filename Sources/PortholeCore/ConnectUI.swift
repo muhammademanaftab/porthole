@@ -73,7 +73,7 @@ public extension HostBadge {
         switch self {
         case .ready: return "Paired. Connect to see its windows."
         case .needsPairing: return "Not paired yet. Connect to ask that Mac for a pairing code."
-        case .older: return "This Mac runs an older Porthole Host. Connect with its password."
+        case .older: return "This Mac runs an older Porthole. Connect with its password."
         case .offline: return "Not found right now. It may be asleep or off this network."
         }
     }

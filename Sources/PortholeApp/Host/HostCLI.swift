@@ -53,11 +53,11 @@ enum HostCLI {
     }
 
     private static func paircode() -> Int32 {
-        guard let config = HostConfig.saved() else { fail("Porthole Host has never run on this Mac."); return 1 }
+        guard let config = HostConfig.saved() else { fail("Porthole has never shared this Mac."); return 1 }
         let (status, body) = ask(config.httpPort, "/local/paircode")
-        guard let status else { fail("Porthole Host isn't running on this Mac (nothing answers on port \(config.httpPort))."); return 1 }
+        guard let status else { fail("Porthole isn't sharing this Mac (nothing answers on port \(config.httpPort))."); return 1 }
         guard status == 200, let code = body?["code"] as? String else {
-            fail(status == 404 ? "The running Porthole Host refused the local request. It may be an older version, or run as another user; restart it after updating."
+            fail(status == 404 ? "The running Porthole refused the local request. It may be an older version, or run as another user; restart it after updating."
                  : "The host answered HTTP \(status).")
             return 1
         }
@@ -100,10 +100,10 @@ enum HostCLI {
         switch TrustStore(directory: HostConfig.directory).unpair(who) {
         case .found(let d) where running:
             print("Unpaired \(d.name) (\(d.id)) in \(TrustStore.fileName); it can't get a new token.")
-            fail("The running Porthole Host refused the local request, so a viewer already connected from \(d.name) stays until it disconnects. Restart Porthole Host to drop it now.")
+            fail("The running Porthole refused the local request, so a viewer already connected from \(d.name) stays until it disconnects. Restart Porthole to drop it now.")
             return 1
         case .found(let d):
-            print("Unpaired \(d.name) (\(d.id)). Porthole Host isn't running, so there was nothing to disconnect.")
+            print("Unpaired \(d.name) (\(d.id)). Porthole isn't running, so there was nothing to disconnect.")
             return 0
         case .none:
             fail("No paired Mac matches \"\(who)\". See porthole-host devices.")

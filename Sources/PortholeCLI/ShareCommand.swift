@@ -36,7 +36,7 @@ enum ShareCommand {
             return 1
         }
         guard reply.status == 200 else {
-            if reply.status == 404 && reply.body.isEmpty { fail("this Porthole Host is too old for share links, or its local secret doesn't match"); return 1 }
+            if reply.status == 404 && reply.body.isEmpty { fail("this Porthole is too old for share links, or its local secret doesn't match"); return 1 }
             fail(reply.body["error"] as? String ?? "the host answered HTTP \(reply.status)")
             if let matches = reply.body["matches"] as? [[String: Any]] {
                 for m in matches { say("  \(m["id"] ?? "")  \(m["app"] ?? "")  \(m["title"] ?? "")") }
