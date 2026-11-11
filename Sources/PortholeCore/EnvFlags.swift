@@ -46,6 +46,7 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_PW", "probe", "host password for the probe", "from config.json", secret: true),
         EnvFlag("PORTHOLE_DEVICE", "probe", "device ID the probe pairs as", "unset"),
         EnvFlag("PORTHOLE_SECRET", "probe", "pairing secret for PORTHOLE_DEVICE", "unset", secret: true),
+        EnvFlag("PORTHOLE_PAIR_CODE", "probe", "6-digit code from porthole paircode on the host: the probe pairs with it first and connects as that device", "unset", secret: true),
         EnvFlag("PORTHOLE_EXPECT_UNPAIR", "probe", "set: expect the host to refuse this device", "unset"),
         EnvFlag("PORTHOLE_STREAM", "probe", "stream prefs to ask for, as key=value pairs separated by commas", "unset"),
         EnvFlag("PORTHOLE_CLIP_SEND", "probe", "text to send to the host clipboard", "unset"),

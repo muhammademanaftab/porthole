@@ -47,7 +47,7 @@ scripts/install-cli.sh
 
 `install-cli.sh` links `porthole` into `~/bin` or `/usr/local/bin`; pass `--dir DIR` for another folder on your PATH.
 
-On the Mac you share: allow **Screen Recording** and **Accessibility**, then turn on **Settings › Sharing › Share this Mac**.
+On the Mac you share: allow **Screen Recording** and **Accessibility**, then turn on **Settings › Sharing › Share this Mac**. macOS also asks once to let Porthole find devices on your local network; allow it, or other Macs on the same network won't see this one.
 
 The app is signed with a certificate named "Porthole Dev" if your keychain has one, and ad hoc otherwise. With ad hoc signing macOS asks for the two permissions again after every rebuild, so a self-signed code-signing certificate with that name saves time.
 

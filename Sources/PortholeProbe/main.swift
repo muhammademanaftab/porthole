@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import CryptoKit
 import Foundation
 import LiveKit
 import PortholeCore
@@ -106,7 +107,27 @@ let cfgURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathCompon
 guard let pw = env["PORTHOLE_PW"] ?? ((try? JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL))) as? [String: Any])?["password"] as? String
 else { fail("no host config") }
 
-let credential: ViewerCredential = env["PORTHOLE_DEVICE"].flatMap { id in env["PORTHOLE_SECRET"].map { .device(id: id, secret: $0) } } ?? .password(pw)
+var credential: ViewerCredential = env["PORTHOLE_DEVICE"].flatMap { id in env["PORTHOLE_SECRET"].map { .device(id: id, secret: $0) } } ?? .password(pw)
+if let code = env["PORTHOLE_PAIR_CODE"] {
+    let device = env["PORTHOLE_DEVICE"] ?? DeviceIdentity.makeID()
+    func get(_ url: URL) async throws -> (Int, Data) {
+        let (body, response) = try await URLSession.shared.data(from: url)
+        return ((response as? HTTPURLResponse)?.statusCode ?? 0, body)
+    }
+    guard let half = PairExchange.begin(code: code, device: device),
+          let startURL = pairStartURL(hostAddress: hostAddress, device: device, name: "probe", share: half.share) else { fail("pair start request") }
+    let begun = try await get(startURL)
+    let start = parsePairStart(status: begun.0, body: begun.1)
+    guard let hostShare = start.share else { fail("pair start: \(start.refusal ?? "no share")") }
+    guard let key = PairExchange.key(half, peer: hostShare, device: device, viewerShare: half.share, hostShare: hostShare),
+          let finishURL = pairFinishURL(hostAddress: hostAddress, device: device, name: "probe", tag: PairExchange.viewerTag(key: key, device: device)) else { fail("pair key") }
+    let finished = try await get(finishURL)
+    guard case .paired(let secret, let hostID, let hostName) = parsePairFinish(status: finished.0, body: finished.1, key: key) else {
+        fail("pair finish: \(parsePairFinish(status: finished.0, body: finished.1, key: key))")
+    }
+    print("PASS  paired as \(device) with \(hostName ?? "?") (\(hostID ?? "no id")); the secret arrived sealed")
+    credential = .device(id: device, secret: secret)
+}
 guard let tokenAt = tokenRequest(hostAddress: hostAddress, credential: credential, name: "probe") else { fail("token request") }
 let (data, tokenResponse) = try await URLSession.shared.data(from: tokenAt.url)
 guard case .ok(let url, let token) = parseTokenReply(status: (tokenResponse as? HTTPURLResponse)?.statusCode ?? 0, body: data, openKey: tokenAt.openKey) else { fail("token endpoint") }
@@ -151,7 +172,7 @@ for _ in 0..<10 where listReply == nil {
     try await probe.send(Message(.list))
     listReply = await probe.wait(for: .windows, timeout: 1)
 }
-guard let list = listReply, list.t == .windows else { fail("window list (\(String(describing: probe.inbox)))") }
+guard let list = listReply, list.t == .windows else { fail("window list: \(listReply?.msg ?? "no answer from the host")") }
 let windows = list.list ?? []
 print("PASS  host listed \(windows.count) windows")
 func offScreenWindow() -> WindowInfo? {

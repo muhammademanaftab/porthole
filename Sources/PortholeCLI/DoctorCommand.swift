@@ -128,6 +128,7 @@ enum DoctorCommand {
         let others = found.filter { $0.name != mine?.name }.map(\.name)
         var detail = advertised.map { "advertising \($0)" } ?? "the host reports no advertisement"
         detail += mine != nil ? "; visible on the network as \"\(mine!.name)\"" : "; not visible in a 4 s browse"
+        if mine == nil, status != nil { detail += "\nif it stays this way, turn on Porthole in System Settings > Privacy & Security > Local Network" }
         if !others.isEmpty { detail += "\nother Porthole hosts nearby: \(others.joined(separator: ", "))" }
         let st: CheckStatus = mine != nil ? .ok : (status == nil ? .info : .warn)
         return DoctorCheck("Host", "Bonjour", st, detail)
