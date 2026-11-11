@@ -20,11 +20,16 @@ final class Stage {
     var idleLimit: Double { idleSeconds }
 
     private var creating: Task<Void, Never>?
+    private var builtFor: CGSize?
 
     func ensure(screenPoints: CGSize?) async {
+        if let creating { await creating.value; return }
+        if StageLayout.shouldRebuild(builtFor: builtFor, screenPoints: screenPoints, empty: display != nil && emptySince != nil && parked.isEmpty && matched.isEmpty) {
+            Log.info("stage: empty and sized for another viewer; making it again", .stage)
+            release()
+        }
         emptySince = nil
         guard display == nil else { return }
-        if let creating { await creating.value; return }
         let task = Task { @MainActor in await self.create(screenPoints: screenPoints) }
         creating = task
         await task.value
@@ -66,6 +71,7 @@ final class Stage {
         idleTimer?.invalidate(); idleTimer = nil
         display = nil
         displayID = nil
+        builtFor = nil
         emptySince = nil
         Power.allowSleep()
         Log.info("stage: released", .stage)
@@ -101,6 +107,7 @@ final class Stage {
                                               modes: [mode.pixels, mode.points]) else { return }
         display = v
         displayID = id
+        builtFor = mode.points
         configure(id, besides: others)
         for _ in 0..<20 where !isHiDPI(id) { try? await Task.sleep(nanoseconds: 100_000_000) }
         Log.info("stage ready for a \(Int(mode.points.width))x\(Int(mode.points.height)) viewer: display \(id) at \(CGDisplayBounds(id)), scale \(scale(of: id)), main \(CGDisplayIsMain(id) != 0)", .stage)

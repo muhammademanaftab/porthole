@@ -27,6 +27,11 @@ public enum StageLayout {
         return (CGSize(width: ew, height: eh), CGSize(width: ew / 2, height: eh / 2))
     }
 
+    public static func shouldRebuild(builtFor: CGSize?, screenPoints: CGSize?, empty: Bool) -> Bool {
+        guard empty, let builtFor, let screenPoints, screenPoints.width >= 1, screenPoints.height >= 1 else { return false }
+        return viewerMode(screenPoints: screenPoints).points != builtFor
+    }
+
     public static func shouldRelease(emptySince: Double?, now: Double, idle: Double = idleSeconds) -> Bool {
         guard let since = emptySince else { return false }
         return now - since >= idle
