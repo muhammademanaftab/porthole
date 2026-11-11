@@ -54,7 +54,7 @@ public struct WebRoutes {
     public static let viewerTokenTTL: TimeInterval = 600
 
     public static let servedExtensions = [".js", ".css", ".png", ".webmanifest"]
-    static let mutatingPaths: Set<String> = ["/pair", "/pair/request", "/local/paircode", "/local/unpair", "/local/share", "/local/unshare"]
+    static let mutatingPaths: Set<String> = ["/pair", "/pair/start", "/pair/finish", "/pair/request", "/local/paircode", "/local/unpair", "/local/share", "/local/unshare"]
 
     public init(password: String, livekitPort: Int, tokens: AccessToken, webRoot: URL?,
                 suffix: @escaping () -> String = { String(DeviceIdentity.makeID().prefix(6)) }, pairing: PairingDesk? = nil, hostName: String = "Mac",
@@ -109,7 +109,10 @@ public struct WebRoutes {
                 let minutes = max(1, (paused + 59) / 60)
                 return Self.json("429 Too Many Requests", ["error": "Too many wrong passwords from this computer. Try again in \(minutes) \(minutes == 1 ? "minute" : "minutes")."])
             }
-            switch authorizeToken(query: query, password: password, verify: { id, secret in trust?.verify(id: id, secret: secret) }) {
+            let trust = self.trust
+            let proof = TokenProof.verify(query: query, secretHash: { id in trust?.devices().first { $0.id == id }?.secretHash })
+            switch authorizeToken(query: query, password: password,
+                                  verify: { id, _ in proof?.device == id ? trust?.devices().first { $0.id == id } : nil }) {
             case .refused:
                 if triesPassword { passwordThrottle?.failed(source) }
                 return HTTPResponse("403 Forbidden", "application/json", #"{"error":"wrong password"}"#)
@@ -124,6 +127,12 @@ public struct WebRoutes {
             }
             let token = tokens.make(identity: identity, room: "porthole", canPublish: false, ttl: Self.viewerTokenTTL)
             let body: [String: String] = ["url": "ws://\(Self.hostname(from: hostHeader)):\(livekitPort)", "token": token]
+            if deviceID(fromIdentity: identity) != nil {
+                guard let proof, let sealed = Sealed.sealJSON(body, key: proof.sealKey) else {
+                    return HTTPResponse("500 Internal Server Error", "text/plain", "could not seal the token")
+                }
+                return Self.json("200 OK", ["sealed": sealed])
+            }
             return HTTPResponse("200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
         case "/hello":
             let hello = HostHello(name: hostName, version: portholeProtocolVersion, id: hostID)
@@ -137,7 +146,11 @@ public struct WebRoutes {
             obj["proof"] = proof
             return Self.json("200 OK", obj)
         case "/pair":
-            return pair(query["code"] ?? "", device: query["device"], name: query["name"])
+            return Self.json("400 Bad Request", ["error": "This copy of Porthole is too old to pair with \(hostName). Update it, or use the host's password."])
+        case "/pair/start":
+            return pairStart(device: query["device"] ?? "", share: query["v"] ?? "")
+        case "/pair/finish":
+            return pairFinish(device: query["device"] ?? "", name: query["name"], tag: query["tag"] ?? "")
         case "/pair/request":
             return pairRequest(device: query["device"] ?? "", name: query["name"])
         case "/favicon.ico":
@@ -202,20 +215,28 @@ public struct WebRoutes {
         return o
     }
 
-    private func pair(_ code: String, device: String?, name: String?) -> HTTPResponse {
-        guard let pairing, let trust else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
-        guard let device else {
-            return Self.json("400 Bad Request", ["error": "This copy of Porthole is too old to pair with \(hostName). Update it, or use the host's password."])
-        }
+    private func pairStart(device: String, share: String) -> HTTPResponse {
+        guard let pairing, trust != nil else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
         guard DeviceIdentity.isValidID(device) else { return Self.json("400 Bad Request", ["error": "That isn't a Porthole device ID."]) }
-        let outcome = pairing.redeem(code, device: device)
-        guard outcome == .accepted else { return Self.json("403 Forbidden", ["error": pairMessage(outcome) ?? ""]) }
+        switch pairing.start(device: device, viewerShare: share) {
+        case .share(let h): return Self.json("200 OK", ["h": h, "host": hostName])
+        case .refused(let outcome): return Self.json("403 Forbidden", ["error": pairMessage(outcome) ?? ""])
+        case .invalid: return Self.json("400 Bad Request", ["error": "The pairing request was malformed."])
+        }
+    }
+
+    private func pairFinish(device: String, name: String?, tag: String) -> HTTPResponse {
+        guard let pairing, let trust else { return HTTPResponse("404 Not Found", "text/plain", "not found") }
+        guard DeviceIdentity.isValidID(device) else { return Self.json("400 Bad Request", ["error": "That isn't a Porthole device ID."]) }
+        let (outcome, key) = pairing.finish(device: device, tag: tag)
+        guard outcome == .accepted, let key else { return Self.json("403 Forbidden", ["error": pairMessage(outcome) ?? ""]) }
         guard let secret = trust.pair(id: device, name: cleanDeviceName(name)) else {
             return Self.json("500 Internal Server Error", ["error": "The host couldn't save the pairing."])
         }
         var body: [String: Any] = ["secret": secret, "host": hostName]
         if let hostID { body["host_id"] = hostID }
-        return Self.json("200 OK", body)
+        guard let sealed = Sealed.sealJSON(body, key: key) else { return HTTPResponse("500 Internal Server Error", "text/plain", "could not seal the pairing") }
+        return Self.json("200 OK", ["sealed": sealed])
     }
 
     private func pairRequest(device: String, name: String?) -> HTTPResponse {
@@ -230,8 +251,10 @@ public struct WebRoutes {
         case .paused(let seconds):
             let minutes = (seconds + 59) / 60
             return Self.json("429 Too Many Requests", ["error": "Too many wrong codes on \(hostName). Pairing requests are paused for \(minutes) \(minutes == 1 ? "minute" : "minutes"), or choose Pair a New Viewer… on the host and enter that code."])
-        case .issued(let code), .same(let code):
+        case .issued(let code):
             onPairRequest?(who, code)
+            return Self.json("200 OK", ["requested": true, "host": hostName])
+        case .same:
             return Self.json("200 OK", ["requested": true, "host": hostName])
         }
     }

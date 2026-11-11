@@ -63,10 +63,6 @@ enum ViewerCLI {
             }
             print("Paired with \(hostName ?? host). This Mac (\(name)) can view it from now on.")
             return 0
-        case .password(let pw):
-            guard PasswordStore.save(pw, for: host) else { fail("The Keychain refused to keep the password."); return 1 }
-            print("\(host) runs an older Porthole Host; its password is now saved in the Keychain.")
-            return 0
         case .refused(let why):
             fail(why)
             return 1

@@ -126,15 +126,24 @@ final class HostDiscovery {
     }
 
     nonisolated static func pair(address: String, code: String, device: String, name: String) async -> PairReply {
-        guard let url = pairURL(hostAddress: address, code: code, device: device, name: name) else {
+        let unreachable = PairReply.refused("Couldn't reach \(address). Is Porthole sharing on that Mac?")
+        guard let half = PairExchange.begin(code: code, device: device),
+              let startURL = pairStartURL(hostAddress: address, device: device, name: name, share: half.share) else {
             return .refused("\"\(address)\" isn't a host address. Use a name or IP, optionally with :port.")
         }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 5
-        guard let (data, resp) = try? await RouteFinder.session.data(for: req), let http = resp as? HTTPURLResponse else {
-            return .refused("Couldn't reach \(address). Is Porthole Host running there?")
+        var start = URLRequest(url: startURL)
+        start.timeoutInterval = 5
+        guard let (startData, startResp) = try? await RouteFinder.session.data(for: start), let startHTTP = startResp as? HTTPURLResponse else { return unreachable }
+        let begun = parsePairStart(status: startHTTP.statusCode, body: startData)
+        guard let hostShare = begun.share else { return .refused(begun.refusal ?? "The host didn't accept the pairing.") }
+        guard let key = PairExchange.key(half, peer: hostShare, device: device, viewerShare: half.share, hostShare: hostShare),
+              let finishURL = pairFinishURL(hostAddress: address, device: device, name: name, tag: PairExchange.viewerTag(key: key, device: device)) else {
+            return .refused("The host's answer was malformed. Nothing was paired.")
         }
-        return parsePairReply(status: http.statusCode, body: data)
+        var finish = URLRequest(url: finishURL)
+        finish.timeoutInterval = 5
+        guard let (data, resp) = try? await RouteFinder.session.data(for: finish), let http = resp as? HTTPURLResponse else { return unreachable }
+        return parsePairFinish(status: http.statusCode, body: data, key: key)
     }
 
     nonisolated static func requestPairing(address: String, device: String, name: String) async -> PairRequestReply {
@@ -144,7 +153,7 @@ final class HostDiscovery {
         var req = URLRequest(url: url)
         req.timeoutInterval = 5
         guard let (data, resp) = try? await RouteFinder.session.data(for: req), let http = resp as? HTTPURLResponse else {
-            return .refused("Couldn't reach \(address). Is Porthole Host running there?")
+            return .refused("Couldn't reach \(address). Is Porthole sharing on that Mac?")
         }
         return parsePairRequestReply(status: http.statusCode, body: data)
     }

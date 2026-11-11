@@ -247,11 +247,26 @@ public enum ViewerCredential: Equatable, Sendable {
     case device(id: String, secret: String)
 }
 
-public func tokenURL(hostAddress: String, credential: ViewerCredential, name: String) -> URL? {
+public struct TokenRequest: Sendable {
+    public var url: URL
+    public var openKey: SymmetricKey?
+}
+
+public func tokenRequest(hostAddress: String, credential: ViewerCredential, name: String, nonce: String = HelloProof.makeNonce()) -> TokenRequest? {
     switch credential {
-    case .password(let pw): return tokenURL(hostAddress: hostAddress, password: pw, name: name)
-    case .device(let id, let secret):
-        return hostURL(hostAddress, path: "/token", ["device": id, "secret": secret, "name": name])
+    case .password(let pw):
+        return tokenURL(hostAddress: hostAddress, password: pw, name: name).map { TokenRequest(url: $0, openKey: nil) }
+    case .device:
+        guard let query = TokenProof.query(credential: credential, name: name, nonce: nonce), let (host, port) = splitHostAddress(hostAddress),
+              let key = TokenProof.openKey(credential: credential, nonce: nonce) else { return nil }
+        var comps = URLComponents()
+        comps.scheme = "http"
+        comps.host = host
+        comps.port = port
+        comps.path = "/token"
+        comps.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) }
+        comps.percentEncodedQuery = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        return comps.url.map { TokenRequest(url: $0, openKey: key) }
     }
 }
 
@@ -277,8 +292,15 @@ public enum TokenReply: Equatable, Sendable {
     case refused(String)
 }
 
-public func parseTokenReply(status: Int, body: Data) -> TokenReply {
+public func parseTokenReply(status: Int, body: Data, openKey: SymmetricKey? = nil) -> TokenReply {
     let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    if status == 200, let openKey {
+        guard let inner = Sealed.openJSON(obj?["sealed"] as? String, key: openKey),
+              let url = inner["url"] as? String, let token = inner["token"] as? String else {
+            return .refused("The answer didn't come from the Mac this one is paired with.")
+        }
+        return .ok(url: url, token: token)
+    }
     if status == 200, let url = obj?["url"] as? String, let token = obj?["token"] as? String { return .ok(url: url, token: token) }
     let msg = obj?["error"] as? String
     if obj?["unpaired"] as? Bool == true {

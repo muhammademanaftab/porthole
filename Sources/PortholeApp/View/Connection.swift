@@ -109,14 +109,14 @@ final class Connection: NSObject, RoomDelegate {
     }
 
     private func connect(via candidate: RouteCandidate, confirmed: Bool) async throws {
-        guard let tokenAt = tokenURL(hostAddress: candidate.address, credential: credential,
-                                     name: shortHostName(ProcessInfo.processInfo.hostName)) else {
+        guard let tokenAt = tokenRequest(hostAddress: candidate.address, credential: credential,
+                                         name: shortHostName(ProcessInfo.processInfo.hostName)) else {
             throw NSError(domain: "Porthole", code: 400, userInfo: [NSLocalizedDescriptionKey:
                 "\"\(candidate.address)\" isn't a host address. Use a name or IP, optionally with :port."])
         }
-        let (status, data) = try await RouteFinder.fetch(tokenAt, budget: candidate.budget)
+        let (status, data) = try await RouteFinder.fetch(tokenAt.url, budget: candidate.budget)
         let url: String, token: String
-        switch parseTokenReply(status: status, body: data) {
+        switch parseTokenReply(status: status, body: data, openKey: tokenAt.openKey) {
         case .ok(let u, let t): url = u; token = t
         case .unpaired(let why) where RoutePlan.stops(status: status, confirmed: confirmed || candidate.saved):
             throw NSError(domain: "Porthole", code: 403, userInfo: [NSLocalizedDescriptionKey: why])

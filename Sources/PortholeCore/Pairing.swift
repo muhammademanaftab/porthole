@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct PairRequester: Equatable, Sendable {
@@ -59,7 +60,7 @@ public struct GuessBudget: Codable, Equatable, Sendable {
 }
 
 public struct PairingCodes: Sendable {
-    public enum Outcome: Equatable, Sendable { case accepted, wrong(left: Int), locked, expired, noCode, paused(seconds: Int) }
+    public enum Outcome: Equatable, Sendable { case accepted, wrong(left: Int), locked, expired, noCode, paused(seconds: Int), forOther(name: String) }
     public enum State: Equatable, Sendable { case idle, active(code: String, secondsLeft: Int), used, expired, locked }
 
     public static let lifetime: TimeInterval = 120
@@ -137,18 +138,29 @@ public struct PairingCodes: Sendable {
         return .active(code: code, secondsLeft: Int(expires.timeIntervalSince(now).rounded(.up)))
     }
 
-    public mutating func redeem(_ input: String, device: String? = nil, now: Date) -> Outcome {
+    public mutating func offer(device: String?, now: Date) -> (code: String?, refusal: Outcome?) {
         expireIfDue(now)
         guard let code else {
             switch ended {
-            case .expired: return .expired
-            case .locked: return .locked
-            default: return .noCode
+            case .expired: return (nil, .expired)
+            case .locked: return (nil, .locked)
+            default: return (nil, .noCode)
             }
         }
-        if let requester, requester.id != device { return .wrong(left: Self.maxWrongTries - wrong) }
-        if !fromOwner, let paused = budget.secondsPaused(now: now) { return .paused(seconds: paused) }
-        if Self.sameDigits(normalizePairingCode(input), code) {
+        if let requester, requester.id != device { return (nil, .forOther(name: requester.name)) }
+        if !fromOwner, let paused = budget.secondsPaused(now: now) { return (nil, .paused(seconds: paused)) }
+        return (code, nil)
+    }
+
+    public mutating func redeem(_ input: String, device: String? = nil, now: Date) -> Outcome {
+        let (code, refusal) = offer(device: device, now: now)
+        guard let code else { return refusal ?? .noCode }
+        return settle(matched: constantTimeEqual(normalizePairingCode(input), code), now: now)
+    }
+
+    public mutating func settle(matched: Bool, now: Date) -> Outcome {
+        guard code != nil else { return .noCode }
+        if matched {
             self.code = nil
             ended = .used
             budget.paired()
@@ -170,11 +182,6 @@ public struct PairingCodes: Sendable {
         ended = .expired
     }
 
-    private static func sameDigits(_ a: String, _ b: String) -> Bool {
-        let x = Array(a.utf8), y = Array(b.utf8)
-        guard x.count == y.count else { return false }
-        return zip(x, y).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
-    }
 }
 
 public func normalizePairingCode(_ s: String) -> String {
@@ -259,29 +266,69 @@ public final class PairingDesk: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return saving { $0.redeem(code, device: device, now: clock()) }
     }
+
+    public enum Start { case share(String), refused(PairingCodes.Outcome), invalid }
+
+    public static let maxPending = 8
+    private var pending: [String: (key: SymmetricKey, code: String)] = [:]
+
+    public func start(device: String, viewerShare: String) -> Start {
+        lock.lock(); defer { lock.unlock() }
+        let (code, refusal) = codes.offer(device: device, now: clock())
+        guard let code else { return .refused(refusal ?? .noCode) }
+        guard let half = PairExchange.begin(code: code, device: device),
+              let key = PairExchange.key(half, peer: viewerShare, device: device, viewerShare: viewerShare, hostShare: half.share) else { return .invalid }
+        if pending.count >= Self.maxPending { pending.removeAll() }
+        pending[device] = (key, code)
+        return .share(half.share)
+    }
+
+    public func finish(device: String, tag: String) -> (outcome: PairingCodes.Outcome, key: SymmetricKey?) {
+        lock.lock(); defer { lock.unlock() }
+        guard let p = pending.removeValue(forKey: device) else { return (.noCode, nil) }
+        let (code, refusal) = codes.offer(device: device, now: clock())
+        guard let code else { return (refusal ?? .noCode, nil) }
+        guard code == p.code else { return (.expired, nil) }
+        let matched = PairExchange.tagMatches(tag, key: p.key, device: device)
+        let now = clock()
+        let outcome = saving { $0.settle(matched: matched, now: now) }
+        if outcome != .accepted { pending.removeAll() }
+        return (outcome, outcome == .accepted ? p.key : nil)
+    }
 }
 
-public func pairURL(hostAddress: String, code: String, device: String? = nil, name: String? = nil) -> URL? {
-    guard let device else { return hostURL(hostAddress, path: "/pair", ["code": normalizePairingCode(code)]) }
-    return hostURL(hostAddress, path: "/pair", ["code": normalizePairingCode(code), "device": device, "name": name ?? "Mac"])
+public func pairStartURL(hostAddress: String, device: String, name: String, share: String) -> URL? {
+    hostURL(hostAddress, path: "/pair/start", ["device": device, "name": name, "v": share])
+}
+
+public func pairFinishURL(hostAddress: String, device: String, name: String, tag: String) -> URL? {
+    hostURL(hostAddress, path: "/pair/finish", ["device": device, "name": name, "tag": tag])
+}
+
+public func parsePairStart(status: Int, body: Data) -> (share: String?, refusal: String?) {
+    let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    if status == 200, let h = obj?["h"] as? String { return (h, nil) }
+    if let msg = obj?["error"] as? String, !msg.isEmpty { return (nil, msg) }
+    if status == 404 { return (nil, "This host runs an older Porthole. Update it, then pair again.") }
+    return (nil, "The host didn't accept the pairing (HTTP \(status)).")
+}
+
+public func parsePairFinish(status: Int, body: Data, key: SymmetricKey) -> PairReply {
+    let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    if status == 200 {
+        guard let inner = Sealed.openJSON(obj?["sealed"] as? String, key: key), let secret = inner["secret"] as? String, !secret.isEmpty else {
+            return .refused("The answer didn't come from a Mac that knows the code. Nothing was paired.")
+        }
+        let id = (inner["host_id"] as? String).flatMap { DeviceIdentity.isValidID($0) ? $0 : nil }
+        return .paired(secret: secret, hostID: id, hostName: inner["host"] as? String)
+    }
+    if let msg = obj?["error"] as? String, !msg.isEmpty { return .refused(msg) }
+    return .refused("The host didn't accept the code (HTTP \(status)).")
 }
 
 public enum PairReply: Equatable, Sendable {
     case paired(secret: String, hostID: String?, hostName: String?)
-    case password(String)
     case refused(String)
-}
-
-public func parsePairReply(status: Int, body: Data) -> PairReply {
-    let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
-    if status == 200, let secret = obj?["secret"] as? String, !secret.isEmpty {
-        let id = (obj?["host_id"] as? String).flatMap { DeviceIdentity.isValidID($0) ? $0 : nil }
-        return .paired(secret: secret, hostID: id, hostName: obj?["host"] as? String)
-    }
-    if status == 200, let pw = obj?["password"] as? String, !pw.isEmpty { return .password(pw) }
-    if let msg = obj?["error"] as? String, !msg.isEmpty { return .refused(msg) }
-    if status == 404 { return .refused("This host is an older Porthole without pairing codes. Use its password instead.") }
-    return .refused("The host didn't accept the code (HTTP \(status)).")
 }
 
 public func pairMessage(_ outcome: PairingCodes.Outcome) -> String? {
@@ -294,5 +341,7 @@ public func pairMessage(_ outcome: PairingCodes.Outcome) -> String? {
     case .paused(let seconds):
         let minutes = (seconds + 59) / 60
         return "Too many wrong codes on this host. Pairing is paused for \(minutes) \(minutes == 1 ? "minute" : "minutes")."
+    case .forOther(let name):
+        return "The code on the host is for \(name). Wait for it to finish, or ask for a new code on the host."
     }
 }

@@ -188,8 +188,8 @@ private func requestStateTests() {
            codes.request(from: a, now: t0.addingTimeInterval(5), random: { 222_222 }), .same("111111"))
     expect("request: asking again does not extend the code", codes.state(now: t0.addingTimeInterval(60)),
            .active(code: "111111", secondsLeft: 60))
-    expect("request: another Mac's code does not redeem from here", codes.redeem("111111", device: viewerB, now: t0), .wrong(left: 5))
-    expect("request: no device id does not redeem a bound code", codes.redeem("111111", now: t0), .wrong(left: 5))
+    expect("request: another Mac's code does not redeem from here", codes.redeem("111111", device: viewerB, now: t0), .forOther(name: codes.requester?.name ?? ""))
+    expect("request: no device id does not redeem a bound code", codes.redeem("111111", now: t0), .forOther(name: codes.requester?.name ?? ""))
     expect("request: guesses from other Macs touch neither the tries nor the budget", codes.budget, GuessBudget())
     expect("request: the requester redeems its code", codes.redeem("111111", device: viewerA, now: t0), .accepted)
     expect("request: requester is kept after use for the host's message", codes.requester, a)
@@ -289,32 +289,38 @@ private func trustRouteTests() {
     expect("pair request: without a trust store it does not exist",
            noTrust.respond(to: get("/pair/request?device=\(viewerA)")).status, "404 Not Found")
 
-    let other = routes.respond(to: get("/pair?code=135790&device=\(viewerB)&name=Thief"))
-    check("pair: the right code from another Mac is refused", other.status == "403 Forbidden" && body(other)?["secret"] == nil)
-    expect("pair: a bad device id is 400 and burns no try", routes.respond(to: get("/pair?code=135790&device=XYZ")).status, "400 Bad Request")
-    let ok = routes.respond(to: get("/pair?code=135%20790&device=\(viewerA)&name=Air"))
-    let secret = body(ok)?["secret"] as? String ?? ""
-    check("pair: the requester gets a device secret, the host's id and name",
-          ok.status == "200 OK" && secret.count >= 32 && body(ok)?["host_id"] as? String == hostID && body(ok)?["host"] as? String == "Mini")
-    check("pair: a device pairing never hands out the password",
-          body(ok)?["password"] == nil && !String(decoding: ok.body, as: UTF8.self).contains("pw-123"))
+    let other = pairOverRoutes(routes, code: "135790", device: viewerB, name: "Thief")
+    check("pair: the right code from another Mac is refused and says whose it is",
+          other.start.status == "403 Forbidden" && other.reply == nil && other.error?.contains("The code on the host is for ") == true)
+    expect("pair: a bad device id is 400 and burns no try", routes.respond(to: get("/pair/start?device=XYZ&v=00")).status, "400 Bad Request")
+    let ok = pairOverRoutes(routes, code: "135 790", device: viewerA)
+    var secret = ""
+    if case .paired(let s, let id, let host) = ok.reply {
+        secret = s
+        check("pair: the requester gets a device secret, the host's id and name", s.count >= 32 && id == hostID && host == "Mini")
+    } else { check("pair: the requester gets a device secret, the host's id and name", false) }
+    check("pair: a device pairing never hands out the password or the secret in clear",
+          !String(decoding: ok.finish?.body ?? Data(), as: UTF8.self).contains("pw-123") && !String(decoding: ok.finish?.body ?? Data(), as: UTF8.self).contains(secret))
     expect("pair: the host stored the device under its name", store.devices().map(\.name), ["Air"])
-    expect("pair: the parsed reply", parsePairReply(status: 200, body: ok.body), .paired(secret: secret, hostID: hostID, hostName: "Mini"))
 
-    let tok = routes.respond(to: get("/token?device=\(viewerA)&secret=\(secret)&name=air"))
-    let tokClaims = (body(tok)?["token"] as? String).flatMap(claims)
+    let (tok, tokReply) = deviceToken(routes, device: viewerA, secret: secret)
+    var tokenText: String?
+    if case .ok(_, let t) = tokReply { tokenText = t }
+    check("token: a paired device's answer is sealed", Set(body(tok)?.keys.map { $0 } ?? []) == ["sealed"])
+    let tokClaims = tokenText.flatMap(claims)
     check("token: a paired device needs no password", tok.status == "200 OK")
     expect("token: identity carries the device id", tokClaims?["sub"] as? String, "view-air-sfx.\(viewerA)")
-    let bad = routes.respond(to: get("/token?device=\(viewerA)&secret=nope"))
+    let (bad, badReply) = deviceToken(routes, device: viewerA, secret: "nope")
     check("token: a wrong device secret is 403 marked unpaired",
           bad.status == "403 Forbidden" && body(bad)?["unpaired"] as? Bool == true)
-    expect("token reply: unpaired is recognised", parseTokenReply(status: 403, body: bad.body),
+    expect("token reply: unpaired is recognised", badReply,
            .unpaired("This Mac isn't paired with Mini any more. Pair it again."))
     expect("token: the shared password still works", routes.respond(to: get("/token?pw=pw-123")).status, "200 OK")
     expect("token: the browser's wrong password reply is unchanged", String(decoding: routes.respond(to: get("/token?pw=x")).body, as: UTF8.self),
            #"{"error":"wrong password"}"#)
     _ = store.unpair(viewerA)
-    let after = routes.respond(to: get("/token?device=\(viewerA)&secret=\(secret)"))
+    let after = deviceToken(routes, device: viewerA, secret: secret).response
+    expect("token: the old secret-in-the-URL request is refused", routes.respond(to: get("/token?device=\(viewerA)&secret=\(secret)")).status, "403 Forbidden")
     check("token: after unpairing the device is refused at once", after.status == "403 Forbidden" && body(after)?["unpaired"] as? Bool == true)
 
     _ = desk.issue()
@@ -403,20 +409,10 @@ private func localRouteTests() {
 }
 
 private func viewerSideTests() {
-    expect("token URL: device credential", tokenURL(hostAddress: "mini:9000", credential: .device(id: viewerA, secret: "a+b/c"), name: "air")?.absoluteString,
-           "http://mini:9000/token?device=0123456789abcdef&secret=a%2Bb/c&name=air")
-    expect("token URL: password credential is the old URL", tokenURL(hostAddress: "mini", credential: .password("p w"), name: "air"),
-           tokenURL(hostAddress: "mini", password: "p w", name: "air"))
     expect("pair request URL", pairRequestURL(hostAddress: "100.101.102.103", device: viewerA, name: "Air")?.absoluteString,
            "http://100.101.102.103:7878/pair/request?device=0123456789abcdef&name=Air")
-    expect("pair URL: with this Mac's device", pairURL(hostAddress: "mini", code: "123 456", device: viewerA, name: "Air")?.absoluteString,
-           "http://mini:7878/pair?code=123456&device=0123456789abcdef&name=Air")
     expect("pair request URL: bad address", pairRequestURL(hostAddress: "mini:x", device: viewerA, name: "a"), nil)
 
-    expect("pair reply: secret without a host id", parsePairReply(status: 200, body: Data(#"{"secret":"s"}"#.utf8)), .paired(secret: "s", hostID: nil, hostName: nil))
-    expect("pair reply: invalid host id is dropped", parsePairReply(status: 200, body: Data(#"{"secret":"s","host_id":"../x","host":"M"}"#.utf8)),
-           .paired(secret: "s", hostID: nil, hostName: "M"))
-    expect("pair reply: an old host's password still parses", parsePairReply(status: 200, body: Data(#"{"password":"p"}"#.utf8)), .password("p"))
 
     expect("pair request reply: shown", parsePairRequestReply(status: 200, body: Data(#"{"requested":true,"host":"Mini"}"#.utf8)), .shown(host: "Mini"))
     expect("pair request reply: 404 is an older host", parsePairRequestReply(status: 404, body: Data("not found".utf8)), .older)
@@ -646,8 +642,8 @@ private func lockoutTests() {
     expect("busy reply: tells the owner how to get past it", body(busy)?["error"] as? String,
            "Another Mac is pairing with Mini right now. Try again in 120 s, or choose Pair a New Viewer… on the host and enter that code.")
     let before = desk.budget
-    let foreign = routes.respond(to: get("/pair?code=246246&device=\(viewerB)&name=B"))
-    check("pair route: another Mac's guess is refused", foreign.status == "403 Forbidden" && body(foreign)?["secret"] == nil)
+    let foreign = pairOverRoutes(routes, code: "246246", device: viewerB, name: "B")
+    check("pair route: another Mac's guess is refused", foreign.start.status == "403 Forbidden" && foreign.reply == nil)
     expect("pair route: another Mac's guess leaves the budget alone", desk.budget, before)
     desk.cancel()
     for who in ["1111111111111111", "2222222222222222"] {
@@ -659,8 +655,8 @@ private func lockoutTests() {
     check("paused request route: 429 that names the way out", paused.status == "429 Too Many Requests"
           && body(paused)?["error"] as? String == "Too many wrong codes on Mini. Pairing requests are paused for 1 minute, or choose Pair a New Viewer… on the host and enter that code.")
     _ = desk.issue()
-    let owner = routes.respond(to: get("/pair?code=246246&device=\(viewerB)&name=B"))
-    check("pair route: the owner's menu code works while remote requests are paused", owner.status == "200 OK" && body(owner)?["secret"] != nil)
+    let owner = pairOverRoutes(routes, code: "246246", device: viewerB, name: "B")
+    check("pair route: the owner's menu code works while remote requests are paused", { if case .paired = owner.reply { return true }; return false }())
 
     expect("token auth: right password", authorizeToken(query: ["pw": "pw-123"], password: "pw-123", verify: { _, _ in nil }), .password)
     expect("token auth: a longer password is refused", authorizeToken(query: ["pw": "pw-1234"], password: "pw-123", verify: { _, _ in nil }), .refused)

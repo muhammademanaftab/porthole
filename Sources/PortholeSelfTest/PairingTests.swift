@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PortholeCore
 
@@ -121,53 +122,62 @@ func pairingTests() {
     check("hello route: never leaks the password", !String(decoding: hello.body, as: UTF8.self).contains("pw-123"))
     expect("hello route: its JSON parses back", HostHello.parse(hello.body), HostHello(name: "Leo\u{2019}s Mac mini", version: 1))
 
-    let none = routes.respond(to: get("/pair?code=246810" + dev))
+    let device = "0123456789abcdef"
+    let none = pairOverRoutes(routes, code: "246810", device: device)
     check("pair route: with no code issued is 403 with a hint",
-          none.status == "403 Forbidden" && (body(none)?["error"] as? String)?.contains("Pair a New Viewer") == true)
+          none.start.status == "403 Forbidden" && none.error?.contains("Pair a New Viewer") == true)
     _ = routeDesk.issue()
-    let wrong = routes.respond(to: get("/pair?code=111111" + dev))
-    check("pair route: wrong code is 403 and says how many tries are left",
-          wrong.status == "403 Forbidden" && body(wrong)?["error"] as? String == "Wrong code. 4 tries left."
-          && !String(decoding: wrong.body, as: UTF8.self).contains("pw-123"))
-    let head = routes.respond(to: get("/pair?code=246810", method: "HEAD"))
+    let wrong = pairOverRoutes(routes, code: "111111", device: device)
+    check("pair route: a wrong code is 403 and says how many tries are left",
+          wrong.finish?.status == "403 Forbidden" && wrong.error == "Wrong code. 4 tries left."
+          && !String(decoding: wrong.finish?.body ?? Data(), as: UTF8.self).contains("pw-123"))
+    check("pair route: the start answer carries no secret and not the code",
+          !String(decoding: wrong.start.body, as: UTF8.self).contains("246810") && body(wrong.start)?["secret"] == nil)
+    let head = routes.respond(to: get("/pair/finish?device=\(device)&tag=00", method: "HEAD"))
     check("pair route: HEAD is refused so it cannot burn the code", head.status == "405 Method Not Allowed")
-    let ok = routes.respond(to: get("/pair?code=246%20810" + dev))
-    check("pair route: right code returns a device secret", ok.status == "200 OK" && ok.contentType == "application/json"
-          && (body(ok)?["secret"] as? String)?.isEmpty == false)
-    expect("pair route: body has the secret and host name, never the password", Set(body(ok)?.keys.map { $0 } ?? []), ["secret", "host"])
-    let reuse = routes.respond(to: get("/pair?code=246810" + dev))
-    check("pair route: the code works once", reuse.status == "403 Forbidden" && body(reuse)?["secret"] == nil)
+    let ok = pairOverRoutes(routes, code: "246 810", device: device)
+    check("pair route: the right code returns a sealed device secret", ok.finish?.status == "200 OK"
+          && Set(body(ok.finish!)?.keys.map { $0 } ?? []) == ["sealed"])
+    if case .paired(let secret, _, let host) = ok.reply {
+        check("pair route: the viewer opens the secret and host name", secret.count >= 32 && host == "Leo\u{2019}s Mac mini")
+        check("pair route: the secret never travels in clear", !String(decoding: ok.finish!.body, as: UTF8.self).contains(secret))
+    } else { check("pair route: the viewer opens the secret and host name", false) }
+    let reuse = pairOverRoutes(routes, code: "246810", device: device)
+    check("pair route: the code works once", reuse.start.status == "403 Forbidden" && reuse.reply == nil)
     _ = routeDesk.issue()
     clock = t0.addingTimeInterval(121)
-    let late = routes.respond(to: get("/pair?code=246810" + dev))
-    check("pair route: expired code is refused", late.status == "403 Forbidden" && (body(late)?["error"] as? String)?.contains("expired") == true)
-    let missing = routes.respond(to: get("/pair?device=0123456789abcdef"))
-    check("pair route: missing code is refused", missing.status == "403 Forbidden")
-    expect("pair route: POST is still 405", routes.respond(to: get("/pair?code=1", method: "POST")).status, "405 Method Not Allowed")
+    let late = pairOverRoutes(routes, code: "246810", device: device)
+    check("pair route: an expired code is refused", late.start.status == "403 Forbidden" && late.error?.contains("expired") == true)
+    clock = t0
+    _ = routeDesk.issue()
+    let orphan = routes.respond(to: get("/pair/finish?device=\(device)&tag=00"))
+    check("pair route: a finish without a start is refused and burns no try",
+          orphan.status == "403 Forbidden" && routeDesk.state() == .active(code: "246810", secondsLeft: 120))
+    expect("pair route: POST is still 405", routes.respond(to: get("/pair/start?device=\(device)", method: "POST")).status, "405 Method Not Allowed")
+    expect("pair route: the old one-step route says to update", routes.respond(to: get("/pair?code=246810" + dev)).status, "400 Bad Request")
+    check("pair route: the old route burned nothing", routeDesk.state() == .active(code: "246810", secondsLeft: 120))
 
     let noDesk = WebRoutes(password: "pw-123", livekitPort: 7880, tokens: keys, webRoot: nil)
-    expect("pair route: without a pairing desk it does not exist", noDesk.respond(to: get("/pair?code=1")).status, "404 Not Found")
+    expect("pair route: without a pairing desk it does not exist", noDesk.respond(to: get("/pair/start?device=0123456789abcdef&v=00")).status, "404 Not Found")
     expect("hello route: default host name is Mac", HostHello.parse(noDesk.respond(to: get("/hello")).body)?.name, "Mac")
     let fav = routes.respond(to: get("/favicon.ico"))
     check("favicon: 204 with an empty body instead of a 404", fav.status == "204 No Content" && fav.body.isEmpty)
     expect("token route: still works next to pairing", routes.respond(to: get("/token?pw=pw-123")).status, "200 OK")
 
-    expect("pair URL: digits only, default port", pairURL(hostAddress: "100.101.102.103", code: "123 456")?.absoluteString,
-           "http://100.101.102.103:7878/pair?code=123456")
-    expect("pair URL: keeps a custom port", pairURL(hostAddress: "mini.local:9000", code: "123456")?.absoluteString,
-           "http://mini.local:9000/pair?code=123456")
-    expect("pair URL: bad address gives none", pairURL(hostAddress: "mini:abc", code: "123456"), nil)
-
-    expect("pair reply: 200 with password", parsePairReply(status: 200, body: Data(#"{"password":"abc"}"#.utf8)), .password("abc"))
-    expect("pair reply: 403 passes the host's message through",
-           parsePairReply(status: 403, body: Data(#"{"error":"Wrong code. 4 tries left."}"#.utf8)), .refused("Wrong code. 4 tries left."))
-    expect("pair reply: 200 without a password is refused",
-           parsePairReply(status: 200, body: Data("{}".utf8)), .refused("The host didn't accept the code (HTTP 200)."))
-    expect("pair reply: empty password is refused",
-           parsePairReply(status: 200, body: Data(#"{"password":""}"#.utf8)), .refused("The host didn't accept the code (HTTP 200)."))
-    expect("pair reply: 404 from an older host says to use the password",
-           parsePairReply(status: 404, body: Data("not found".utf8)),
-           .refused("This host is an older Porthole without pairing codes. Use its password instead."))
+    expect("pair start URL", pairStartURL(hostAddress: "100.101.102.103", device: device, name: "Air", share: "ab")?.absoluteString,
+           "http://100.101.102.103:7878/pair/start?device=0123456789abcdef&name=Air&v=ab")
+    expect("pair finish URL: keeps a custom port", pairFinishURL(hostAddress: "mini.local:9000", device: device, name: "Air", tag: "cd")?.absoluteString,
+           "http://mini.local:9000/pair/finish?device=0123456789abcdef&name=Air&tag=cd")
+    expect("pair start URL: bad address gives none", pairStartURL(hostAddress: "mini:abc", device: device, name: "a", share: "ab"), nil)
+    check("pair start reply: 403 passes the host's message through",
+          parsePairStart(status: 403, body: Data(#"{"error":"Wrong code. 4 tries left."}"#.utf8)).refusal == "Wrong code. 4 tries left.")
+    check("pair start reply: 404 from an older host says to update",
+          parsePairStart(status: 404, body: Data("not found".utf8)).refusal == "This host runs an older Porthole. Update it, then pair again.")
+    let anyKey = SymmetricKey(size: .bits256)
+    expect("pair finish reply: an unsealed 200 is refused", parsePairFinish(status: 200, body: Data(#"{"secret":"abc"}"#.utf8), key: anyKey),
+           .refused("The answer didn't come from a Mac that knows the code. Nothing was paired."))
+    expect("pair finish reply: 403 passes the host's message through",
+           parsePairFinish(status: 403, body: Data(#"{"error":"Wrong code. 4 tries left."}"#.utf8), key: anyKey), .refused("Wrong code. 4 tries left."))
 }
 
 private extension PairingCodes {

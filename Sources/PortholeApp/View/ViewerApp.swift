@@ -7,6 +7,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var connection: Connection?
     var picker: PickerWindow?
     var portals: [UInt32: PortalWindow] = [:]
+    var pairAgain: Set<String> = []
     var companions: [UInt32: PortalWindow] = [:]
     var dismissedCompanions: [UInt32: UInt32] = [:]
     var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
@@ -257,7 +258,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             return
         }
         guard let secret, !secret.isEmpty else {
-            if let (cred, id) = PasswordStore.credential(for: address) {
+            if !pairAgain.contains(address), let (cred, id) = PasswordStore.credential(for: address) {
                 startConnection(address: address, name: name, credential: cred, saved: true, hostID: id)
             } else {
                 requestPairing(address: address, name: name)
@@ -275,6 +276,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
             w.setBusy(false)
             switch reply {
             case .paired(let deviceSecret, let id, let hostName):
+                self.pairAgain.remove(address)
                 Sounds.play(.paired)
                 let key = hostKeyForTrust(hostID: id, address: address)
                 guard PasswordStore.savePairing(hostID: key, name: hostName ?? name ?? address, address: address, secret: deviceSecret) else {
@@ -283,7 +285,6 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 }
                 startConnection(address: address, name: name ?? hostName, credential: .device(id: device.id, secret: deviceSecret),
                                 saved: true, hostID: key)
-            case .password(let pw): startConnection(address: address, name: name, credential: .password(pw), saved: false)
             case .refused(let why):
                 Sounds.play(.pairingFailed)
                 w.showError(why)
@@ -380,7 +381,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 picker.showError(error.localizedDescription)
                 let err = error as NSError
                 if err.domain == "Porthole" && err.code == 403, case .device = credential {
-                    if let hostID { PasswordStore.forgetPairing(hostID: hostID) }
+                    pairAgain.insert(host)
                     showConnect(address: host, ask: err.localizedDescription + " Click Connect to ask \(name ?? host) for a new code.")
                 } else if saved && err.domain == "Porthole" && err.code == 401 {
                     showConnect(address: host, ask: "The saved password for \(name ?? host) was refused. " + askText(name, host))

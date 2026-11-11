@@ -107,8 +107,9 @@ guard let pw = env["PORTHOLE_PW"] ?? ((try? JSONSerialization.jsonObject(with: D
 else { fail("no host config") }
 
 let credential: ViewerCredential = env["PORTHOLE_DEVICE"].flatMap { id in env["PORTHOLE_SECRET"].map { .device(id: id, secret: $0) } } ?? .password(pw)
-let (data, _) = try await URLSession.shared.data(from: tokenURL(hostAddress: hostAddress, credential: credential, name: "probe")!)
-guard let tok = try JSONSerialization.jsonObject(with: data) as? [String: String], let url = tok["url"], let token = tok["token"] else { fail("token endpoint") }
+guard let tokenAt = tokenRequest(hostAddress: hostAddress, credential: credential, name: "probe") else { fail("token request") }
+let (data, tokenResponse) = try await URLSession.shared.data(from: tokenAt.url)
+guard case .ok(let url, let token) = parseTokenReply(status: (tokenResponse as? HTTPURLResponse)?.statusCode ?? 0, body: data, openKey: tokenAt.openKey) else { fail("token endpoint") }
 print("PASS  token issued (\(url))")
 
 let probe = Probe()
