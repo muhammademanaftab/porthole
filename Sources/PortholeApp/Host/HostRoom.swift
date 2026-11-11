@@ -27,7 +27,9 @@ final class HostRoom: NSObject, RoomDelegate {
     private var companionTimer: Timer?
     private var resizes = LatestWins<UInt32, ResizeJob>()
     let wholeMac = WholeMacState()
-    var unlockLimiter = UnlockLimiter()
+    var unlockLimiter = UnlockLimiter.load(in: HostConfig.directory) {
+        didSet { if unlockLimiter != oldValue { unlockLimiter.save(in: HostConfig.directory) } }
+    }
 
     struct ResizeJob: Sendable {
         var message: Message

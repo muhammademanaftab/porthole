@@ -371,7 +371,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
                 try await c.connect()
                 UserDefaults.standard.set(host, forKey: "host")
                 if case .password(let password) = credential, !PasswordStore.save(password, for: host) {
-                    UserDefaults.standard.set(password, forKey: "password")
+                    VLog.warn("the Keychain refused the password for \(host); it will be asked for again next time")
                 }
                 PasswordStore.knownHosts = rememberHost(PasswordStore.knownHosts, KnownHost(name: name ?? host, address: host))
                 for _ in 0..<50 where c.hostParticipant == nil { try? await Task.sleep(nanoseconds: 100_000_000) }

@@ -88,6 +88,19 @@ private func unlockLimiterTests() {
     expect("limiter: paused message", UnlockRefusal.pausedAfterFailures(seconds: 591).message, "Too many wrong passwords. Try again in 10 minutes.")
     expect("limiter: one-minute label", UnlockLimiter.minutesLabel(40), "1 minute")
 
+    let limitDir = FileManager.default.temporaryDirectory.appendingPathComponent("porthole-unlock-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: limitDir) }
+    var kept = UnlockLimiter()
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    for i in 0..<UnlockLimiter.maxFailures {
+        _ = kept.begin(now: start.addingTimeInterval(Double(i) * 10))
+        _ = kept.finished(unlocked: false, now: start.addingTimeInterval(Double(i) * 10 + 1))
+    }
+    check("limiter: the pause is written to a private file", kept.save(in: limitDir))
+    let restarted = UnlockLimiter.load(in: limitDir)
+    check("limiter: a restarted host still pauses after the failures", { if case .pausedAfterFailures = restarted.refusal(now: start.addingTimeInterval(60)) { return true }; return false }())
+    check("limiter: a restarted host is not left busy", !restarted.running)
+    check("limiter: no file means a fresh limiter", UnlockLimiter.load(in: limitDir.appendingPathComponent("none")) == UnlockLimiter())
     var spread = UnlockLimiter()
     _ = spread.begin(now: t0); _ = spread.finished(unlocked: false, now: t0)
     _ = spread.begin(now: t0.addingTimeInterval(300)); _ = spread.finished(unlocked: false, now: t0.addingTimeInterval(300))

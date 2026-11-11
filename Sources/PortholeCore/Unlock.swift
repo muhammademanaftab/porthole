@@ -76,7 +76,22 @@ public enum UnlockOutcome: Equatable, Sendable {
     }
 }
 
-public struct UnlockLimiter: Equatable, Sendable {
+public struct UnlockLimiter: Equatable, Sendable, Codable {
+    public static let fileName = "unlock-limit.json"
+    enum CodingKeys: String, CodingKey { case lastAttempt, failures, pausedUntil }
+
+    public static func load(in directory: URL) -> UnlockLimiter {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent(fileName)),
+              let saved = try? JSONDecoder().decode(UnlockLimiter.self, from: data) else { return UnlockLimiter() }
+        return saved
+    }
+
+    @discardableResult
+    public func save(in directory: URL) -> Bool {
+        guard let data = try? JSONEncoder().encode(self) else { return false }
+        return writePrivately(data, to: directory.appendingPathComponent(Self.fileName))
+    }
+
     public static let minGap: TimeInterval = 5
     public static let failureWindow: TimeInterval = 600
     public static let maxFailures = 3
