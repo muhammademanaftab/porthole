@@ -33,19 +33,27 @@ final class LiveKitServer {
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["--config", url.path]
         let logURL = HostConfig.directory.appendingPathComponent("livekit.log")
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        if let fh = try? FileHandle(forWritingTo: logURL) { p.standardOutput = fh; p.standardError = fh }
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        } else if let size = (try? FileManager.default.attributesOfItem(atPath: logURL.path))?[.size] as? Int, size > Self.maxLogBytes {
+            try? FileManager.default.removeItem(at: logURL.appendingPathExtension("1"))
+            try? FileManager.default.moveItem(at: logURL, to: logURL.appendingPathExtension("1"))
+            FileManager.default.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        try? logHandle?.close()
+        logHandle = try? FileHandle(forWritingTo: logURL)
+        if let fh = logHandle { _ = try? fh.seekToEnd(); p.standardOutput = fh; p.standardError = fh }
         let startedAt = Date()
         p.terminationHandler = { [weak self] proc in
             Log.info("livekit-server exited with status \(proc.terminationStatus)", .net)
             guard let self, !self.stopping else { return }
             let delay = restartDelay(after: self.lastRestartDelay, uptime: Date().timeIntervalSince(startedAt))
             self.lastRestartDelay = delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Int(delay))) { try? self.start() }
+            self.restart(after: delay)
         }
         try p.run()
         process = p
-        atexit { LiveKitServer.shared?.process?.terminate() }
+        if LiveKitServer.shared == nil { atexit { LiveKitServer.shared?.process?.terminate() } }
         LiveKitServer.shared = self
     }
 
@@ -54,6 +62,21 @@ final class LiveKitServer {
         guard !stale.isEmpty else { return }
         for pid in stale { Log.info("stopping leftover livekit-server \(pid)", .net) }
         Processes.stop(stale)
+    }
+
+    static let maxLogBytes = 5_000_000
+    private var logHandle: FileHandle?
+
+    private func restart(after delay: UInt64) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Int(delay))) { [weak self] in
+            guard let self, !self.stopping else { return }
+            do { try self.start() } catch {
+                Log.error("livekit-server could not be restarted: \(error.localizedDescription); trying again", .net)
+                let next = restartDelay(after: self.lastRestartDelay, uptime: 0)
+                self.lastRestartDelay = next
+                self.restart(after: next)
+            }
+        }
     }
 
     private var stopping = false

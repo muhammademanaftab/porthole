@@ -309,7 +309,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         connection = c
         routeChanged(nil)
         c.muted = muted
-        let picker = PickerWindow(hostName: name ?? host) { [weak self] info in self?.open(info) } refresh: { [weak c] in c?.requestList() }
+        let picker = PickerWindow(hostName: name ?? host) { [weak self] info in self?.open(info) } refresh: { [weak c] in if c?.gaveUp == true { c?.retry() } else { c?.requestList() } }
         picker.hostAddress = host
         picker.recents = { RecentPortals.load(in: portholeSupportDirectory()) }
         self.picker = picker
@@ -460,6 +460,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         portal.onRetry = { [weak self, weak portal] in
             guard let self, let portal else { return }
+            if self.connection?.gaveUp == true { self.connection?.retry(); return }
             self.request(info.id, into: portal)
         }
         portal.onUnlock = { [weak self, weak portal] in self?.askUnlock(from: portal) }
@@ -493,6 +494,7 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
         }
         portal.onRetry = { [weak self, weak portal] in
             guard let self, let portal else { return }
+            if self.connection?.gaveUp == true { self.connection?.retry(); return }
             self.request(id, into: portal, fit: false)
         }
         companions[id] = portal

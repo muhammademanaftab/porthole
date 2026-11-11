@@ -6,8 +6,9 @@ import PortholeCore
 enum DoctorCommand {
     static func run(_ o: DoctorOptions) -> Int32 {
         if o.windows { return windows(json: o.json) }
-        print(text(quick: o.quick))
-        return 0
+        let found = checks(quick: o.quick)
+        print(renderDoctor(found, header: header()))
+        return found.contains { $0.status == .fail } ? 1 : 0
     }
 
     static func header() -> String {

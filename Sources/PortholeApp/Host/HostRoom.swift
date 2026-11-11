@@ -18,6 +18,7 @@ final class HostRoom: NSObject, RoomDelegate {
     private var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     private var clipTimer: Timer?
     private var lockWarnedAt: [String: Date] = [:]
+    private var prepared = false
     private var thumbTasks: [String: Task<Void, Never>] = [:]
     private var thumbAskedAt: [String: Date] = [:]
     private var thumbTaskIDs: [String: UUID] = [:]
@@ -63,6 +64,8 @@ final class HostRoom: NSObject, RoomDelegate {
     func connect(url: String, makeToken: @escaping () -> String) async throws {
         self.url = url
         self.makeToken = makeToken
+        guard !prepared else { try await join(); return }
+        prepared = true
         room.add(delegate: self)
         AppAudio.prepare()
         try await room.registerTextStreamHandler(for: clipboardTopic) { [weak self] reader, identity in

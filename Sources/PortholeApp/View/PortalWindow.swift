@@ -55,7 +55,7 @@ final class PortalWindow: NSWindow, NSWindowDelegate, TrackDelegate {
         videoView.layoutMode = .fit
         overlay.onClose = { [weak self] in self?.close() }
         overlay.onRetry = { [weak self] in
-            self?.show(.opening(app))
+            if case .disconnected = self?.phase { self?.show(.reconnecting) } else { self?.show(.opening(app)) }
             self?.onRetry?()
         }
         overlay.onUnlock = { [weak self] in self?.onUnlock?() }
@@ -604,7 +604,31 @@ final class InputCaptureView: NSView {
         connection.send(m)
     }
 
+    private var heldModifiers: NSEvent.ModifierFlags = []
+    private var resignObserver: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = window.map { w in
+            NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: w, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.releaseModifiers() }
+            }
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        releaseModifiers()
+        return super.resignFirstResponder()
+    }
+
+    func releaseModifiers() {
+        for m in ViewerInput.modifierReleases(win: windowID, flags: heldModifiers) { connection.send(m) }
+        heldModifiers = []
+    }
+
     override func flagsChanged(with e: NSEvent) {
+        heldModifiers = e.modifierFlags.intersection([.command, .option, .control, .shift])
         guard let down = ViewerInput.modifierIsDown(code: e.keyCode, flags: e.modifierFlags) else { return }
         var m = Message(.key)
         m.win = windowID; m.code = e.keyCode; m.down = down; m.mods = Self.mods(e.modifierFlags)

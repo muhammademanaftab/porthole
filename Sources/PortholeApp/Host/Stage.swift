@@ -19,9 +19,19 @@ final class Stage {
     var idleSince: Date? { emptySince }
     var idleLimit: Double { idleSeconds }
 
+    private var creating: Task<Void, Never>?
+
     func ensure(screenPoints: CGSize?) async {
         emptySince = nil
         guard display == nil else { return }
+        if let creating { await creating.value; return }
+        let task = Task { @MainActor in await self.create(screenPoints: screenPoints) }
+        creating = task
+        await task.value
+        creating = nil
+    }
+
+    private func create(screenPoints: CGSize?) async {
         Power.keepAwake()
         for attempt in 1...3 {
             await createOnce(screenPoints: screenPoints)

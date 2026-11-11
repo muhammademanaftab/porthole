@@ -76,33 +76,54 @@ final class HostApp: NSObject {
         }
     }
 
+    private var serverStarted = false
+    private var httpError: String?
+
     func start() async {
+        var wait: UInt64 = 5
+        while true {
+            do {
+                try await startOnce()
+                return
+            } catch {
+                state = "Error: \(error.localizedDescription)"
+                Log.error("host start failed: \(error.localizedDescription); trying again in \(wait) s", .host)
+                refresh()
+                try? await Task.sleep(nanoseconds: wait * 1_000_000_000)
+                wait = min(wait * 2, 60)
+            }
+        }
+    }
+
+    private func startOnce() async throws {
         do {
-            try server.start()
+            if !serverStarted { try server.start(); serverStarted = true }
             guard await server.waitUntilReady() else { throw NSError(domain: "Porthole", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "livekit-server did not start; see \(HostConfig.directory.path)/livekit.log"]) }
+            let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
+            if http == nil {
             let box = status
             let http = try HTTPServer(config: config, pairing: pairing, trust: trust, guests: guests,
                                       allowControl: { RemoteControlSwitch.enabled(stored: UserDefaults.standard.object(forKey: RemoteControlSwitch.settingKey)) },
                                       status: { box.fresh() })
-            http.onFailure = { [weak self] msg in self?.state = "Error: \(msg)"; self?.refresh() }
+            http.onFailure = { [weak self] msg in self?.httpError = msg; self?.state = "Error: \(msg)"; self?.refresh() }
             http.start()
             self.http = http
-            let keys = AccessToken(apiKey: config.apiKey, apiSecret: config.apiSecret)
             host.onChange = { [weak self] in self?.refresh(); self?.host.wholeMacChanged() }
             trust.attach(to: host)
             guests.attach(to: host)
             guests.onChange = { [weak self] in self?.refresh() }
+            }
             try await host.connect(url: "ws://127.0.0.1:\(config.livekitPort)") {
                 keys.make(identity: "host", room: "porthole", canPublish: true)
             }
-            state = "Sharing"
+            state = httpError.map { "Error: \($0)" } ?? "Sharing"
             Log.info("host ready", .host)
             fflush(stdout)
         } catch {
-            state = "Error: \(error.localizedDescription)"
             print("Porthole host failed: \(error.localizedDescription)")
             fflush(stdout)
+            throw error
         }
         refresh()
     }

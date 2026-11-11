@@ -217,9 +217,18 @@ final class Connection: NSObject, RoomDelegate {
         }
     }
 
+    private(set) var gaveUp = false
+
+    func retry() {
+        guard !closing, !reconnecting, gaveUp else { return }
+        attempt = 0
+        Task { await reconnect() }
+    }
+
     private func reconnect(dropFirst: Bool = false) async {
         guard !reconnecting else { return }
         reconnecting = true
+        gaveUp = false
         defer { reconnecting = false }
         if dropFirst { await room.disconnect() }
         forgetRoute()
@@ -243,6 +252,7 @@ final class Connection: NSObject, RoomDelegate {
                 for (id, then) in queued where pending[id] == nil { open(id, then: then) }
                 return
             } catch let err as NSError where err.domain == "Porthole" && (err.code == 401 || err.code == 403) {
+                gaveUp = true
                 onLink?(.disconnected(err.localizedDescription))
                 onError?(err.localizedDescription)
                 return
@@ -252,7 +262,8 @@ final class Connection: NSObject, RoomDelegate {
             }
         }
         guard !closing else { return }
-        let text = "Disconnected from host. Reconnect from the Porthole menu."
+        let text = "Disconnected from host. Click Try Again, or Refresh in the window list."
+        gaveUp = true
         VLog.warn("gave up reconnecting to \(hostAddress)")
         onLink?(.disconnected(text))
         onError?(text)
@@ -444,6 +455,7 @@ final class Connection: NSObject, RoomDelegate {
             guard !self.closing, !self.reconnecting else { return }
             VLog.info("disconnected from \(self.hostAddress): \(kind)")
             if reconnectDelay(after: kind, attempt: 1) != nil { await self.reconnect(); return }
+            self.gaveUp = true
             self.onLink?(.disconnected(text))
             self.onError?(text)
         }

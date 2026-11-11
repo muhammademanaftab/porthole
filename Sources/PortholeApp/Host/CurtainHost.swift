@@ -157,9 +157,21 @@ final class CurtainWindows: @preconcurrency CurtainScreens {
     private var windows: [NSWindow] = []
     private var cursorHidden = false
     var skip: () -> CGDirectDisplayID? = { nil }
+    private var current: CurtainNotice?
+    private var screensObserver: NSObjectProtocol?
 
     func show(_ notice: CurtainNotice) {
         hide()
+        current = notice
+        if screensObserver == nil {
+            screensObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let notice = self.current else { return }
+                    Log.info("curtain: the displays changed; covering them again")
+                    self.show(notice)
+                }
+            }
+        }
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         let level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
         for screen in NSScreen.screens {
@@ -183,6 +195,7 @@ final class CurtainWindows: @preconcurrency CurtainScreens {
     }
 
     func hide() {
+        current = nil
         if cursorHidden { CGDisplayShowCursor(kCGNullDirectDisplay); cursorHidden = false }
         guard !windows.isEmpty else { return }
         for w in windows { w.orderOut(nil); w.close() }

@@ -62,8 +62,10 @@ public enum PortalPhase: Equatable, Sendable {
     }
 
     public var canRetry: Bool {
-        if case .failed = self { return true }
-        return false
+        switch self {
+        case .failed, .disconnected: return true
+        default: return false
+        }
     }
 
     public var canUnlock: Bool { self == .locked }

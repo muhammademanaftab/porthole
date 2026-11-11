@@ -19,7 +19,7 @@ func labelTests() {
     expect("portal phase: disconnected detail", PortalPhase.disconnected("Disconnected from host.").detail, "Disconnected from host.")
     check("portal phase: a picture clears opening and a timed-out failure", PortalPhase.opening("a").clearsOnPicture && PortalPhase.failed("x").clearsOnPicture)
     check("portal phase: a picture doesn't hide reconnecting or disconnected", !PortalPhase.reconnecting.clearsOnPicture && !PortalPhase.disconnected("x").clearsOnPicture)
-    check("portal phase: only a failed open offers Try Again", PortalPhase.failed("x").canRetry && !PortalPhase.disconnected("x").canRetry
+    check("portal phase: a failed open and a lost connection offer Try Again", PortalPhase.failed("x").canRetry && PortalPhase.disconnected("x").canRetry
           && !PortalPhase.reconnecting.canRetry && !PortalPhase.opening("a").canRetry)
     check("portal phase: every phase has a symbol and title", [PortalPhase.opening("a"), .reconnecting, .disconnected("b"), .failed("c"), .locked]
           .allSatisfy { !$0.symbol.isEmpty && !$0.title.isEmpty && !$0.detail.isEmpty })
