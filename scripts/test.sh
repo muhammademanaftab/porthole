@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
 cd "$(dirname "$0")/.."
-swift run PortholeSelfTest "$@"
-node --test web/
+status=0
+swift run PortholeSelfTest || status=1
+node --test web/tests/*.test.js || status=1
+exit $status

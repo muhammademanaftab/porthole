@@ -398,6 +398,7 @@ private func scrubTests() {
     let s = Scrubber(secrets: ["hunter2-long-pw", "abc"])
     expect("scrub: a known secret", s.scrub("password is hunter2-long-pw ok"), "password is [redacted] ok")
     expect("scrub: short known secrets are left alone", s.scrub("abc def"), "abc def")
+    expect("scrub: a share link's token", s.scrub("http://mini:7878/?share=AbC_123-x&win=4"), "http://mini:7878/?share=[redacted]&win=4")
     expect("scrub: ?pw= in a link", s.scrub("http://mini:7878/?pw=Zx81_aa&name=x"), "http://mini:7878/?pw=[redacted]&name=x")
     expect("scrub: token= and secret=", s.scrub("token=eyJx secret=s3cr3t"), "token=[redacted] secret=[redacted]")
     expect("scrub: JSON secrets", s.scrub(#"{"apiSecret": "zzz", "password":"p", "name":"Mini"}"#), #"{"apiSecret":"[redacted]", "password":"[redacted]", "name":"Mini"}"#)
@@ -420,7 +421,7 @@ private func envFlagTests() {
     let names = Set(EnvFlags.all.map(\.name))
     for n in ["PORTHOLE_HOME", "PORTHOLE_WATCHDOG", "PORTHOLE_WATCHDOG_HANG_SECS", "PORTHOLE_STAGE_IDLE_SECS", "PORTHOLE_ENCODE_LOG",
               "PORTHOLE_ENCODE_BUDGET_MS", "PORTHOLE_PAIR_HEADLESS", "PORTHOLE_WEB_ROOT", "PORTHOLE_LIVEKIT_SERVER", "PORTHOLE_OPEN",
-              "PORTHOLE_COMMAND", "PORTHOLE_WATCHDOG_RELAUNCH", "PORTHOLE_LAUNCH_AGENT", "PORTHOLE_LOG"] {
+              "PORTHOLE_COMMAND", "PORTHOLE_WATCHDOG_RELAUNCH", "PORTHOLE_LOG"] {
         check("env: \(n) is listed", names.contains(n))
     }
     expect("env: every name is unique", names.count, EnvFlags.all.count)
@@ -498,6 +499,9 @@ private func pickTests() {
     expect("host name: a paired name resolves to its address", resolveHostAddress("mini", trust: trust, known: []), "100.64.0.2")
     expect("host name: a saved host's name resolves", resolveHostAddress("Studio", trust: ViewerTrust(hosts: []), known: [KnownHost(name: "Studio", address: "studio.local")]), "studio.local")
     expect("host name: an address passes through", resolveHostAddress("10.0.0.5", trust: trust, known: []), "10.0.0.5")
+    check("window list: an absurd size from a host does not trap",
+          renderWindowList([WindowInfo(id: 1, app: "A", title: "t", bundle: nil, w: 1e300, h: Double.nan)]).contains("1000000000x0"))
+    expect("size label: an absurd size from a host does not trap", windowSizeLabel(-1e300, Double.infinity), "-1000000000\u{00D7}0")
     check("window list: renders ids and apps", renderWindowList(list).contains("     10  Safari"))
 }
 

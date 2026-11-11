@@ -132,7 +132,7 @@ final class ViewerWindowsPane: ViewerPane {
         hide.state = ViewerPrefs.current.hideTitleBar ? .on : .off
         let grid = ViewerForm.grid([
             [NSTextField(labelWithString: "Title bar:"),
-             ViewerForm.column([hide, ViewerForm.note("Shared windows show their title bar only while the pointer is near the top. Saved now; shared windows will follow it in a coming version.")])],
+             ViewerForm.column([hide, ViewerForm.note("Shared windows show their title bar only while the pointer is near the top.")])],
         ])
         view = ViewerForm.pane(grid)
     }

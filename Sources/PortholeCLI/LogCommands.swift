@@ -37,6 +37,7 @@ enum LogCommand {
             let lines = LogQuery(o).select(readLogs())
             if lines.isEmpty && !o.json { say("No matching lines in \(dir.path).") }
             emit(lines, json: o.json)
+            if o.follow { follow(o) }
             return 0
         case .follow:
             emit(LogQuery(o).select(readLogs()), json: o.json)

@@ -2,14 +2,6 @@ import AppKit
 import PortholeCore
 
 enum ScreenCatalog {
-    static func active() -> [CGDirectDisplayID] {
-        var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
-        return Array(ids.prefix(Int(count)))
-    }
-
     static func online() -> [CGDirectDisplayID] {
         var ids = [CGDirectDisplayID](repeating: 0, count: 32)
         var n: UInt32 = 0
@@ -103,10 +95,6 @@ final class WholeMacPrompt {
     func close(_ key: String) {
         panels.removeValue(forKey: key)?.close()
         refreshGuard()
-    }
-
-    func closeAll() {
-        for key in Array(panels.keys) { close(key) }
     }
 
     private func refreshGuard() {

@@ -97,10 +97,6 @@ final class HTTPServer {
         }
     }
 
-    func respond(to request: String) -> HTTPResponse {
-        routes.respond(to: request)
-    }
-
     static func sourceHost(_ endpoint: NWEndpoint) -> String {
         guard case .hostPort(let host, _) = endpoint else { return "unknown" }
         switch host {

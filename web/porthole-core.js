@@ -95,6 +95,8 @@
     if (down && isMac && e.metaKey && !MODIFIER_CODES.has(e.code)) {
       out.push({ ...msg, down: false });
       swallowedUp.add(e.code);
+    } else if (down) {
+      swallowedUp.delete(e.code);
     }
     return { prevent: true, send: out };
   }

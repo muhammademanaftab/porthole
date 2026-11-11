@@ -9,10 +9,16 @@ public enum StageLayout {
     public static let cascadeSlots = 8
     public static let idleSeconds: Double = 600
     public static let minPixels = CGSize(width: 1024, height: 768)
+    public static let maxScreenPoints: CGFloat = 16384
+
+    public static func screenSize(width: Double?, height: Double?) -> CGSize? {
+        guard let width, let height, width >= 1, height >= 1 else { return nil }
+        return CGSize(width: min(width, maxScreenPoints), height: min(height, maxScreenPoints))
+    }
 
     public static func viewerMode(screenPoints: CGSize?) -> (pixels: CGSize, points: CGSize) {
         guard let p = screenPoints, p.width >= 1, p.height >= 1 else { return (pixels, points) }
-        var w = p.width * 2, h = p.height * 2
+        var w = min(p.width, maxScreenPoints) * 2, h = min(p.height, maxScreenPoints) * 2
         let shrink = min(1, pixels.width / w, pixels.height / h)
         w *= shrink; h *= shrink
         let grow = max(1, minPixels.width / w, minPixels.height / h)

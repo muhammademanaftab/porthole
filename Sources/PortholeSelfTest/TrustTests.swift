@@ -139,6 +139,7 @@ private func tokenAuthTests() {
     let verify: (String, String) -> PairedDevice? = { id, secret in id == viewerA && secret == "s" ? dev : nil }
     expect("token auth: right password", authorizeToken(query: ["pw": "pw"], password: "pw", verify: verify), .password)
     expect("token auth: wrong password", authorizeToken(query: ["pw": "x"], password: "pw", verify: verify), .refused)
+    expect("token auth: an empty configured password admits nobody", authorizeToken(query: ["pw": ""], password: "", verify: verify), .refused)
     expect("token auth: nothing given", authorizeToken(query: [:], password: "pw", verify: verify), .refused)
     expect("token auth: paired device with its secret", authorizeToken(query: ["device": viewerA, "secret": "s"], password: "pw", verify: verify), .device(dev))
     expect("token auth: paired device with a wrong secret is unpaired",

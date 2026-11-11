@@ -309,6 +309,7 @@ final class Connection: NSObject, RoomDelegate {
     func open(_ id: UInt32, then: @escaping (VideoTrack, Message) -> Void) {
         VLog.info("open window \(id) on \(hostAddress)")
         pending[id] = then
+        openedReplies[id] = nil
         var m = Message(.open); m.win = id
         if let screen = NSScreen.main?.frame.size { m.sw = screen.width; m.sh = screen.height; m.ss = NSScreen.main.map { Double($0.backingScaleFactor) } }
         streamSettings().apply(to: &m)
@@ -331,6 +332,8 @@ final class Connection: NSObject, RoomDelegate {
 
     func close(_ id: UInt32) {
         VLog.info("close window \(id) on \(hostAddress)")
+        pending[id] = nil
+        openedReplies[id] = nil
         var m = Message(.close); m.win = id
         send(m)
         if let pub = publication(named: Message.trackName(for: id)) {
@@ -388,7 +391,7 @@ final class Connection: NSObject, RoomDelegate {
                 if !(m.list ?? []).isEmpty { self.hostLocked = false }
                 self.onWindows?(m.list ?? [])
             case .opened:
-                guard let id = m.win else { return }
+                guard let id = m.win, self.pending[id] != nil else { return }
                 self.openedReplies[id] = m
                 self.subscribeIfPublished(id)
             case .closed: if let id = m.win { self.onClosed?(id) }

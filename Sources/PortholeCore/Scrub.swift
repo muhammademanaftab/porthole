@@ -9,7 +9,7 @@ public struct Scrubber: Sendable {
     }
 
     static let rules: [(String, String)] = [
-        (#"(?i)\b(pw|password|passwd|secret|token|api_?key|api_?secret|key)=([^&\s"'<>]+)"#, "$1=" + mask),
+        (#"(?i)\b(pw|password|passwd|secret|token|share|api_?key|api_?secret|key)=([^&\s"'<>]+)"#, "$1=" + mask),
         (#"(?i)"(password|apiSecret|apiKey|secret|token|pw)"\s*:\s*"[^"]*""#, "\"$1\":\"" + mask + "\""),
         (#"(?i)\b(X-Porthole-Local|Authorization)\s*:\s*\S+(\s+\S+)?"#, "$1: " + mask),
         (#"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"#, "Bearer " + mask),

@@ -34,9 +34,6 @@ final class HostApp: NSObject {
         HostFiles.clearMarker()
         Log.info("host started version=\(LocalStatus.version) launchedBy=\(env[WatchdogReason.envKey] == nil ? "user" : "watchdog") previousExit=\(previous?.rawValue ?? "none")", .host)
         if let reason = env[WatchdogReason.envKey] { Log.info("launched by the watchdog, reason=\(reason)", .watchdog) }
-        let fromLegacy = LegacyAgent.launchedUs
-        if !fromLegacy { LegacyAgent.bootOut() }
-        LegacyAgent.removeFiles()
         if let exe = Bundle.main.executableURL?.path {
             let others = Processes.hosts(executable: exe)
             if !others.isEmpty { Log.info("stopping older host instance(s) \(others)"); Processes.stop(others) }
@@ -46,14 +43,6 @@ final class HostApp: NSObject {
         heartbeats.start(watched: keep)
         if overridden { Log.info("\(HostSettings.overrideEnvKey)=\(env[HostSettings.overrideEnvKey] ?? "") for this run: the watchdog \(keep ? "watches" : "ignores") this host; the saved switch is unchanged") }
         else { KeepRunning.apply(keep) }
-        if fromLegacy {
-            if KeepRunning.isEnabled {
-                HostFiles.writeMarker(.migrate)
-                LegacyAgent.bootOutSelf()
-                return
-            }
-            Log.info("launched by the old login agent but the watchdog is \(KeepRunning.describe(KeepRunning.status)); staying up")
-        }
         refresh()
         Log.info("permissions: screen recording \(CGPreflightScreenCaptureAccess()), accessibility \(InputInjector.isTrusted), keep running \(keep) (watchdog \(KeepRunning.describe(KeepRunning.status)))", .host)
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }

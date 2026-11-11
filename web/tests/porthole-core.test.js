@@ -265,6 +265,15 @@ test('keyMessages: Cmd shortcuts on a Mac send down and up at once and swallow t
   assert.equal(again.send.length, 1);
 });
 
+test('keyMessages: a Cmd shortcut whose keyup never came does not swallow the next plain keyup', () => {
+  const swallowed = new Set();
+  keyMessages(key('KeyC', 'c', { metaKey: true }), true, true, 7, swallowed);
+  const down = keyMessages(key('KeyC', 'c'), true, true, 7, swallowed);
+  assert.deepEqual(down.send.map(m => m.down), [true]);
+  const up = keyMessages(key('KeyC', 'c'), false, true, 7, swallowed);
+  assert.deepEqual(up.send.map(m => m.down), [false]);
+});
+
 test('keyMessages: auto-repeated Cmd+Z sends a down/up pair per repeat and swallows the one real keyup', () => {
   const swallowed = new Set();
   const sent = [];
@@ -599,6 +608,3 @@ test('whole mac screen ids match the Swift side', () => {
   assert.equal(core.isScreenId(0xFFFFFF00), true);
   assert.equal(core.isScreenId(0xFFFFFEFF), false);
 });
-require('./guest.test.js');
-require('./route.test.js');
-require('./unlock.test.js');

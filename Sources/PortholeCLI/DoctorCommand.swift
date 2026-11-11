@@ -21,24 +21,18 @@ enum DoctorCommand {
     static func checks(quick: Bool) -> [DoctorCheck] {
         var out: [DoctorCheck] = []
         let app = Tools.oneApp
-        let oldHost = Tools.oldHostApp
-        let oldViewer = Tools.oldViewerApp
         let config = savedConfig()
         let viewerDefaults = viewerDefaults()
         let viewerTrust = ViewerTrust.decode(viewerDefaults?.data(forKey: "pairedHosts"))
         let recents = RecentPortals.load(in: Paths.support)
         let hosting = savedHosting()
-        let isHost = hosting ?? (config != nil || oldHost != nil)
+        let isHost = hosting ?? false
         let place = { (url: URL?) in url.map { " (\($0.path))" } ?? "" }
         var roles: [String] = []
-        if isHost { roles.append("host: Share this Mac is on" + place(app ?? oldHost)) }
+        if isHost { roles.append("host: Share this Mac is on" + place(app)) }
         else if app != nil { roles.append("host: off (Settings › Sharing › Share this Mac)") }
-        if app != nil || oldViewer != nil || !viewerTrust.hosts.isEmpty || !recents.isEmpty { roles.append("viewer" + place(app ?? oldViewer)) }
+        if app != nil || !viewerTrust.hosts.isEmpty || !recents.isEmpty { roles.append("viewer" + place(app)) }
         out.append(DoctorCheck("This Mac", "roles", roles.isEmpty ? .warn : .info, roles.isEmpty ? "Porthole isn't installed and hasn't run here" : roles.joined(separator: "\n")))
-        let leftovers = [oldHost, oldViewer].compactMap { $0 }.filter { $0.standardizedFileURL != app?.standardizedFileURL }
-        if app != nil && !leftovers.isEmpty {
-            out.append(DoctorCheck("This Mac", "old apps", .warn, "still installed, replaced by \(app?.path ?? "Porthole.app"): \(leftovers.map(\.path).joined(separator: ", "))"))
-        }
 
         if isHost { out += hostChecks(config: config, quick: quick) }
 

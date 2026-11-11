@@ -31,19 +31,7 @@ extension ViewerApp {
     }
 
     static func savedHosting() -> Bool {
-        let d = UserDefaults.standard
-        let (on, decided) = HostingSwitch.saved(stored: d.object(forKey: HostingSwitch.settingKey)) {
-            HostingSwitch.firstRunDefault(
-                hasHostConfig: HostConfig.saved() != nil,
-                oldHostInstalled: OneApp.oldHostApps().contains { FileManager.default.fileExists(atPath: $0.path) },
-                watchdogLoaded: LegacyAgent.launchctl(["print", "gui/\(getuid())/\(LaunchAgent.label)"]) == 0,
-                watchdogRunning: !Processes.running(named: CLITool.host.rawValue, argument: "watchdog").isEmpty)
-        }
-        if decided {
-            d.set(on, forKey: HostingSwitch.settingKey)
-            VLog.info("first launch as one app: Share this Mac \(on ? "on (this Mac ran Porthole Host)" : "off")")
-        }
-        return on
+        HostingSwitch.saved(stored: UserDefaults.standard.object(forKey: HostingSwitch.settingKey))
     }
 
     func idle() {

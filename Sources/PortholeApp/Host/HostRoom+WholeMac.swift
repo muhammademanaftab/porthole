@@ -24,7 +24,6 @@ final class WholeMacState {
     var queue = WholeMacQueue()
     var requests: [String: Request] = [:]
     var pendingStarts = 0
-    var closeAll: (() -> Void)?
     var displays: [UInt32: CGDirectDisplayID] = [:]
     var expiry: Timer?
     let environment = ProcessInfo.processInfo.environment

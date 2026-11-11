@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-release}
 SIGN_ID=${SIGN_ID:-$(security find-identity -p codesigning 2>/dev/null | awk '/"Porthole Dev"/{print $2; exit}')}
 SIGN_ID=${SIGN_ID:-"-"}
+LK=$(command -v livekit-server || true)
+if [ -z "$LK" ]; then echo "livekit-server not found: brew install livekit" >&2; exit 1; fi
 swift build ${SWIFT_JOBS:+-j "$SWIFT_JOBS"} -c "$CONFIG" --arch arm64
 BIN=.build/arm64-apple-macosx/$CONFIG
 rm -rf dist && mkdir -p dist
@@ -52,8 +54,6 @@ WEBDST="$APP/Contents/Resources/web"
 mkdir -p "$WEBDST"
 find web -maxdepth 1 -type f ! -name '.*' \( -name index.html -o -name '*.js' -o -name '*.css' -o -name '*.png' -o -name '*.webmanifest' \) \
   -exec cp {} "$WEBDST/" \;
-LK=$(command -v livekit-server || true)
-if [ -z "$LK" ]; then echo "livekit-server not found: brew install livekit" >&2; exit 1; fi
 LKDST="$APP/Contents/MacOS/livekit-server"
 cat "$(realpath "$LK")" > "$LKDST"
 chmod 755 "$LKDST"

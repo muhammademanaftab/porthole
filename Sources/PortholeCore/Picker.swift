@@ -14,8 +14,12 @@ public extension WindowInfo {
     var displaySubtitle: String { title.isEmpty ? sizeLabel : "\(app) · \(sizeLabel)" }
 }
 
+public func wholeNumber(_ v: Double) -> Int {
+    v.isFinite ? Int(max(-1e9, min(1e9, v.rounded()))) : 0
+}
+
 public func windowSizeLabel(_ w: Double, _ h: Double) -> String {
-    "\(Int(w.rounded()))\u{00D7}\(Int(h.rounded()))"
+    "\(wholeNumber(w))\u{00D7}\(wholeNumber(h))"
 }
 
 public func searchTokens(_ query: String) -> [String] {

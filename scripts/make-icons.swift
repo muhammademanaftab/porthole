@@ -7,15 +7,13 @@ struct Palette {
     var bottom: CGColor
     var glassTop: CGColor
     var glassBottom: CGColor
-    var waves: Bool
 }
 
 func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> CGColor {
     CGColor(srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: a)
 }
 
-let viewer = Palette(top: rgb(0x2F86F0), bottom: rgb(0x0B2A6F), glassTop: rgb(0xA9E4FF), glassBottom: rgb(0x2D7FE0), waves: false)
-let host = Palette(top: rgb(0xFFA24C), bottom: rgb(0xD9480F), glassTop: rgb(0xFFE3B8), glassBottom: rgb(0xF07A2A), waves: true)
+let viewer = Palette(top: rgb(0x2F86F0), bottom: rgb(0x0B2A6F), glassTop: rgb(0xA9E4FF), glassBottom: rgb(0x2D7FE0))
 
 func gradient(_ ctx: CGContext, _ a: CGColor, _ b: CGColor, from p0: CGPoint, to p1: CGPoint) {
     let g = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [a, b] as CFArray, locations: [0, 1])!
@@ -119,29 +117,6 @@ func draw(_ p: Palette, pixels: Int) -> CGImage {
     ctx.fillPath()
     ctx.restoreGState()
 
-    if p.waves {
-        let badge = CGPoint(x: win.maxX - 6, y: win.minY + 6)
-        let r: CGFloat = 62
-        ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 14, color: rgb(0x000000, 0.3))
-        ctx.setFillColor(rgb(0xFFFFFF))
-        ctx.fillEllipse(in: CGRect(x: badge.x - r, y: badge.y - r, width: r * 2, height: r * 2))
-        ctx.restoreGState()
-        ctx.setFillColor(p.bottom)
-        ctx.fillEllipse(in: CGRect(x: badge.x - r + 9, y: badge.y - r + 9, width: (r - 9) * 2, height: (r - 9) * 2))
-        ctx.setStrokeColor(rgb(0xFFFFFF))
-        ctx.setLineWidth(13)
-        ctx.setLineCap(.round)
-        ctx.setLineJoin(.round)
-        let tip = CGPoint(x: badge.x + 22, y: badge.y + 22)
-        ctx.move(to: CGPoint(x: badge.x - 22, y: badge.y - 22))
-        ctx.addLine(to: tip)
-        ctx.move(to: CGPoint(x: tip.x - 30, y: tip.y))
-        ctx.addLine(to: tip)
-        ctx.addLine(to: CGPoint(x: tip.x, y: tip.y - 30))
-        ctx.strokePath()
-    }
-
     return ctx.makeImage()!
 }
 
@@ -154,7 +129,7 @@ let out = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arg
 try! FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 let sizes: [(String, Int)] = [("16x16", 16), ("16x16@2x", 32), ("32x32", 32), ("32x32@2x", 64), ("128x128", 128),
                               ("128x128@2x", 256), ("256x256", 256), ("256x256@2x", 512), ("512x512", 512), ("512x512@2x", 1024)]
-for (name, palette) in [("Porthole", viewer), ("PortholeHost", host)] {
+for (name, palette) in [("Porthole", viewer)] {
     let set = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(UUID().uuidString).iconset")
     try! FileManager.default.createDirectory(at: set, withIntermediateDirectories: true)
     for (suffix, px) in sizes { writePNG(draw(palette, pixels: px), to: set.appendingPathComponent("icon_\(suffix).png")) }
@@ -165,4 +140,5 @@ for (name, palette) in [("Porthole", viewer), ("PortholeHost", host)] {
     p.waitUntilExit()
     try? FileManager.default.removeItem(at: set)
     print("\(name).icns", p.terminationStatus == 0 ? "ok" : "failed")
+    if p.terminationStatus != 0 { exit(1) }
 }

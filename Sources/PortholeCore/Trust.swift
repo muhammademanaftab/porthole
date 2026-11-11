@@ -203,10 +203,10 @@ public func authorizeToken(query: [String: String], password: String, verify: (S
     let device = query["device"] ?? ""
     if !device.isEmpty {
         if let found = verify(device, query["secret"] ?? "") { return .device(found) }
-        if let pw = query["pw"], constantTimeEqual(pw, password) { return .password }
+        if let pw = query["pw"], !password.isEmpty, constantTimeEqual(pw, password) { return .password }
         return .unpaired
     }
-    return query["pw"].map { constantTimeEqual($0, password) } == true ? .password : .refused
+    return !password.isEmpty && query["pw"].map { constantTimeEqual($0, password) } == true ? .password : .refused
 }
 
 public func pairedIdentity(name: String?, suffix: String, device: String) -> String {

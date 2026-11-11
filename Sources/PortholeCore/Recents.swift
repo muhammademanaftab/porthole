@@ -149,6 +149,6 @@ public func renderWindowList(_ list: [WindowInfo]) -> String {
     guard !list.isEmpty else { return "No shareable windows." }
     let width = min(28, list.map(\.app.count).max() ?? 8)
     return list.map { w in
-        "\(String(w.id).leftPad(7))  \(w.app.padding(toLength: width, withPad: " ", startingAt: 0))  \(w.title.isEmpty ? "(untitled)" : w.title)  \(Int(w.w))x\(Int(w.h))"
+        "\(String(w.id).leftPad(7))  \(w.app.padding(toLength: width, withPad: " ", startingAt: 0))  \(w.title.isEmpty ? "(untitled)" : w.title)  \(wholeNumber(w.w.rounded(.towardZero)))x\(wholeNumber(w.h.rounded(.towardZero)))"
     }.joined(separator: "\n")
 }

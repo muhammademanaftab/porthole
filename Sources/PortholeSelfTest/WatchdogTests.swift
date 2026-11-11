@@ -145,11 +145,9 @@ func watchdogTests() {
     expect("launchd restarts the watchdog only if it fails", (p["KeepAlive"] as? [String: Bool])?["SuccessfulExit"], false)
     expect("agent only runs in a GUI login session", p["LimitLoadToSessionType"] as? String, "Aqua")
     expect("agent is associated with the host app", p["AssociatedBundleIdentifiers"] as? [String], ["io.github.muhammademanaftab.porthole"])
-    check("the agent never runs the app's environment flag", (p["EnvironmentVariables"] as? [String: String])?[LaunchAgent.legacyLaunchedEnvKey] == nil)
     let data = LaunchAgent.plistData(executableName: "porthole-host")
     let back = data.flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
     expect("agent plist serialises and reads back", back?["Label"] as? String, LaunchAgent.label)
-    expect("the new agent is not the old one", LaunchAgent.label == LaunchAgent.legacyLabel, false)
 
     expect("keep running defaults to on", HostSettings(lookup: { _ in nil }).keepRunning, true)
     expect("verbose logging defaults to off", HostSettings(lookup: { _ in nil }).verbose, false)

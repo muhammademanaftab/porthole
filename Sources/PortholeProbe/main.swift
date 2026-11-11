@@ -97,11 +97,10 @@ final class StatsLog: @unchecked Sendable {
 
 let args = CommandLine.arguments
 let titleMatch = args.count > 1 ? args[1] : "porthole-probe"
-let env0 = ProcessInfo.processInfo.environment
-let targetApp = env0["PORTHOLE_APP"] ?? "TextEdit"
-let audioCheck = env0["PORTHOLE_AUDIO"] != nil
-let typed = args.count > 2 ? args[2] : "hello from porthole"
 let env = ProcessInfo.processInfo.environment
+let targetApp = env["PORTHOLE_APP"] ?? "TextEdit"
+let audioCheck = env["PORTHOLE_AUDIO"] != nil
+let typed = args.count > 2 ? args[2] : "hello from porthole"
 let hostAddress = env["PORTHOLE_HOST"] ?? "127.0.0.1"
 let cfgURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Porthole/config.json")
 guard let pw = env["PORTHOLE_PW"] ?? ((try? JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL))) as? [String: Any])?["password"] as? String
@@ -175,7 +174,7 @@ guard let target = screenProbe ? windows.first(where: { $0.screen == true }) : w
 print("PASS  found \(target.app) — \(target.title) (\(Int(target.w))×\(Int(target.h)) pt)")
 
 var open = Message(.open); open.win = target.id
-for pair in (env0["PORTHOLE_STREAM"] ?? "").split(separator: ",") {
+for pair in (env["PORTHOLE_STREAM"] ?? "").split(separator: ",") {
     let kv = pair.split(separator: "=").map(String.init)
     guard kv.count == 2 else { continue }
     switch kv[0] {

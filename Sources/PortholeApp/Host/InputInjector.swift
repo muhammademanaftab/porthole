@@ -5,7 +5,6 @@ import PortholeCore
 @MainActor
 final class InputInjector {
     private let source: CGEventSource? = PortholeEventTag.source()
-    private var focusedWindow: UInt32?
     private var buttonsDown: Set<Int> = []
     private var axWindows: [UInt32: AXUIElement] = [:]
     let textBatch = TextBatch.units()
@@ -54,7 +53,6 @@ final class InputInjector {
             AXUIElementSetAttributeValue(w, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             AXUIElementPerformAction(w, kAXRaiseAction as CFString)
         }
-        focusedWindow = id
     }
 
     func releaseAllButtons() {

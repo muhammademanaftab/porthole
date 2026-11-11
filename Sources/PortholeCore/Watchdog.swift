@@ -149,8 +149,6 @@ public enum LaunchAgent {
     public static let label = "io.github.muhammademanaftab.porthole.watchdog"
     public static let plistName = label + ".plist"
     public static let hostBundleID = "io.github.muhammademanaftab.porthole"
-    public static let legacyLabel = "io.github.muhammademanaftab.porthole"
-    public static let legacyLaunchedEnvKey = "PORTHOLE_LAUNCH_AGENT"
 
     public static func plist(executableName: String) -> [String: Any] {
         let program = "Contents/MacOS/\(executableName)"

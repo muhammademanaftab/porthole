@@ -64,6 +64,7 @@ enum KeepRunning {
     static var service: SMAppService { SMAppService.agent(plistName: LaunchAgent.plistName) }
     static var status: SMAppService.Status { service.status }
     static var isEnabled: Bool { status == .enabled }
+    private static var wanted = false
 
     static func describe(_ s: SMAppService.Status) -> String {
         switch s {
@@ -104,6 +105,7 @@ enum KeepRunning {
         let wait = attempt == 1 ? 8 : attempt <= 4 ? attempt * 10 : 300
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(wait)) {
             MainActor.assumeIsolated {
+                guard wanted else { return }
                 try? service.unregister()
                 do {
                     try service.register()
@@ -112,6 +114,7 @@ enum KeepRunning {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(5)) {
                     MainActor.assumeIsolated {
+                        guard wanted else { return }
                         if status == .requiresApproval {
                             warnApproval()
                         } else if watchdogRunning {
@@ -137,6 +140,7 @@ enum KeepRunning {
     static func checkStarted(after seconds: Int = 8, why: String = "after registering") {
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
             MainActor.assumeIsolated {
+                guard wanted else { return }
                 if status == .requiresApproval { warnApproval(); return }
                 guard isEnabled, !watchdogRunning else { return }
                 Log.info("keep running: the watchdog agent is enabled but its process is not running \(why); registering it again", .watchdog)
@@ -151,6 +155,7 @@ enum KeepRunning {
 
     @discardableResult
     static func apply(_ on: Bool) -> String? {
+        wanted = on
         let before = status
         do {
             if on {
@@ -189,57 +194,6 @@ enum KeepRunning {
     }
 
     static func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }
-}
-
-enum LegacyAgent {
-    static var plistURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(LaunchAgent.legacyLabel).plist")
-    }
-    static var leftovers: [URL] {
-        [HostConfig.directory.appendingPathComponent("login-agent.plist.disabled"),
-         HostConfig.directory.appendingPathComponent("login-agent-offered")]
-    }
-
-    static var launchedUs: Bool { ProcessInfo.processInfo.environment[LaunchAgent.legacyLaunchedEnvKey] == "1" }
-    static var target: String { "gui/\(getuid())/\(LaunchAgent.legacyLabel)" }
-    static var isLoaded: Bool { launchctl(["print", target]) == 0 }
-
-    static func removeFiles() {
-        for url in [plistURL] + leftovers where FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.removeItem(at: url)
-            Log.info("removed old login agent file \(url.path)", .watchdog)
-        }
-    }
-
-    static func bootOut() {
-        guard isLoaded else { return }
-        Log.info("booting out the old login agent \(LaunchAgent.legacyLabel)", .watchdog)
-        launchctl(["bootout", target])
-    }
-
-    static func bootOutSelf() {
-        Log.info("handing over from the old login agent to the watchdog; booting it out", .watchdog)
-        Log.flush()
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        p.arguments = ["bootout", target]
-        try? p.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-            Log.info("the old login agent was not booted out; exiting so the watchdog starts a fresh host", .watchdog)
-            Log.flush()
-            exit(0)
-        }
-    }
-
-    @discardableResult
-    static func launchctl(_ args: [String]) -> Int32 {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        p.arguments = args
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        do { try p.run(); p.waitUntilExit(); return p.terminationStatus } catch { return -1 }
-    }
 }
 
 enum WatchdogRunner {

@@ -28,10 +28,6 @@ MainActor.assumeIsolated {
     let origin = LaunchOrigin.decide(bundled: Bundle.main.bundleURL.pathExtension == "app", parentIsLaunchd: getppid() == 1,
                                      watchdogLaunched: env[WatchdogReason.envKey] != nil, arguments: appArguments, environment: env)
     if origin == .handOff { LaunchHandOff.run() }
-    if galleryScreen(appArguments, screens: appGalleryScreens) == nil {
-        _ = ViewerApp.savedHosting()
-        OneAppMigration.run()
-    }
     let app = NSApplication.shared
     let delegate = ViewerApp()
     delegate.mayHost = origin == .run(mayHost: true)

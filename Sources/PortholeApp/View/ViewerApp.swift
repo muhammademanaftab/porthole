@@ -9,7 +9,6 @@ final class ViewerApp: NSObject, NSApplicationDelegate {
     var portals: [UInt32: PortalWindow] = [:]
     var companions: [UInt32: PortalWindow] = [:]
     var dismissedCompanions: [UInt32: UInt32] = [:]
-    var titles: [UInt32: String] = [:]
     var clip = ClipboardSync(changeCount: NSPasteboard.general.changeCount)
     var clipTimer: Timer?
     let tiles = TileManager()

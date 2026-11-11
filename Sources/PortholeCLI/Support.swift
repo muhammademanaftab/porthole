@@ -9,8 +9,6 @@ enum Paths {
     static var logs: URL { LogFiles.directory() }
     static var config: URL { support.appendingPathComponent("config.json") }
     static var marker: URL { support.appendingPathComponent("exit-marker") }
-    static var watchdogPid: URL { support.appendingPathComponent("watchdog.pid") }
-    static var heartbeat: URL { support.appendingPathComponent("heartbeat") }
     static var crashReports: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports") }
 
     static var executable: URL {
@@ -114,8 +112,6 @@ enum Procs {
         guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
         return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path
     }
-
-    static func alive(_ pid: Int32) -> Bool { kill(pid, 0) == 0 || errno == EPERM }
 }
 
 func portListening(_ port: Int, host: String = "127.0.0.1", timeout: Int32 = 500) -> Bool {
@@ -139,8 +135,7 @@ func portListening(_ port: Int, host: String = "127.0.0.1", timeout: Int32 = 500
 }
 
 enum Tools {
-    static let hostBundleID = "io.github.muhammademanaftab.porthole"
-    static let viewerBundleID = "io.github.muhammademanaftab.porthole.view"
+    static let hostBundleID = OneApp.bundleID
 
     static func app(bundleID: String, name: String, accept: (URL) -> Bool = { _ in true }) -> URL? {
         var candidates: [URL] = []
@@ -155,18 +150,11 @@ enum Tools {
 
     static var oneApp: URL? { app(bundleID: hostBundleID, name: OneApp.appName, accept: OneApp.isInstalledOneApp) }
 
-    static var oldHostApp: URL? {
-        OneApp.oldHostApps().first { Bundle(url: $0)?.bundleIdentifier == hostBundleID }
-    }
-
-    static var oldViewerApp: URL? { app(bundleID: viewerBundleID, name: OneApp.appName) }
-
     static func locate(_ tool: CLITool) -> URL? {
         let sibling = Paths.executable.deletingLastPathComponent().appendingPathComponent(tool.rawValue)
         if FileManager.default.isExecutableFile(atPath: sibling.path) { return sibling }
-        let candidates = [oneApp?.appendingPathComponent("Contents/MacOS/\(CLITool.host.rawValue)"),
-                          (tool == .host ? oldHostApp : oldViewerApp)?.appendingPathComponent("Contents/MacOS/\(tool.rawValue)")]
-        return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        let exe = oneApp?.appendingPathComponent("Contents/MacOS/\(CLITool.host.rawValue)")
+        return exe.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
     }
 
     static func exec(_ tool: CLITool, _ args: [String]) -> Int32 {
@@ -221,7 +209,7 @@ func savedHosting() -> Bool? {
 }
 
 func viewerDefaults() -> UserDefaults? {
-    Bundle.main.bundleIdentifier == Tools.viewerBundleID ? .standard : UserDefaults(suiteName: Tools.viewerBundleID)
+    Bundle.main.bundleIdentifier == Tools.hostBundleID ? .standard : UserDefaults(suiteName: Tools.hostBundleID)
 }
 
 func readLogs(roles: [String] = LogFiles.roles) -> [LogLine] {

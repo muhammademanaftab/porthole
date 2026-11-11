@@ -57,7 +57,7 @@ public struct WebRoutes {
     static let mutatingPaths: Set<String> = ["/pair", "/pair/request", "/local/paircode", "/local/unpair", "/local/share", "/local/unshare"]
 
     public init(password: String, livekitPort: Int, tokens: AccessToken, webRoot: URL?,
-                suffix: @escaping () -> String = { randomSecret(bytes: 3) }, pairing: PairingDesk? = nil, hostName: String = "Mac",
+                suffix: @escaping () -> String = { String(DeviceIdentity.makeID().prefix(6)) }, pairing: PairingDesk? = nil, hostName: String = "Mac",
                 trust: TrustStore? = nil, hostID: String? = nil) {
         self.password = password; self.livekitPort = livekitPort; self.tokens = tokens
         self.webRoot = webRoot; self.suffix = suffix

@@ -75,8 +75,6 @@ public struct AskThrottle: Equatable, Sendable {
         guard open.remove(link) != nil else { return }
         closedAt[link] = now
     }
-
-    public func isOpen(_ link: String) -> Bool { open.contains(link) }
 }
 
 public extension PortholeEventTag {

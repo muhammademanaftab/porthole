@@ -61,6 +61,8 @@ private func shareStoreTests() {
     let short = store.mint(window: nil, label: "", control: true, ttl: 5)
     check("share store: a TTL under a minute is raised to a minute", short.map { $0.link.expires.timeIntervalSince($0.link.created) } == 60)
     check("share store: a picker link gets the picker label", short?.link.label == ShareLinks.pickerLabel && short?.link.isPicker == true)
+    let nan = store.mint(window: nil, label: "x", control: false, ttl: Double.nan)
+    check("share store: a NaN TTL falls back to the default", nan.map { $0.link.expires.timeIntervalSince($0.link.created) } == ShareLinks.defaultTTL)
     let long = store.mint(window: nil, label: "x", control: false, ttl: 365 * 86400)
     check("share store: a TTL is capped at 30 days", long.map { $0.link.expires.timeIntervalSince($0.link.created) } == 30 * 86400)
     guard let a = store.mint(window: 1, label: "A", control: false), let b = store.mint(window: 2, label: "B", control: false) else { return }

@@ -30,6 +30,8 @@ public enum HelloProof {
         Data("porthole-hello-v1|\(nonce)|\(hostID)|\(bareHost(address))".utf8)
     }
 
+    static let decoyKey = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+
     public static func proof(key: Data, nonce: String, hostID: String, address: String) -> String {
         let mac = HMAC<SHA256>.authenticationCode(for: message(nonce: nonce, hostID: hostID, address: address), using: SymmetricKey(data: key))
         return Data(mac).map { String(format: "%02x", $0) }.joined()
@@ -70,7 +72,7 @@ public enum HelloProof {
         let address = bareHost(WebRoutes.hostname(from: hostHeader))
         guard isIPLiteral(address), ownsAddress(address), DeviceIdentity.isValidID(device),
               let key = secretHash(device).flatMap(deviceKey) else {
-            return (0..<32).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+            return proof(key: decoyKey, nonce: nonce, hostID: device, address: address)
         }
         return proof(key: key, nonce: nonce, hostID: hostID, address: address)
     }

@@ -4,13 +4,8 @@ public enum HostingSwitch {
     public static let settingKey = "hosting"
     public static let envKey = "PORTHOLE_HOSTING"
 
-    public static func firstRunDefault(hasHostConfig: Bool, oldHostInstalled: Bool, watchdogLoaded: Bool, watchdogRunning: Bool) -> Bool {
-        hasHostConfig && (oldHostInstalled || watchdogLoaded || watchdogRunning)
-    }
-
-    public static func saved(stored: Any?, firstRun: () -> Bool) -> (on: Bool, decided: Bool) {
-        if let on = stored as? Bool { return (on, false) }
-        return (firstRun(), true)
+    public static func saved(stored: Any?) -> Bool {
+        stored as? Bool ?? false
     }
 
     public static func thisRun(saved: Bool, environment: [String: String]) -> Bool {
@@ -28,41 +23,7 @@ public enum HostingSwitch {
 
 public enum OneApp {
     public static let bundleID = LaunchAgent.hostBundleID
-    public static let oldViewerBundleID = "io.github.muhammademanaftab.porthole.view"
     public static let appName = "Porthole"
-    public static let oldHostAppName = "Porthole Host"
-    public static let migratedKey = "migratedViewerDefaults"
-    public static let quitOldAppsKey = "migratedOldApps"
-    public static let keychainMigratedKey = "migratedKeychainItems"
-
-    public static var viewerKeys: [String] {
-        [ViewerSettings.bitrateKey, ViewerSettings.fpsKey, ViewerSettings.levelKey, ViewerSettings.hideTitleBarKey,
-         ViewerSettings.playSoundKey, SoundEffects.settingKey, RouteMode.settingKey, "host", "password"]
-    }
-
-    public static func viewerDefaultsToCopy(old: [String: Any], current: (String) -> Any?) -> [String: Any] {
-        var out: [String: Any] = [:]
-        for key in viewerKeys where current(key) == nil {
-            if let value = old[key] { out[key] = value }
-        }
-        return out
-    }
-
-    public static func oldHostApps(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
-        [URL(fileURLWithPath: "/Applications/\(oldHostAppName).app"), home.appendingPathComponent("Applications/\(oldHostAppName).app")]
-    }
-
-    public static func isOldApp(bundleID: String?, bundlePath: String?, ownBundlePath: String) -> Bool {
-        guard let bundleID, let bundlePath else { return false }
-        let path = URL(fileURLWithPath: bundlePath).standardizedFileURL.path
-        guard path != URL(fileURLWithPath: ownBundlePath).standardizedFileURL.path else { return false }
-        if bundleID == oldViewerBundleID { return true }
-        return bundleID == self.bundleID && URL(fileURLWithPath: path).lastPathComponent == "\(oldHostAppName).app"
-    }
-
-    public static func isOldWatchdog(executable: String?) -> Bool {
-        executable?.contains("/\(oldHostAppName).app/") == true
-    }
 
     public static func isInstalledOneApp(_ url: URL) -> Bool {
         url.standardizedFileURL.lastPathComponent == "\(appName).app"
@@ -124,8 +85,7 @@ public enum WatchdogStamp {
         let installed = bundlePath.hasPrefix("/Applications/")
         guard let saved else { return installed }
         if saved == current { return false }
-        if saved.hasPrefix(bundlePath + " ") { return true }
-        return installed && saved.contains("/\(OneApp.oldHostAppName).app ")
+        return saved.hasPrefix(bundlePath + " ")
     }
 }
 

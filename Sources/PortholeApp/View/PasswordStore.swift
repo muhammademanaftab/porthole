@@ -4,7 +4,7 @@ import PortholeCore
 import Security
 
 enum PasswordStore {
-    static let service = "io.github.muhammademanaftab.porthole.view"
+    static let service = OneApp.bundleID
 
     static let defaults: UserDefaults = Bundle.main.bundleIdentifier == service ? .standard : UserDefaults(suiteName: service) ?? .standard
 
@@ -14,18 +14,13 @@ enum PasswordStore {
 
     static func password(for address: String) -> String? {
         guard let key = savedPasswordKey(address) else { return nil }
-        if let pw = KeychainCache.read(key) { return pw }
-        let d = UserDefaults.standard
-        guard let legacyHost = d.string(forKey: "host"), savedPasswordKey(legacyHost) == key else { return nil }
-        return d.string(forKey: "password")
+        return KeychainCache.read(key)
     }
 
     @discardableResult
     static func save(_ password: String, for address: String) -> Bool {
         guard let key = savedPasswordKey(address) else { return false }
-        let ok = KeychainCache.write(key, value: password, label: "Porthole host \(address)")
-        if ok { UserDefaults.standard.removeObject(forKey: "password") }
-        return ok
+        return KeychainCache.write(key, value: password, label: "Porthole host \(address)")
     }
 
     static var knownHosts: [KnownHost] {
@@ -192,24 +187,10 @@ enum KeychainCache {
             VLog.warn("keychain: listing the saved passwords and pairings failed")
             return
         }
-        let migrate = Bundle.main.bundleIdentifier == OneApp.bundleID && !UserDefaults.standard.bool(forKey: OneApp.keychainMigratedKey)
         var read: [String: String] = [:]
-        var moved = 0
-        var failed = 0
         for item in items {
-            guard case .found(let value) = fetch(item.account, interactive: true) else { failed += 1; continue }
-            read[item.account] = value
-            if migrate {
-                if store(item.account, value: value, label: item.label) { moved += 1 } else { failed += 1 }
-            }
+            if case .found(let value) = fetch(item.account, interactive: true) { read[item.account] = value }
         }
         locked { values.merge(read) { _, new in new } }
-        guard migrate else { return }
-        if failed == 0 {
-            UserDefaults.standard.set(true, forKey: OneApp.keychainMigratedKey)
-            if moved > 0 { VLog.info("keychain: re-saved \(moved) item(s) so Porthole reads them without asking") }
-        } else {
-            VLog.warn("keychain: \(failed) of \(items.count) item(s) could not be read or re-saved; trying again next launch")
-        }
     }
 }

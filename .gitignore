@@ -3,3 +3,5 @@
 dist/
 .claude/
 .playwright-mcp/
+.DS_Store
+scripts/deploy.local

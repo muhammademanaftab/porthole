@@ -171,6 +171,7 @@ final class HostRoom: NSObject, RoomDelegate {
             self.thumbTasks.removeValue(forKey: who)?.cancel()
             self.thumbAskedAt[who] = nil
             self.thumbTaskIDs[who] = nil
+            self.lockWarnedAt[who] = nil
             self.input.releaseAllButtons()
             self.wholeMacViewerLeft(who)
             for id in self.viewerPrefs.keys { self.viewerPrefs[id]?[who] = nil }
@@ -237,7 +238,7 @@ final class HostRoom: NSObject, RoomDelegate {
             await send(reply, to: who)
         case .open:
             guard let id = m.win else { return }
-            let screen = (m.sw ?? 0) >= 1 && (m.sh ?? 0) >= 1 ? CGSize(width: m.sw!, height: m.sh!) : nil
+            let screen = StageLayout.screenSize(width: m.sw, height: m.sh)
             if WholeMac.isScreen(id) { await openScreen(id, by: who, screen: screen, prefs: StreamPrefs(open: m)); return }
             await open(id, by: who, screen: screen, prefs: StreamPrefs(open: m))
         case .close:

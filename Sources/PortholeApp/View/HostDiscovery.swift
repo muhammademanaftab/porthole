@@ -131,7 +131,7 @@ final class HostDiscovery {
         }
         var req = URLRequest(url: url)
         req.timeoutInterval = 5
-        guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse else {
+        guard let (data, resp) = try? await RouteFinder.session.data(for: req), let http = resp as? HTTPURLResponse else {
             return .refused("Couldn't reach \(address). Is Porthole Host running there?")
         }
         return parsePairReply(status: http.statusCode, body: data)
@@ -143,7 +143,7 @@ final class HostDiscovery {
         }
         var req = URLRequest(url: url)
         req.timeoutInterval = 5
-        guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse else {
+        guard let (data, resp) = try? await RouteFinder.session.data(for: req), let http = resp as? HTTPURLResponse else {
             return .refused("Couldn't reach \(address). Is Porthole Host running there?")
         }
         return parsePairRequestReply(status: http.statusCode, body: data)

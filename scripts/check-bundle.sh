@@ -2,7 +2,6 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 APP="dist/Porthole.app"
-HOST="$APP"
 WEB="$APP/Contents/Resources/web"
 failures=0
 
@@ -12,11 +11,7 @@ expect() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got
 plist() { plutil -extract "$2" raw -o - "$1/Contents/Info.plist" 2>/dev/null || echo "<missing>"; }
 
 if [ ! -d "$APP" ]; then echo "$APP not found; run scripts/bundle.sh first" >&2; exit 2; fi
-for old in "dist/Porthole Host.app"; do
-  if [ -e "$old" ]; then fail "only one app is built ($old is left over)"; else pass "only one app is built"; fi
-done
-
-expect "bundle id stays the host's (TCC grants and the watchdog)" "$(plist "$APP" CFBundleIdentifier)" "io.github.muhammademanaftab.porthole"
+expect "bundle id" "$(plist "$APP" CFBundleIdentifier)" "io.github.muhammademanaftab.porthole"
 expect "bundle name" "$(plist "$APP" CFBundleName)" "Porthole"
 expect "starts as a menu-bar app (LSUIElement true); the Dock icon comes with a viewer window" "$(plist "$APP" LSUIElement)" "true"
 expect "executable" "$(plist "$APP" CFBundleExecutable)" "porthole-host"
@@ -34,20 +29,20 @@ expect "porthole-view ls without a host is a usage error" "$?" "2"
 expect "porthole-host routes viewer commands (pair without a host is a usage error)" "$?" "2"
 if "$APP/Contents/MacOS/porthole-host" help 2>/dev/null | grep -q "usage: porthole-view"; then pass "porthole-host help lists the viewer commands too"; else fail "porthole-host help lists the viewer commands too"; fi
 
-AGENT="$HOST/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist"
+AGENT="$APP/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.watchdog.plist"
 aplist() { plutil -extract "$1" raw -o - "$AGENT" 2>/dev/null || echo "<missing>"; }
 if [ -f "$AGENT" ]; then pass "watchdog agent plist is bundled"; else fail "watchdog agent plist is bundled"; fi
 if plutil -lint -s "$AGENT" >/dev/null 2>&1; then pass "watchdog agent plist is valid"; else fail "watchdog agent plist is valid"; fi
 expect "watchdog agent label matches its file name" "$(aplist Label)" "io.github.muhammademanaftab.porthole.watchdog"
 expect "watchdog agent runs the host binary" "$(aplist BundleProgram)" "Contents/MacOS/porthole-host"
-if [ -x "$HOST/$(aplist BundleProgram)" ]; then pass "watchdog agent program exists in the bundle"; else fail "watchdog agent program exists in the bundle"; fi
+if [ -x "$APP/$(aplist BundleProgram)" ]; then pass "watchdog agent program exists in the bundle"; else fail "watchdog agent program exists in the bundle"; fi
 expect "watchdog agent passes watchdog" "$(aplist ProgramArguments.1)" "watchdog"
 expect "watchdog agent sets PORTHOLE_COMMAND=watchdog" "$(aplist EnvironmentVariables.PORTHOLE_COMMAND)" "watchdog"
 expect "watchdog agent starts at login" "$(aplist RunAtLoad)" "true"
-if "$HOST/Contents/MacOS/porthole-host" agent-plist 2>/dev/null | cmp -s - "$AGENT"; then
+if "$APP/Contents/MacOS/porthole-host" agent-plist 2>/dev/null | cmp -s - "$AGENT"; then
   pass "bundled agent plist matches what the host binary generates"
 else fail "bundled agent plist matches what the host binary generates"; fi
-if [ ! -e "$HOST/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist" ]; then pass "the old login agent plist is not bundled"; else fail "the old login agent plist is not bundled"; fi
+if [ ! -e "$APP/Contents/Library/LaunchAgents/io.github.muhammademanaftab.porthole.plist" ]; then pass "the old login agent plist is not bundled"; else fail "the old login agent plist is not bundled"; fi
 
 for f in index.html porthole-core.js livekit-client.umd.min.js; do
   if [ -f "$WEB/$f" ]; then pass "web/$f is bundled"; else fail "web/$f is bundled"; fi
@@ -58,8 +53,8 @@ done
 extra=$(find "$WEB" -mindepth 1 \( -type d -o -name '.*' -o ! \( -name index.html -o -name '*.js' -o -name '*.css' -o -name '*.png' -o -name '*.webmanifest' \) \) 2>/dev/null)
 if [ -z "$extra" ]; then pass "web holds only servable files"; else fail "web holds only servable files: $extra"; fi
 
-if [ -x "$HOST/Contents/MacOS/livekit-server" ]; then pass "livekit-server is executable"; else fail "livekit-server is executable"; fi
-if codesign --verify --strict "$HOST/Contents/MacOS/livekit-server" 2>/dev/null; then pass "livekit-server signature"; else fail "livekit-server signature"; fi
+if [ -x "$APP/Contents/MacOS/livekit-server" ]; then pass "livekit-server is executable"; else fail "livekit-server is executable"; fi
+if codesign --verify --strict "$APP/Contents/MacOS/livekit-server" 2>/dev/null; then pass "livekit-server signature"; else fail "livekit-server signature"; fi
 TILE="$APP/Contents/Helpers/porthole-tile"
 if [ -x "$TILE" ]; then pass "porthole-tile helper is executable"; else fail "porthole-tile helper is executable"; fi
 if codesign --verify --strict "$TILE" 2>/dev/null; then pass "porthole-tile signature"; else fail "porthole-tile signature"; fi

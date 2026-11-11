@@ -17,6 +17,9 @@ func wholeMacTests() {
     expect("whole mac: the host and other identities are not viewers", WholeMac.viewer("host"), .other)
     expect("whole mac: a guest-style identity gets nothing", WholeMac.viewer("guest-abc"), .other)
     expect("whole mac: viewer name from a password identity", WholeMac.viewerName(password), "Browser")
+    let routes = WebRoutes(password: "p", livekitPort: 7880, tokens: AccessToken(apiKey: "k", apiSecret: "s"), webRoot: nil)
+    check("whole mac: generated identities keep the whole name", (0..<200).allSatisfy { _ in
+        WholeMac.viewerName(WebRoutes.viewerIdentity(name: "Lap-top", suffix: routes.suffix())) == "Lap-top" })
     expect("whole mac: viewer name from a paired identity", WholeMac.viewerName(paired), "Laptop")
     check("whole mac: off offers nothing", !WholeMac.offered(mode: .off, viewer: .password(identity: password)))
     check("whole mac: ask offers to password viewers", WholeMac.offered(mode: .ask, viewer: .password(identity: password)))

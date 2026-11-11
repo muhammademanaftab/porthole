@@ -215,7 +215,7 @@ final class PickerWindow: NSWindow, NSToolbarDelegate, NSCollectionViewDataSourc
     }
 
     func show(_ list: [WindowInfo]) {
-        let selected = grid.selectionIndexPaths.first.map { shown[$0.item].id }
+        let selected = grid.selectionIndexPaths.first.flatMap { $0.item < shown.count ? shown[$0.item].id : nil }
         all = list
         loaded = true
         if !list.isEmpty { error = nil }
@@ -519,11 +519,3 @@ final class NoticeView: NSStackView {
     }
 }
 
-final class FlippedView: NSView { override var isFlipped: Bool { true } }
-
-final class ClosureTarget: NSObject {
-    let fn: () -> Void
-    var tag = -1
-    init(_ fn: @escaping () -> Void) { self.fn = fn }
-    @objc func fire() { fn() }
-}

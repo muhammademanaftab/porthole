@@ -95,7 +95,7 @@ public final class ShareLinkStore: @unchecked Sendable {
     public func mint(window: UInt32?, label: String, control: Bool, ttl: TimeInterval = ShareLinks.defaultTTL,
                      token: String = randomSecret(bytes: 24), id: String? = nil) -> (link: ShareLink, token: String)? {
         let now = clock()
-        let ttl = min(max(ttl, 60), 30 * 24 * 3600)
+        let ttl = ttl.isNaN ? ShareLinks.defaultTTL : min(max(ttl, 60), 30 * 24 * 3600)
         lock.lock(); defer { lock.unlock() }
         var live = read().filter { $0.isLive(at: now) }
         var linkID = id ?? DeviceIdentity.makeID().prefix(8).description

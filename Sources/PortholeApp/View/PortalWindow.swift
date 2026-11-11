@@ -586,6 +586,7 @@ final class InputCaptureView: NSView {
     override func rightMouseDragged(with e: NSEvent) { sendMouse(e, kind: .drag, button: 1) }
     override func otherMouseDown(with e: NSEvent) { sendMouse(e, kind: .down, button: 2) }
     override func otherMouseUp(with e: NSEvent) { sendMouse(e, kind: .up, button: 2) }
+    override func otherMouseDragged(with e: NSEvent) { sendMouse(e, kind: .drag, button: 2) }
 
     override func scrollWheel(with e: NSEvent) {
         guard let p = point(e) else { return }
