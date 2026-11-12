@@ -1,11 +1,60 @@
 import AVFoundation
 import CoreGraphics
+import CoreImage
 import CryptoKit
 import Foundation
 import LiveKit
 import PortholeCore
 
+final class FrameRecorder: @unchecked Sendable {
+    private let dir: URL
+    private let queue = DispatchQueue(label: "probe.record")
+    private let context = CIContext()
+    private let lock = NSLock()
+    private var first: Date?
+    private var lastAt = -1.0
+    private var waiting = 0
+    private(set) var saved = 0
+
+    init(dir: String) {
+        self.dir = URL(fileURLWithPath: dir)
+        try? FileManager.default.createDirectory(at: self.dir, withIntermediateDirectories: true)
+    }
+
+    func add(_ frame: VideoFrame) {
+        let now = Date()
+        lock.lock()
+        if first == nil { first = now }
+        let t = now.timeIntervalSince(first ?? now)
+        guard t - lastAt >= 1.0 / 31, waiting < 6, let pixels = frame.toCVPixelBuffer() else { lock.unlock(); return }
+        lastAt = t
+        waiting += 1
+        lock.unlock()
+        queue.async { [self] in
+            let image = CIImage(cvPixelBuffer: pixels)
+            let name = String(format: "f_%06d_%dx%d.jpg", Int(t * 1000), Int(image.extent.width), Int(image.extent.height))
+            let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+            try? context.writeJPEGRepresentation(of: image, to: dir.appendingPathComponent(name), colorSpace: space,
+                                                 options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.92])
+            lock.lock(); waiting -= 1; saved += 1; lock.unlock()
+        }
+    }
+
+    func finish() -> Int { queue.sync {}; return saved }
+
+    func note(_ line: String) {
+        lock.lock(); let t = first.map { Date().timeIntervalSince($0) } ?? 0; lock.unlock()
+        queue.async { [self] in
+            let url = dir.appendingPathComponent("events.txt")
+            let text = String(format: "%06d %@\n", Int(t * 1000), line)
+            if let handle = try? FileHandle(forWritingTo: url) { handle.seekToEndOfFile(); handle.write(Data(text.utf8)); try? handle.close() }
+            else { try? Data(text.utf8).write(to: url) }
+        }
+    }
+}
+
 final class FrameCounter: NSObject, VideoRenderer, @unchecked Sendable {
+    var recorder: FrameRecorder?
     private let lock = NSLock()
     private(set) var count = 0
     private(set) var size = CGSize.zero
@@ -13,6 +62,7 @@ final class FrameCounter: NSObject, VideoRenderer, @unchecked Sendable {
     var adaptiveStreamSize: CGSize { .zero }
     func set(size: CGSize) {}
     func render(frame: VideoFrame) {
+        recorder?.add(frame)
         lock.lock(); count += 1
         size = CGSize(width: Int(frame.dimensions.width), height: Int(frame.dimensions.height)); lock.unlock()
     }
@@ -196,6 +246,7 @@ guard let target = screenProbe ? windows.first(where: { $0.screen == true }) : w
 print("PASS  found \(target.app) — \(target.title) (\(Int(target.w))×\(Int(target.h)) pt)")
 
 var open = Message(.open); open.win = target.id
+if env["PORTHOLE_RECORD"] != nil { open.sw = 1470; open.sh = 956 }
 for pair in (env["PORTHOLE_STREAM"] ?? "").split(separator: ",") {
     let kv = pair.split(separator: "=").map(String.init)
     guard kv.count == 2 else { continue }
@@ -230,6 +281,7 @@ var track: VideoTrack?
 for _ in 0..<100 { track = pub.track as? VideoTrack; if track != nil { break }; try await Task.sleep(nanoseconds: 50_000_000) }
 guard let track else { fail("track never subscribed") }
 let counter = FrameCounter()
+counter.recorder = env["PORTHOLE_RECORD"].map(FrameRecorder.init)
 track.add(videoRenderer: counter)
 var firstFrameAt: Date?
 for _ in 0..<200 { if counter.snapshot().0 > 0 { firstFrameAt = Date(); break }; try await Task.sleep(nanoseconds: 25_000_000) }
@@ -347,6 +399,131 @@ if env["PORTHOLE_P3"] != nil {
         for e in take(.error) { print("P3    error: \(e.msg ?? "")") }
         try await Task.sleep(nanoseconds: 100_000_000)
     }
+    var close = Message(.close); close.win = target.id
+    try await probe.send(close)
+    try await Task.sleep(nanoseconds: 500_000_000)
+    await probe.room.disconnect()
+    print("DONE")
+    exit(0)
+}
+
+if let recorder = counter.recorder {
+    try await Task.sleep(nanoseconds: 1_500_000_000)
+    if let steps = env["PORTHOLE_STEPS"].flatMap({ try? String(contentsOfFile: $0, encoding: .utf8) }) {
+        func pause(_ seconds: Double) async throws { try await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000)) }
+        func mouse(_ kind: Message.MouseKind, _ x: Double, _ y: Double, clicks: Int = 1) async throws {
+            var m = Message(.mouse); m.win = target.id; m.x = x; m.y = y; m.btn = 0; m.clicks = clicks; m.kind = kind
+            try await probe.send(m)
+        }
+        var size = CGSize(width: target.w, height: target.h)
+        for line in steps.split(separator: "\n") {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let name = String(line[..<colon]), rest = String(line[line.index(after: colon)...])
+            let n = rest.split(separator: ",").compactMap { Double($0) }
+            recorder.note(String(line))
+            switch name {
+            case "wait": try await pause(n.first ?? 1)
+            case "click" where n.count >= 2:
+                try await mouse(.move, n[0], n[1]); try await pause(0.08)
+                try await mouse(.down, n[0], n[1]); try await pause(0.07); try await mouse(.up, n[0], n[1])
+            case "dbl" where n.count >= 2:
+                try await mouse(.move, n[0], n[1]); try await pause(0.08)
+                try await mouse(.down, n[0], n[1]); try await pause(0.05); try await mouse(.up, n[0], n[1])
+                try await pause(0.1)
+                try await mouse(.down, n[0], n[1], clicks: 2); try await pause(0.05); try await mouse(.up, n[0], n[1], clicks: 2)
+            case "move" where n.count >= 2: try await mouse(.move, n[0], n[1])
+            case "drag" where n.count >= 5:
+                try await mouse(.down, n[0], n[1])
+                let count = max(Int(n[4] * 30), 2)
+                for i in 1...count {
+                    let k = Double(i) / Double(count)
+                    try await mouse(.drag, n[0] + (n[2] - n[0]) * k, n[1] + (n[3] - n[1]) * k)
+                    try await pause(1.0 / 30)
+                }
+                try await mouse(.up, n[2], n[3])
+            case "scroll" where n.count >= 5:
+                for _ in 0..<Int(n[3]) {
+                    var m = Message(.scroll); m.win = target.id; m.x = n[0]; m.y = n[1]; m.dx = 0; m.dy = n[2]
+                    try await probe.send(m)
+                    try await pause(n[4])
+                }
+            case "type":
+                for ch in rest.replacingOccurrences(of: "\\n", with: "\n") {
+                    var text = Message(.text); text.win = target.id; text.s = String(ch)
+                    try await probe.send(text)
+                    try await pause(ch == "\n" ? 0.3 : 0.05)
+                }
+            case "clip":
+                _ = try await probe.room.localParticipant.sendText(rest.replacingOccurrences(of: "\\n", with: "\n"), options: StreamTextOptions(topic: clipboardTopic, destinationIdentities: [Participant.Identity(from: "host")]))
+            case "key":
+                let parts = rest.split(separator: ",").map(String.init)
+                guard let code = parts.first.flatMap({ UInt16($0) }) else { continue }
+                var mods: UInt32 = 0
+                for word in parts.dropFirst() {
+                    switch word {
+                    case "cmd": mods |= Modifiers.command.rawValue
+                    case "shift": mods |= Modifiers.shift.rawValue
+                    case "opt": mods |= Modifiers.option.rawValue
+                    case "ctrl": mods |= Modifiers.control.rawValue
+                    default: break
+                    }
+                }
+                var k = Message(.key); k.win = target.id; k.code = code; k.mods = mods
+                k.down = true; try await probe.send(k)
+                k.down = false; try await probe.send(k)
+            case "size" where n.count >= 2:
+                size = CGSize(width: n[0], height: n[1])
+                var r = Message(.resize); r.win = target.id; r.w = size.width; r.h = size.height
+                try await probe.send(r)
+            case "resize" where n.count >= 3:
+                let from = size, start = Date()
+                var throttle = LiveResizeThrottle()
+                while Date().timeIntervalSince(start) < n[2] {
+                    let t = Date().timeIntervalSince(start), k = t / n[2], e = k * k * (3 - 2 * k)
+                    if let s = throttle.during(CGSize(width: from.width + (n[0] - from.width) * e, height: from.height + (n[1] - from.height) * e), now: t) {
+                        var r = Message(.resize); r.win = target.id; r.w = s.width; r.h = s.height
+                        try await probe.send(r)
+                    }
+                    try await pause(1.0 / 120)
+                }
+                size = throttle.finish(CGSize(width: n[0], height: n[1]), now: n[2] + 1)
+                var r = Message(.resize); r.win = target.id; r.w = size.width; r.h = size.height
+                try await probe.send(r)
+            default: print("SKIP  step \(line)")
+            }
+        }
+    } else if targetApp == "TextEdit" {
+        var click = Message(.mouse); click.win = target.id; click.x = 0.5; click.y = 0.85; click.btn = 0; click.clicks = 1
+        click.kind = .down; try await probe.send(click)
+        click.kind = .up; try await probe.send(click)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        for ch in typed {
+            var text = Message(.text); text.win = target.id; text.s = String(ch)
+            try await probe.send(text)
+            try await Task.sleep(nanoseconds: ch == "\n" ? 380_000_000 : 55_000_000)
+        }
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        let grow = CGSize(width: 300, height: 150), start = Date()
+        var throttle = LiveResizeThrottle()
+        while Date().timeIntervalSince(start) < 1.6 {
+            let t = Date().timeIntervalSince(start), k = t / 1.6, e = k * k * (3 - 2 * k)
+            if let s = throttle.during(CGSize(width: target.w + grow.width * e, height: target.h + grow.height * e), now: t) {
+                var r = Message(.resize); r.win = target.id; r.w = s.width; r.h = s.height
+                try await probe.send(r)
+            }
+            try await Task.sleep(nanoseconds: 1_000_000_000 / 120)
+        }
+        let final = throttle.finish(CGSize(width: target.w + grow.width, height: target.h + grow.height), now: 2)
+        var r = Message(.resize); r.win = target.id; r.w = final.width; r.h = final.height
+        try await probe.send(r)
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        r.w = target.w; r.h = target.h
+        try await probe.send(r)
+        try await Task.sleep(nanoseconds: 800_000_000)
+    } else {
+        try await Task.sleep(nanoseconds: UInt64((env["PORTHOLE_HOLD"].flatMap(Double.init) ?? 6) * 1_000_000_000))
+    }
+    print("PASS  recorded \(recorder.finish()) frames")
     var close = Message(.close); close.win = target.id
     try await probe.send(close)
     try await Task.sleep(nanoseconds: 500_000_000)

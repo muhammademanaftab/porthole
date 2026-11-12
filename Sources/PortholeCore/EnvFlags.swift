@@ -57,6 +57,8 @@ public enum EnvFlags {
         EnvFlag("PORTHOLE_P3", "probe", "set: run the resize, dialog and full-screen checks", "unset"),
         EnvFlag("PORTHOLE_P3_WATCH", "probe", "seconds the resize checks keep watching", "30"),
         EnvFlag("PORTHOLE_HOLD", "probe", "seconds to keep watching the picture", "unset"),
+        EnvFlag("PORTHOLE_RECORD", "probe", "folder to save the received picture in, as numbered JPEG frames", "unset"),
+        EnvFlag("PORTHOLE_STEPS", "probe", "with PORTHOLE_RECORD: a file of steps to play, one per line (wait, click, dbl, drag, scroll, type, key, size, resize)", "unset"),
     ]
 
     public struct Row: Equatable, Sendable {
