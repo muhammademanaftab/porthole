@@ -5,9 +5,9 @@
 Porthole brings single windows from one Mac to another. Each one opens as a real window with its own Dock icon, sharp on a Retina screen, at up to 60 frames a second. Type, click, scroll and resize, and the real window on the other Mac follows. It is free and open source.
 
 <p align="center">
-  <a href="docs/video/porthole-demo.mp4"><img src="docs/images/demo-hero.jpg" width="820" alt="A VS Code window from another Mac, open on this Mac through Porthole"></a>
+  <a href="docs/video/porthole-demo.mp4"><img src="docs/images/demo-hero.png" width="820" alt="A VS Code window from another Mac, open on this Mac through Porthole"></a>
   <br>
-  <b><a href="docs/video/porthole-demo.mp4">▶ Watch the one-minute demo</a></b> · <a href="docs/video/porthole-demo-short.mp4">30-second version</a>
+  <b><a href="docs/video/porthole-demo.mp4">▶ Watch the one-minute demo</a></b>
 </p>
 
 > **Early release (0.1.0).** Porthole is checked by its automated tests, and pairing, capture, typing, resizing and clipboard are tested between two real Macs with a headless test viewer. The newest pairing screens in the app itself have had little use by hand. There is no downloadable build yet; you build it from source. Expect rough edges, and please report what you find.
@@ -16,9 +16,9 @@ Porthole brings single windows from one Mac to another. Each one opens as a real
 
 | | |
 |---|---|
-| <img src="docs/images/demo-picker.jpg" alt="Porthole's window picker showing three windows on another Mac"> | <img src="docs/images/demo-typing.jpg" alt="Typing code into a VS Code window that runs on another Mac"> |
+| <img src="docs/images/demo-picker.png" alt="Porthole's window picker showing three windows on another Mac"> | <img src="docs/images/demo-typing.png" alt="Typing code into a VS Code window that runs on another Mac"> |
 | **Pick a window.** Porthole lists the windows on your other Mac. Open one and it appears on this Mac. | **Work in it.** Keyboard shortcuts, dictation and input methods all reach the real app. |
-| <img src="docs/images/demo-clipboard.jpg" alt="A line copied on one Mac and pasted into VS Code on the other"> | <img src="docs/images/demo-windows.jpg" alt="A code editor, a map and a playing video open side by side from another Mac"> |
+| <img src="docs/images/demo-clipboard.png" alt="A line copied on one Mac and pasted into VS Code on the other"> | <img src="docs/images/demo-windows.png" alt="A code editor, a map and a playing video open side by side from another Mac"> |
 | **Copy here, paste there.** The clipboard is shared both ways. | **Open as many as you like.** Code, maps, video with sound, each in its own window. |
 
 - **One window at a time, or the whole screen.** Open as many windows as you like, each in its own portal, or pick "This Mac's Screen".
