@@ -5,7 +5,7 @@
 Porthole brings single windows from one Mac to another. Each one opens as a real window with its own Dock icon, sharp on a Retina screen, at up to 60 frames a second. Type, click, scroll and resize, and the real window on the other Mac follows. It is free and open source.
 
 <p align="center">
-  <a href="docs/video/porthole-demo.mp4"><img src="docs/images/demo-hero.png" width="820" alt="A VS Code window from another Mac, open on this Mac through Porthole"></a>
+  <a href="docs/video/porthole-demo.mp4"><img src="docs/images/demo-hero.png" width="820" alt="A Mac mini and a MacBook: a VS Code window that runs on the Mac mini is open on the MacBook through Porthole"></a>
   <br>
   <b><a href="docs/video/porthole-demo.mp4">▶ Watch the one-minute demo</a></b>
 </p>
