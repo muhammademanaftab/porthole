@@ -30,7 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+
       - name: Build livekit-server from source so it runs on macOS 14 and later
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
         run: |
           server=$(scripts/build-livekit.sh)
           echo "LIVEKIT_SERVER=$server" >> "$GITHUB_ENV"
