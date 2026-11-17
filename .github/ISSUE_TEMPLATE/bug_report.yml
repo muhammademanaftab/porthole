@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in Porthole does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please remove machine names, addresses, passwords and pairing codes from anything you paste. Security problems go through a private report instead (see SECURITY.md).
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Building or installing
+        - Pairing and finding Macs
+        - Picking and opening a window
+        - Picture, typing, clicking or resizing in a window
+        - Sound or clipboard
+        - Whole screen
+        - Browser viewer or share links
+        - The porthole command
+        - Docs
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. On the shared Mac ...
+        2. On the other Mac ...
+        3. Saw ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of porthole doctor
+      description: Run `porthole doctor` on the Mac that has the problem and paste what it prints, with names and addresses removed. If the app is not installed, paste the build or error output instead.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Porthole version
+      description: What `porthole version` prints, or the commit you built.
+    validations:
+      required: true
+  - type: input
+    id: macs
+    attributes:
+      label: Macs and macOS versions
+      description: Both ends. For the browser viewer, name the browser too.
+      placeholder: Shared Mac mini M2 on macOS 15.5, viewing from a MacBook Air M3 on macOS 26.1
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: How are the two connected?
+      options:
+        - Same Wi-Fi or wired network
+        - Tailscale
+        - Something else
+        - Does not apply
