@@ -36,8 +36,6 @@ jobs:
           cache: false
 
       - name: Build livekit-server from source so it runs on macOS 14 and later
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "14.0"
         run: |
           server=$(scripts/build-livekit.sh)
           echo "LIVEKIT_SERVER=$server" >> "$GITHUB_ENV"
