@@ -1,0 +1,119 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - scripts/**
+      - Package.swift
+      - Package.resolved
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and package Porthole.app
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Build livekit-server from source so it runs on macOS 14 and later
+        run: |
+          server=$(scripts/build-livekit.sh)
+          echo "LIVEKIT_SERVER=$server" >> "$GITHUB_ENV"
+
+      - name: Build Porthole.app with an ad hoc signature
+        env:
+          SIGN_ID: "-"
+        run: scripts/bundle.sh
+
+      - name: Check the app bundle
+        run: scripts/check-bundle.sh
+
+      - name: The bundled livekit-server starts
+        run: |
+          "dist/Porthole.app/Contents/MacOS/livekit-server" --dev --bind 127.0.0.1 > "$RUNNER_TEMP/livekit.log" 2>&1 &
+          pid=$!
+          answered=0
+          for _ in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:7880/ > /dev/null; then answered=1; break; fi
+            sleep 0.5
+          done
+          kill "$pid" || true
+          if [ "$answered" != 1 ]; then cat "$RUNNER_TEMP/livekit.log"; exit 1; fi
+
+      - name: Package
+        id: package
+        run: |
+          scripts/package.sh
+          version=$(plutil -extract CFBundleShortVersionString raw -o - dist/Porthole.app/Contents/Info.plist)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "zip=dist/Porthole-$version.zip" >> "$GITHUB_OUTPUT"
+
+      - name: The tag matches the app version
+        if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "The tag $GITHUB_REF_NAME does not match the app version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build details
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          {
+            echo "### Porthole $VERSION"
+            echo
+            echo '```'
+            cat "$ZIP.sha256"
+            echo "built on: macOS $(sw_vers -productVersion), $(swift --version 2>&1 | head -1)"
+            echo "livekit-server: $("$LIVEKIT_SERVER" --version 2>&1 | head -1), $(go version)"
+            echo "commit: $GITHUB_SHA"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Porthole-${{ steps.package.outputs.version }}
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.zip }}.sha256
+          if-no-files-found: error
+
+      - name: Attest where the download was built
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.package.outputs.zip }}
+
+      - name: Draft the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" \
+            --draft --verify-tag --title "Porthole $VERSION" --generate-notes

@@ -1,5 +1,7 @@
 # Porthole
 
+[![ci](https://github.com/muhammademanaftab/porthole/actions/workflows/ci.yml/badge.svg)](https://github.com/muhammademanaftab/porthole/actions/workflows/ci.yml)
+
 **Use another Mac's windows as if they were on the Mac in front of you.**
 
 Porthole brings single windows from one Mac to another. Each one opens as a real window with its own Dock icon, sharp on a Retina screen, at up to 60 frames a second. Type, click, scroll and resize, and the real window on the other Mac follows. It is free and open source.
@@ -10,7 +12,7 @@ Porthole brings single windows from one Mac to another. Each one opens as a real
   <b><a href="docs/video/porthole-demo.mp4">▶ Watch the one-minute demo</a></b>
 </p>
 
-> **Early release (0.1.0).** Porthole is checked by its automated tests, and pairing, capture, typing, resizing and clipboard are tested between two real Macs with a headless test viewer. The newest pairing screens in the app itself have had little use by hand. There is no downloadable build yet; you build it from source. Expect rough edges, and please report what you find.
+> **Early release (0.1.0).** Porthole is checked by its automated tests, and pairing, capture, typing, resizing and clipboard are tested between two real Macs with a headless test viewer. The newest pairing screens in the app itself have had little use by hand. Downloads are not notarized by Apple yet, so the first open takes one extra step (below). Expect rough edges, and please report what you find.
 
 ## What you can do
 
@@ -49,11 +51,38 @@ The same app runs on both Macs. On the Mac you share, turn on **Share this Mac**
 ## Requirements
 
 - An Apple Silicon Mac with macOS 14 or later, on both ends.
+
+To build from source you also need:
+
 - Swift 5.10 or later (Xcode 15.3 or its Command Line Tools).
 - `brew install livekit` (the server is copied into the app).
 - Node 20 or later, only for the web tests.
 
 ## Install
+
+### Download
+
+1. Download `Porthole-<version>.zip` from the [latest release](https://github.com/muhammademanaftab/porthole/releases/latest) and unzip it.
+2. Move `Porthole.app` to `/Applications`.
+3. Porthole is not notarized by Apple yet, so macOS refuses to open it the first time. Clear the download flag once in Terminal:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Porthole.app
+   ```
+
+   Or open it, then click **Open Anyway** in **System Settings › Privacy & Security**.
+4. Do the same on the other Mac.
+
+Each release lists a SHA-256 checksum, and `gh attestation verify Porthole-<version>.zip -R muhammademanaftab/porthole` checks that the zip was built by this repository's release workflow.
+
+To put the `porthole` command on your PATH:
+
+```sh
+sudo mkdir -p /usr/local/bin
+sudo ln -sf /Applications/Porthole.app/Contents/MacOS/porthole /usr/local/bin/porthole
+```
+
+### Build from source
 
 ```sh
 scripts/bundle.sh && cp -R dist/Porthole.app /Applications/
@@ -97,7 +126,7 @@ porthole env             # every setting
 - Porthole's own web page and the connection set-up use plain HTTP on port 7878. On a network you don't trust, someone who can read the traffic could see the browser password or take over a session for a few minutes. Use Tailscale, which encrypts everything between your machines, when you are not at home.
 - Keep the browser password to yourself: it gives full control of the shared windows.
 
-Found a security problem? Please open a private security advisory on GitHub instead of a public issue.
+Found a security problem? Please report it privately, as [SECURITY.md](SECURITY.md) explains, instead of opening a public issue.
 
 ## Develop
 
@@ -115,7 +144,7 @@ The app windows in the video (VS Code, Maps and QuickTime Player) were recorded 
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Run `scripts/test.sh` before sending a change, and say which Macs and macOS versions you tried it on.
+Bug reports and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md); issues marked [good first issue](https://github.com/muhammademanaftab/porthole/labels/good%20first%20issue) are a good place to begin, and the browser viewer needs only Node, not a Mac.
 
 ## Licence
 

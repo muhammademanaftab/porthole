@@ -53,6 +53,11 @@ done
 extra=$(find "$WEB" -mindepth 1 \( -type d -o -name '.*' -o ! \( -name index.html -o -name '*.js' -o -name '*.css' -o -name '*.png' -o -name '*.webmanifest' \) \) 2>/dev/null)
 if [ -z "$extra" ]; then pass "web holds only servable files"; else fail "web holds only servable files: $extra"; fi
 
+for f in LICENSE THIRD_PARTY.md; do
+  if cmp -s "$APP/Contents/Resources/$f" "$f"; then pass "$f is bundled"; else fail "$f is bundled"; fi
+done
+if [ -z "$(find "$APP" ! -perm -u+w 2>/dev/null)" ]; then pass "every file is writable by its owner, so the quarantine flag can be removed"; else fail "every file is writable by its owner, so the quarantine flag can be removed"; fi
+
 if [ -x "$APP/Contents/MacOS/livekit-server" ]; then pass "livekit-server is executable"; else fail "livekit-server is executable"; fi
 if codesign --verify --strict "$APP/Contents/MacOS/livekit-server" 2>/dev/null; then pass "livekit-server signature"; else fail "livekit-server signature"; fi
 TILE="$APP/Contents/Helpers/porthole-tile"
