@@ -49,13 +49,13 @@ If you changed how the app is built or packaged, also run:
 scripts/bundle.sh && scripts/check-bundle.sh
 ```
 
-CI runs all of this on macOS 15 and macOS 26 for every pull request.
+CI runs these for every pull request: the tests on macOS 15 and macOS 26, the web tests on Linux as well, and the bundle checks on macOS 26.
 
 ## Try your change
 
 The tests cannot cover capture, typing or the windows themselves, so try those by hand and say in the pull request what you tried.
 
-- **With one Mac:** build the app with `scripts/bundle.sh`, open `dist/Porthole.app`, turn on **Share this Mac**, then open `http://localhost:7878` in a browser on the same Mac. This exercises the host: capture, input, sound, clipboard and share links.
+- **With one Mac:** build the app with `scripts/bundle.sh`, open `dist/Porthole.app`, turn on **Settings › Sharing › Share this Mac**, then open `http://localhost:7878` in a browser on the same Mac. This exercises the host: capture, input, sound, clipboard and share links.
 - **With two Macs:** install the app on both and pair them. Changes to pairing, discovery and the viewer's windows need this.
 - `PORTHOLE_HOME=/some/folder` runs a second instance with its own settings and pairings, so testing does not touch your real ones. `porthole env` lists every setting.
 - `porthole doctor` checks permissions, ports and pairing on the Mac it runs on.
